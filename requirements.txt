@@ -1,0 +1,3 @@
+﻿PySide6>=6.7
+platformdirs>=4.3
+

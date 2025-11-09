@@ -1,0 +1,112 @@
+Metadata-Version: 2.4
+Name: support-case-manager
+Version: 2.0.0
+Summary: Cross-platform Support Case Manager rewritten in Python with a PySide6 GUI
+Author: itoke
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: PySide6>=6.7
+Requires-Dist: platformdirs>=4.3
+
+# サポート受付ディレクトリ作成ツール (Python 版)
+
+PowerShell で実装されていた GUI ツールを、パフォーマンスを優先した Python (PySide6) 製アプリケーションへ全面移行しました。案件フォルダの生成・履歴検索・対応メモ追記・ダークテーマなど既存機能を維持しつつ、ディレクトリ走査や設定保存の高速化・堅牢化を図っています。
+
+---
+
+## 動作要件
+
+- Windows 10 以降
+- Python 3.11 以上（`py -3` で起動できる環境を推奨）
+- 依存パッケージ: `PySide6`, `platformdirs`  
+  `pip install -r requirements.txt` でまとめて導入できます
+
+> 既存の PowerShell 版は `SupportCaseManager.ps1` に残していますが、メンテナンス対象は本 Python 版です。
+
+---
+
+## セットアップと起動
+
+1. （任意）仮想環境を作成
+   ```powershell
+   py -3 -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+2. 依存関係をインストール
+   ```powershell
+   pip install -r requirements.txt
+   ```
+3. GUI を起動
+   - ダブルクリック: `LaunchSupportCaseManager.cmd`
+   - もしくはコマンド:
+     ```powershell
+     py -3 -m support_case_manager --base-path C:\SupportCases
+     ```
+4. 初回のみ、画面上部で案件ルートフォルダを指定すると `config/user-settings.json` に保存され、次回以降は自動で復元されます。
+
+---
+
+## 主な機能
+
+- **高速履歴ロード**  
+  `cases-index.json`（ベースフォルダ直下）と実ディレクトリをマージし、重複や「クローズ」済み案件を除外した最新リストを表示。
+- **案件フォルダ作成**  
+  `YYYYMMDD(会社名_サポート番号)ステータス` 形式を Python で再実装。カテゴリ選択（サブフォルダ）やサニタイズ処理も移植。
+- **対応メモ追記**  
+  組み込みのテキストエリアから直接ノートへ追記。ヘッダーは `==== yyyy-mm-dd HH:MM ====` 形式で自動挿入。
+- **検索**  
+  サポート番号を正規化して照合。指数的な走査を避けるため `os.scandir` によるフラットな走査とキャッシュを併用。
+- **ダークテーマ**  
+  PySide6 のパレットを直接制御し、ライト / ダークの切り替えを即時反映。設定は `config/user-settings.json` へ保存。
+
+---
+
+## アーキテクチャ概要
+
+| パス | 役割 |
+|------|------|
+| `python/support_case_manager/app.py` | エントリポイント。引数解析、ロガー初期化、メインウィンドウ生成。 |
+| `python/support_case_manager/core/cases.py` | 案件データモデル・フォルダ名生成・正規化ロジック。 |
+| `python/support_case_manager/core/repository.py` | `cases-index.json` のロード/保存、`os.scandir` を用いた高速フォルダ走査、重複排除。 |
+| `python/support_case_manager/core/notes.py` | ノートファイルの初期化・追記ヘルパー。 |
+| `python/support_case_manager/ui/main_window.py` | PySide6 GUI。フォーム、履歴、ノート編集、テーマ切り替えを管理。 |
+| `LaunchSupportCaseManager.cmd` | `.venv` があれば優先しつつ `py -3 -m support_case_manager` を実行するランチャ。 |
+
+PowerShell 版で利用していた `cases-index.json`/`config/user-settings.json`/ノートファイル命名規則は互換性があります。
+
+---
+
+## パフォーマンス面での改善ポイント
+
+- `os.scandir` + 手動スタックでディレクトリを走査し、PowerShell の `Get-ChildItem -Recurse` より大幅に低オーバーヘッド化。
+- サポート番号の正規化（英数字化 + 0 トリム）を `CaseRecord` の初期化時に一度だけ実施し、履歴フィルタや重複排除を高速化。
+- 履歴のマージ処理は Python の `set` を用いて `folder_path`/`support_number` ベースで O(1) 判定。
+- GUI イベントは PySide6 のシグナル/スロットで最小限に抑え、プレビュー更新や statusBar 反映も遅延なし。
+- `config` と `cases-index.json` の読み書きは `json` + UTF-8 のみで統一し、不要な PowerShell 変換コストを排除。
+
+---
+
+## 既知の差分 / 注意点
+
+- PowerShell 版に含まれていた外部メモ帳連携やエクスプローラー強制クローズなどのパッチスクリプトは、現行 GUI の内蔵エディタで代替しています。
+- 履歴更新は GUI から実行したタイミングで同期処理します（案件数が極端に多い環境では今後バックグラウンド化を検討）。
+- 旧スクリプトは `SupportCaseManager.ps1` と `bak/` フォルダに残してあります。必要であれば手動で参照してください。
+
+---
+
+## トラブルシューティング
+
+| 症状 | 対処 |
+|------|------|
+| GUI が起動しない / すぐ終了する | `SupportCaseManager.log` を確認。Python 依存パッケージが不足している場合は `pip install -r requirements.txt` を再実行。 |
+| 「ベースフォルダを設定してください」と表示される | 画面上部のテキストボックスに読取り/書込み可能なパスを入力し、「履歴更新」またはフォルダ作成を実行。 |
+| 既存案件が見つからない | `cases-index.json` が壊れている場合は削除すると再生成されます。ディレクトリ名が旧規則から外れていると自動検出できません。 |
+| メモを追記できない | ノートファイルが読み取り専用でないか確認。必要に応じてフォルダのアクセス権限を調整してください。 |
+
+---
+
+## ライセンス / メンテナンス
+
+社内利用を想定したツールです。社外提供時には別途ライセンスや配布ポリシーを整備してください。  
+バグ報告・改善要望はリポジトリの issue もしくは担当チームまで。
+

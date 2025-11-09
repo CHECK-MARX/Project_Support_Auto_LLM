@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "support-case-manager"
+version = "2.0.0"
+description = "Cross-platform Support Case Manager rewritten in Python with a PySide6 GUI"
+readme = "README.md"
+authors = [{ name = "itoke" }]
+requires-python = ">=3.11"
+dependencies = [
+  "PySide6>=6.7",
+  "platformdirs>=4.3"
+]
+
+[project.scripts]
+support-case-manager = "support_case_manager.app:main"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["support_case_manager*"]
