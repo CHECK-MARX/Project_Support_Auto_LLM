@@ -1,0 +1,7 @@
+﻿dist/
+build/
+*.log
+*.pyc
+__pycache__/
+.vscode/
+.venv/
