@@ -9,6 +9,9 @@ on:
     types: [ published ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-test-publish:
     runs-on: windows-latest
@@ -23,7 +26,7 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-          include-prerelease: true
+          dotnet-quality: preview
 
       - name: Restore
         run: dotnet restore SupportCaseManager.slnx
@@ -36,7 +39,7 @@ jobs:
 
       - name: Publish
         if: github.event_name == 'release'
-        run: dotnet publish src/SupportCaseManager.App/SupportCaseManager.App.csproj -c Release -p:PublishProfile=WinX64SingleFile -p:PublishDir=artifacts\\SupportCaseManager\\
+        run: dotnet publish src/SupportCaseManager.App/SupportCaseManager.App.csproj -c Release -p:PublishProfile=WinX64SingleFile -o artifacts/SupportCaseManager
 
       - name: Package release
         if: github.event_name == 'release'
