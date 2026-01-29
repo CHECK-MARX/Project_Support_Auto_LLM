@@ -1,0 +1,140 @@
+﻿<Window x:Class="SupportCaseManager.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="サポート受付ディレクトリ作成ツール (WPF)"
+        Height="900" Width="1360"
+        WindowStartupLocation="CenterScreen"
+        Loaded="OnLoaded"
+        PreviewKeyDown="OnPreviewKeyDown">
+    <DockPanel Margin="16">
+        <StatusBar DockPanel.Dock="Bottom">
+            <TextBlock Text="{Binding StatusMessage}" />
+        </StatusBar>
+
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Orientation="Vertical" Margin="0,0,0,12">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="ベースフォルダ:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBox x:Name="BasePathTextBox"
+                             Width="640"
+                             Text="{Binding BasePath, UpdateSourceTrigger=PropertyChanged}"
+                             LostFocus="OnBasePathChanged" />
+                    <Button x:Name="BrowseButton" Content="参照..." Margin="8,0,0,0" Click="OnBrowseBase" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="履歴:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox x:Name="HistoryComboBox" Width="520" SelectionChanged="OnHistorySelected" />
+                    <Button x:Name="RefreshButton" Content="履歴更新" Margin="8,0,0,0" Click="OnRefresh" />
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <TextBlock Text="サポート番号検索:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBox x:Name="SearchTextBox" Width="320" KeyDown="OnSearchKeyDown" />
+                    <Button x:Name="SearchButton" Content="検索" Margin="8,0,0,0" Click="OnSearch" />
+                </StackPanel>
+
+                <GroupBox Header="案件メタ情報" Margin="0,0,0,12">
+                    <Grid Margin="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="260" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="260" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
+                        <DatePicker x:Name="CreatedDatePicker" Grid.Row="0" Grid.Column="1" Margin="8,4" SelectedDateChanged="OnPreviewChanged" />
+                        <TextBlock Text="会社名" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" />
+                        <TextBox x:Name="CompanyTextBox" Grid.Row="0" Grid.Column="3" Margin="8,4" TextChanged="OnPreviewChanged" />
+                        <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4,0,4">
+                            <Button x:Name="NewButton" Content="新規" Click="OnNewCase" />
+                            <Button x:Name="CreateButton" Content="フォルダ作成" Margin="8,0,0,0" Click="OnCreateCase" />
+                            <Button x:Name="OpenFolderButton" Content="フォルダを開く" Margin="8,0,0,0" Click="OnOpenFolder" />
+                        </StackPanel>
+
+                        <TextBlock Text="サポート番号" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
+                        <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" />
+                        <TextBlock Text="ステータス" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" />
+                        <ComboBox x:Name="StatusComboBox" Grid.Row="1" Grid.Column="3" Margin="8,4" IsEditable="True" SelectionChanged="OnPreviewChanged" />
+                        <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4">
+                            <Button x:Name="StatusAddButton" Content="+" Width="28" Margin="0,0,4,0" Click="OnStatusAdd" />
+                            <Button x:Name="StatusRemoveButton" Content="-" Width="28" Click="OnStatusRemove" />
+                        </StackPanel>
+
+                        <TextBlock Text="保存先カテゴリ" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" />
+                        <ComboBox x:Name="CategoryComboBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="8,4" SelectionChanged="OnCategorySelected" />
+                        <Button x:Name="StatusUpdateButton" Grid.Row="2" Grid.Column="4" Content="ステータス更新" Width="100" Margin="0,4" HorizontalAlignment="Left" Click="OnStatusUpdate" />
+
+                        <TextBlock Text="作成フォルダ" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" />
+                        <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" />
+
+                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" />
+                    </Grid>
+                </GroupBox>
+
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                    <CheckBox x:Name="OpenAfterCheckBox" Content="作成後にフォルダを開く" Margin="0,0,16,0" IsChecked="True" />
+                    <CheckBox x:Name="DarkModeCheckBox" Content="ダークモード" IsChecked="{Binding DarkMode}" Checked="OnDarkModeToggled" Unchecked="OnDarkModeToggled" />
+                </StackPanel>
+            </StackPanel>
+
+            <GroupBox Grid.Row="1" Header="ノート編集" Margin="0,0,0,12">
+                <Grid Margin="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="ノート種別:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <ComboBox x:Name="NoteSelectorComboBox" Width="240" SelectionChanged="OnNoteChanged" />
+                        <TextBlock Text="テンプレート" VerticalAlignment="Center" Margin="16,0,8,0" />
+                        <ComboBox x:Name="TemplateComboBox"
+                                  Width="240"
+                                  SelectionChanged="OnTemplateSelected"
+                                  DropDownClosed="OnTemplateDropDownClosed"
+                                  PreviewMouseRightButtonDown="OnTemplateItemRightClick" />
+                        <Button x:Name="TemplateSaveButton" Content="保存" Margin="8,0,0,0" Click="OnTemplateSave" />
+                        <Button x:Name="TemplateImportButton" Content="インポート" Margin="8,0,0,0" Click="OnTemplateImport" />
+                        <Button x:Name="TemplateExportButton" Content="エクスポート" Margin="8,0,0,0" Click="OnTemplateExport" />
+                    </StackPanel>
+
+                    <TextBlock Grid.Row="1" x:Name="NoteFileLabel" Text="ファイル: -" Margin="0,0,0,8" />
+
+                    <TextBox Grid.Row="2"
+                             x:Name="NoteEditorTextBox"
+                             MinHeight="200"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             VerticalScrollBarVisibility="Auto" />
+
+                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button x:Name="NoteOpenButton" Content="ノートを開く" Click="OnNoteOpen" />
+                        <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
+                        <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
+                        <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
+                    </StackPanel>
+                </Grid>
+            </GroupBox>
+
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" />
+        </Grid>
+    </DockPanel>
+</Window>

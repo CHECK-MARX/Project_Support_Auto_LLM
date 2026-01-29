@@ -1,0 +1,15 @@
+﻿{
+  "BaseFolder": "",
+  "DarkMode": true,
+  "WindowGeometry": [],
+  "SplitterState": [],
+  "RecentCases": [],
+  "Statuses": [
+    "受付",
+    "調査中",
+    "完了",
+    "クローズ予定",
+    "クローズ"
+  ],
+  "NoteTemplates": []
+}

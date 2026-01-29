@@ -1,2 +1,0 @@
-[console_scripts]
-support-case-manager = support_case_manager.app:main
