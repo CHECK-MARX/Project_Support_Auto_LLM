@@ -38,11 +38,11 @@ jobs:
         run: dotnet test tests/SupportCaseManager.Tests/SupportCaseManager.Tests.csproj -c Release --no-build --logger "trx;LogFileName=test-results.trx"
 
       - name: Publish
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: dotnet publish src/SupportCaseManager.App/SupportCaseManager.App.csproj -c Release -p:PublishProfile=WinX64SingleFile -o artifacts/SupportCaseManager
 
       - name: Package release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: Compress-Archive -Path artifacts/SupportCaseManager/* -DestinationPath artifacts/SupportCaseManager-win-x64.zip -Force
 
       - name: Upload release asset
@@ -52,7 +52,7 @@ jobs:
           files: artifacts/SupportCaseManager-win-x64.zip
 
       - name: Upload artifact
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: SupportCaseManager-win-x64
