@@ -38,9 +38,19 @@ jobs:
         if: github.event_name == 'release'
         run: dotnet publish src/SupportCaseManager.App/SupportCaseManager.App.csproj -c Release -p:PublishProfile=WinX64SingleFile -p:PublishDir=artifacts\\SupportCaseManager\\
 
+      - name: Package release
+        if: github.event_name == 'release'
+        run: Compress-Archive -Path artifacts/SupportCaseManager/* -DestinationPath artifacts/SupportCaseManager-win-x64.zip -Force
+
+      - name: Upload release asset
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/SupportCaseManager-win-x64.zip
+
       - name: Upload artifact
         if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           name: SupportCaseManager-win-x64
-          path: artifacts/SupportCaseManager/
+          path: artifacts/SupportCaseManager-win-x64.zip
