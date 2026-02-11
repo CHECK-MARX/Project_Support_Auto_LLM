@@ -70,6 +70,16 @@ public sealed class ConfigStore
             ["RecentCases"] = recent,
             ["Statuses"] = settings.Statuses?.Count > 0 ? settings.Statuses : Defaults.DefaultStatuses,
             ["NoteTemplates"] = settings.NoteTemplates ?? new List<Dictionary<string, string>>(),
+            ["Products"] = settings.Products?
+                .Where(item => !string.IsNullOrWhiteSpace(item.Name) && !string.IsNullOrWhiteSpace(item.BasePath))
+                .Select(item => new Dictionary<string, string>
+                {
+                    ["Name"] = item.Name,
+                    ["BasePath"] = item.BasePath,
+                })
+                .ToList() ?? new List<Dictionary<string, string>>(),
+            ["ActiveProduct"] = settings.ActiveProduct,
+            ["ExcludedCases"] = settings.ExcludedCases ?? new List<string>(),
         };
 
         var options = new JsonSerializerOptions
@@ -110,6 +120,9 @@ public sealed class ConfigStore
             RecentCases = ReadStringList(root, "RecentCases"),
             Statuses = ReadStringList(root, "Statuses"),
             NoteTemplates = ReadTemplateList(root, "NoteTemplates"),
+            Products = ReadProductList(root, "Products"),
+            ActiveProduct = ReadString(root, "ActiveProduct") ?? string.Empty,
+            ExcludedCases = ReadStringList(root, "ExcludedCases"),
         };
 
         if (settings.Statuses.Count == 0)
@@ -188,6 +201,52 @@ public sealed class ConfigStore
         }
 
         return new List<string>();
+    }
+
+    private static List<ProductProfile> ReadProductList(JsonElement root, string property)
+    {
+        if (!root.TryGetProperty(property, out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return new List<ProductProfile>();
+        }
+
+        var list = new List<ProductProfile>();
+        foreach (var item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var name = ReadObjectString(item, "Name") ?? ReadObjectString(item, "name");
+            var basePath = ReadObjectString(item, "BasePath")
+                ?? ReadObjectString(item, "BaseFolder")
+                ?? ReadObjectString(item, "basePath")
+                ?? ReadObjectString(item, "baseFolder");
+
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(basePath))
+            {
+                continue;
+            }
+
+            list.Add(new ProductProfile
+            {
+                Name = name,
+                BasePath = basePath,
+            });
+        }
+
+        return list;
+    }
+
+    private static string? ReadObjectString(JsonElement root, string property)
+    {
+        if (root.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String)
+        {
+            return value.GetString();
+        }
+
+        return null;
     }
 
     private static List<Dictionary<string, string>> ReadTemplateList(JsonElement root, string property)

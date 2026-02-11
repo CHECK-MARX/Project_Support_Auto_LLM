@@ -11,5 +11,6 @@
     "クローズ予定",
     "クローズ"
   ],
-  "NoteTemplates": []
+  "NoteTemplates": [],
+  "ExcludedCases": []
 }

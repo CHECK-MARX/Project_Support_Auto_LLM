@@ -15,126 +15,326 @@
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Orientation="Vertical" Margin="0,0,0,12">
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                    <TextBlock Text="ベースフォルダ:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <TextBox x:Name="BasePathTextBox"
-                             Width="640"
-                             Text="{Binding BasePath, UpdateSourceTrigger=PropertyChanged}"
-                             LostFocus="OnBasePathChanged" />
-                    <Button x:Name="BrowseButton" Content="参照..." Margin="8,0,0,0" Click="OnBrowseBase" />
-                </StackPanel>
+            <TabControl x:Name="MainTabControl"
+                        Grid.Row="0"
+                        Style="{StaticResource TabStripOnlyStyle}"
+                        ItemContainerStyle="{StaticResource MainTabItemStyle}"
+                        SelectionChanged="OnMainTabChanged"
+                        Background="{DynamicResource AppBackground}" />
 
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
-                    <TextBlock Text="履歴:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <ComboBox x:Name="HistoryComboBox" Width="520" SelectionChanged="OnHistorySelected" />
-                    <Button x:Name="RefreshButton" Content="履歴更新" Margin="8,0,0,0" Click="OnRefresh" />
-                </StackPanel>
-
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                    <TextBlock Text="サポート番号検索:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                    <TextBox x:Name="SearchTextBox" Width="320" KeyDown="OnSearchKeyDown" />
-                    <Button x:Name="SearchButton" Content="検索" Margin="8,0,0,0" Click="OnSearch" />
-                </StackPanel>
-
-                <GroupBox Header="案件メタ情報" Margin="0,0,0,12">
-                    <Grid Margin="12">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="260" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="260" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-
-                        <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
-                        <DatePicker x:Name="CreatedDatePicker" Grid.Row="0" Grid.Column="1" Margin="8,4" SelectedDateChanged="OnPreviewChanged" />
-                        <TextBlock Text="会社名" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" />
-                        <TextBox x:Name="CompanyTextBox" Grid.Row="0" Grid.Column="3" Margin="8,4" TextChanged="OnPreviewChanged" />
-                        <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4,0,4">
-                            <Button x:Name="NewButton" Content="新規" Click="OnNewCase" />
-                            <Button x:Name="CreateButton" Content="フォルダ作成" Margin="8,0,0,0" Click="OnCreateCase" />
-                            <Button x:Name="OpenFolderButton" Content="フォルダを開く" Margin="8,0,0,0" Click="OnOpenFolder" />
-                        </StackPanel>
-
-                        <TextBlock Text="サポート番号" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
-                        <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" />
-                        <TextBlock Text="ステータス" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" />
-                        <ComboBox x:Name="StatusComboBox" Grid.Row="1" Grid.Column="3" Margin="8,4" IsEditable="True" SelectionChanged="OnPreviewChanged" />
-                        <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4">
-                            <Button x:Name="StatusAddButton" Content="+" Width="28" Margin="0,0,4,0" Click="OnStatusAdd" />
-                            <Button x:Name="StatusRemoveButton" Content="-" Width="28" Click="OnStatusRemove" />
-                        </StackPanel>
-
-                        <TextBlock Text="保存先カテゴリ" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" />
-                        <ComboBox x:Name="CategoryComboBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="8,4" SelectionChanged="OnCategorySelected" />
-                        <Button x:Name="StatusUpdateButton" Grid.Row="2" Grid.Column="4" Content="ステータス更新" Width="100" Margin="0,4" HorizontalAlignment="Left" Click="OnStatusUpdate" />
-
-                        <TextBlock Text="作成フォルダ" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" />
-                        <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" />
-
-                        <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" />
-                    </Grid>
-                </GroupBox>
-
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
-                    <CheckBox x:Name="OpenAfterCheckBox" Content="作成後にフォルダを開く" Margin="0,0,16,0" IsChecked="True" />
-                    <CheckBox x:Name="DarkModeCheckBox" Content="ダークモード" IsChecked="{Binding DarkMode}" Checked="OnDarkModeToggled" Unchecked="OnDarkModeToggled" />
-                </StackPanel>
-            </StackPanel>
-
-            <GroupBox Grid.Row="1" Header="ノート編集" Margin="0,0,0,12">
-                <Grid Margin="12">
+            <Grid Grid.Row="1">
+                <Grid x:Name="CaseContentGrid" Background="{DynamicResource AppBackground}">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-                        <TextBlock Text="ノート種別:" VerticalAlignment="Center" Margin="0,0,8,0" />
-                        <ComboBox x:Name="NoteSelectorComboBox" Width="240" SelectionChanged="OnNoteChanged" />
-                        <TextBlock Text="テンプレート" VerticalAlignment="Center" Margin="16,0,8,0" />
-                        <ComboBox x:Name="TemplateComboBox"
-                                  Width="240"
-                                  SelectionChanged="OnTemplateSelected"
-                                  DropDownClosed="OnTemplateDropDownClosed"
-                                  PreviewMouseRightButtonDown="OnTemplateItemRightClick" />
-                        <Button x:Name="TemplateSaveButton" Content="保存" Margin="8,0,0,0" Click="OnTemplateSave" />
-                        <Button x:Name="TemplateImportButton" Content="インポート" Margin="8,0,0,0" Click="OnTemplateImport" />
-                        <Button x:Name="TemplateExportButton" Content="エクスポート" Margin="8,0,0,0" Click="OnTemplateExport" />
+                    <StackPanel Grid.Row="0" Orientation="Vertical" Margin="0,0,0,12">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="ベースフォルダ:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBox x:Name="BasePathTextBox"
+                                     Width="640"
+                                     Text="{Binding BasePath, UpdateSourceTrigger=PropertyChanged}"
+                                     LostFocus="OnBasePathChanged" />
+                            <Button x:Name="BrowseButton" Content="参照..." Margin="8,0,0,0" Click="OnBrowseBase" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="履歴:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <ComboBox x:Name="HistoryComboBox" Width="520" SelectionChanged="OnHistorySelected" />
+                            <Button x:Name="RefreshButton" Content="履歴更新" Margin="8,0,0,0" Click="OnRefresh" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <TextBlock Text="サポート番号検索:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                            <TextBox x:Name="SearchTextBox" Width="320" KeyDown="OnSearchKeyDown" />
+                            <Button x:Name="SearchButton" Content="検索" Margin="8,0,0,0" Click="OnSearch" />
+                        </StackPanel>
+
+                        <GroupBox Header="案件メタ情報" Margin="0,0,0,12">
+                            <Grid Margin="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="260" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="260" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
+                                <DatePicker x:Name="CreatedDatePicker" Grid.Row="0" Grid.Column="1" Margin="8,4" SelectedDateChanged="OnPreviewChanged" />
+                                <TextBlock Text="会社名" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" />
+                                <TextBox x:Name="CompanyTextBox" Grid.Row="0" Grid.Column="3" Margin="8,4" TextChanged="OnPreviewChanged" />
+                                <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4,0,4">
+                                    <Button x:Name="NewButton" Content="新規" Click="OnNewCase" />
+                                    <Button x:Name="CreateButton" Content="フォルダ作成" Margin="8,0,0,0" Click="OnCreateCase" />
+                                    <Button x:Name="OpenFolderButton" Content="フォルダを開く" Margin="8,0,0,0" Click="OnOpenFolder" />
+                                </StackPanel>
+
+                                <TextBlock Text="サポート番号" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
+                                <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" />
+                                <TextBlock Text="ステータス" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" />
+                                <ComboBox x:Name="StatusComboBox" Grid.Row="1" Grid.Column="3" Margin="8,4" IsEditable="True" SelectionChanged="OnPreviewChanged" />
+                                <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4">
+                                    <Button x:Name="StatusAddButton" Content="+" Width="28" Margin="0,0,4,0" Click="OnStatusAdd" />
+                                    <Button x:Name="StatusRemoveButton" Content="-" Width="28" Click="OnStatusRemove" />
+                                </StackPanel>
+
+                                <TextBlock Text="保存先カテゴリ" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" />
+                                <ComboBox x:Name="CategoryComboBox" Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Margin="8,4" SelectionChanged="OnCategorySelected" />
+                                <Button x:Name="StatusUpdateButton" Grid.Row="2" Grid.Column="4" Content="ステータス更新" Width="100" Margin="0,4" HorizontalAlignment="Left" Click="OnStatusUpdate" />
+
+                                <TextBlock Text="作成フォルダ" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" />
+                                <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" />
+
+                                <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" />
+                            </Grid>
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                            <CheckBox x:Name="OpenAfterCheckBox" Content="作成後にフォルダを開く" Margin="0,0,16,0" IsChecked="True" />
+                            <CheckBox x:Name="DarkModeCheckBox" Content="ダークモード" IsChecked="{Binding DarkMode}" Checked="OnDarkModeToggled" Unchecked="OnDarkModeToggled" />
+                        </StackPanel>
                     </StackPanel>
 
-                    <TextBlock Grid.Row="1" x:Name="NoteFileLabel" Text="ファイル: -" Margin="0,0,0,8" />
+                    <GroupBox Grid.Row="1" Header="ノート編集" Margin="0,0,0,12">
+                        <Grid Margin="12">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                    <TextBox Grid.Row="2"
-                             x:Name="NoteEditorTextBox"
-                             MinHeight="200"
-                             AcceptsReturn="True"
-                             TextWrapping="Wrap"
-                             VerticalScrollBarVisibility="Auto" />
+                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                                <TextBlock Text="ノート種別:" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ComboBox x:Name="NoteSelectorComboBox" Width="240" SelectionChanged="OnNoteChanged" />
+                                <TextBlock Text="テンプレート" VerticalAlignment="Center" Margin="16,0,8,0" />
+                                <ComboBox x:Name="TemplateComboBox"
+                                          Width="240"
+                                          SelectionChanged="OnTemplateSelected"
+                                          DropDownClosed="OnTemplateDropDownClosed"
+                                          PreviewMouseRightButtonDown="OnTemplateItemRightClick" />
+                                <Button x:Name="TemplateSaveButton" Content="保存" Margin="8,0,0,0" Click="OnTemplateSave" />
+                                <Button x:Name="TemplateImportButton" Content="インポート" Margin="8,0,0,0" Click="OnTemplateImport" />
+                                <Button x:Name="TemplateExportButton" Content="エクスポート" Margin="8,0,0,0" Click="OnTemplateExport" />
+                            </StackPanel>
 
-                    <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
-                        <Button x:Name="NoteOpenButton" Content="ノートを開く" Click="OnNoteOpen" />
-                        <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
-                        <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
-                        <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
+                            <TextBlock Grid.Row="1" x:Name="NoteFileLabel" Text="ファイル: -" Margin="0,0,0,8" />
+
+                            <TextBox Grid.Row="2"
+                                     x:Name="NoteEditorTextBox"
+                                     MinHeight="200"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto" />
+
+                            <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button x:Name="NoteOpenButton" Content="ノートを開く" Click="OnNoteOpen" />
+                                <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
+                                <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
+                                <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
+                            </StackPanel>
+                        </Grid>
+                    </GroupBox>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" />
+                </Grid>
+
+                <Grid x:Name="SettingsContentGrid" Background="{DynamicResource AppBackground}" Margin="12" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Text="プロダクト名がタブ名になります。追加/編集はダイアログから行ってください。" Margin="0,0,0,8" />
+                    <DataGrid x:Name="ProductGrid"
+                              Grid.Row="1"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="True"
+                              SelectionMode="Single"
+                              HeadersVisibility="Column"
+                              Margin="0,0,0,8">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="プロダクト名" Binding="{Binding Name}" Width="200" />
+                            <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BasePath}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                        <Button x:Name="ProductAddButton" Content="追加" Click="OnProductAdd" />
+                        <Button x:Name="ProductEditButton" Content="編集" Margin="8,0,0,0" Click="OnProductEdit" />
+                        <Button x:Name="ProductRemoveButton" Content="削除" Margin="8,0,0,0" Click="OnProductRemove" />
+                        <Button x:Name="ProductMoveUpButton" Content="上へ" Margin="8,0,0,0" Click="OnProductMoveUp" />
+                        <Button x:Name="ProductMoveDownButton" Content="下へ" Margin="8,0,0,0" Click="OnProductMoveDown" />
+                        <Button x:Name="ProductBrowseButton" Content="参照..." Margin="16,0,0,0" Click="OnProductBrowse" />
+                        <Button x:Name="ProductAddCurrentButton" Content="現在のベースを追加" Margin="8,0,0,0" Click="OnProductAddCurrent" />
+                        <Button x:Name="ProductSaveButton" Content="保存" Margin="8,0,0,0" Click="OnProductSave" />
                     </StackPanel>
                 </Grid>
-            </GroupBox>
 
-            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" />
+                <Grid x:Name="StatusContentGrid" Background="{DynamicResource AppBackground}" Margin="12" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="更新停滞の判定: 7日以上更新なし (未クローズのみ)" VerticalAlignment="Center" />
+                        <Button x:Name="StatusRefreshButton" Content="再読み込み" Margin="16,0,0,0" Click="OnStatusRefresh" />
+                    </StackPanel>
+
+                    <GroupBox Grid.Row="1" Header="プロダクト状況" Margin="0,0,0,8">
+                        <DataGrid x:Name="StatusSummaryGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="プロダクト名" Binding="{Binding Name}" Width="200" />
+                                <DataGridTextColumn Header="件数" Binding="{Binding Total}" Width="80" />
+                                <DataGridTextColumn Header="進行中" Binding="{Binding Open}" Width="80" />
+                                <DataGridTextColumn Header="停滞(7日+)" Binding="{Binding Stale}" Width="100" />
+                                <DataGridTextColumn Header="最終更新" Binding="{Binding LatestUpdated}" Width="140" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="2" Header="進行中 (未クローズ)" Margin="0,0,0,8">
+                        <DataGrid x:Name="OpenCaseGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  HeadersVisibility="Column"
+                                  MouseDoubleClick="OnOpenCaseRowDoubleClick">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
+                                <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
+                                <DataGridTemplateColumn Header="ステータス" Width="160">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding StatusOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      SelectedItem="{Binding Status}"
+                                                      Width="140"
+                                                      SelectionChanged="OnOpenCaseStatusChanged" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTextColumn Header="最終更新" Binding="{Binding LastUpdatedDisplay}" Width="140" />
+                                <DataGridTemplateColumn Header="開く" Width="70">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="開く" Padding="6,2" Click="OnOpenCaseOpen" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="除外" Width="70">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="除外" Padding="6,2" Click="OnOpenCaseExclude" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GridSplitter Grid.Row="3"
+                                  Height="6"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Center"
+                                  ShowsPreview="True"
+                                  ResizeDirection="Rows"
+                                  ResizeBehavior="PreviousAndNext"
+                                  Background="{DynamicResource BorderBrush}" />
+
+                    <Grid Grid.Row="4">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <GroupBox Grid.Row="0" Header="更新停滞 (7日以上 / 未クローズ)" Margin="0,0,0,8">
+                            <DataGrid x:Name="StaleCaseGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="True"
+                                      HeadersVisibility="Column"
+                                      MouseDoubleClick="OnStaleCaseRowDoubleClick">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                    <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
+                                    <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
+                                    <DataGridTemplateColumn Header="ステータス" Width="160">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding StatusOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          SelectedItem="{Binding Status}"
+                                                          Width="140"
+                                                          SelectionChanged="OnStaleCaseStatusChanged" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="最終更新" Binding="{Binding LastUpdatedDisplay}" Width="140" />
+                                    <DataGridTemplateColumn Header="開く" Width="70">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="開く" Padding="6,2" Click="OnStaleCaseOpen" Tag="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="除外" Width="70">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="除外" Padding="6,2" Click="OnStaleCaseExclude" Tag="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </GroupBox>
+
+                        <GroupBox Grid.Row="1" Header="除外リスト">
+                            <DataGrid x:Name="ExcludedCaseGrid"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="True"
+                                      HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                    <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
+                                    <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
+                                    <DataGridTextColumn Header="ステータス" Binding="{Binding Status}" Width="140" />
+                                    <DataGridTextColumn Header="最終更新" Binding="{Binding LastUpdatedDisplay}" Width="140" />
+                                    <DataGridTemplateColumn Header="戻す" Width="70">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="戻す" Padding="6,2" Click="OnExcludedCaseRestore" Tag="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </GroupBox>
+                    </Grid>
+                </Grid>
+            </Grid>
         </Grid>
     </DockPanel>
 </Window>

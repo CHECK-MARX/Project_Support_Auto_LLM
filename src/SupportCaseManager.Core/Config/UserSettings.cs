@@ -11,6 +11,9 @@ public sealed class UserSettings
     public List<string> RecentCases { get; set; } = new();
     public List<string> Statuses { get; set; } = new(Defaults.DefaultStatuses);
     public List<Dictionary<string, string>> NoteTemplates { get; set; } = new();
+    public List<ProductProfile> Products { get; set; } = new();
+    public string ActiveProduct { get; set; } = string.Empty;
+    public List<string> ExcludedCases { get; set; } = new();
 
     public UserSettings Update(string? basePath = null, bool? darkMode = null)
     {

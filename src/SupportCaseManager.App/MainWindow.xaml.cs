@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -33,11 +34,25 @@ public partial class MainWindow : Window
     private readonly UserSettings _settings;
     private readonly Dictionary<string, CaseRecord> _caseCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _categoryPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ObservableCollection<ProductEntry> _productEntries = new();
+    private readonly ObservableCollection<ProductSummaryEntry> _productSummaries = new();
+    private readonly ObservableCollection<OpenCaseEntry> _openCases = new();
+    private readonly ObservableCollection<StaleCaseEntry> _staleCases = new();
+    private readonly ObservableCollection<ExcludedCaseEntry> _excludedCases = new();
+    private readonly ObservableCollection<string> _statusOptions = new();
     private CaseRecord? _currentCase;
     private NoteDefinition _currentNote = NoteDefinitions.All[0];
     private bool _suppressTemplateDialog;
     private ComboBoxItem? _pendingTemplateDialogItem;
     private bool _templateDialogQueued;
+    private bool _suppressMainTabChange;
+    private ProductProfile? _activeProduct;
+    private TabItem? _settingsTabItem;
+    private TabItem? _statusTabItem;
+    private const int StaleDaysThreshold = 7;
+    private bool _isRefreshingStatusTab;
+
+    public ObservableCollection<string> StatusOptions => _statusOptions;
 
     public MainWindow(MainViewModel viewModel)
     {
@@ -56,6 +71,9 @@ public partial class MainWindow : Window
         CreatedDatePicker.SelectedDate = DateTime.Today;
         RefreshStatusOptions();
         RefreshTemplateCombo(null);
+        InitializeProductSettings();
+        InitializeStatusTab();
+        InitializeMainTabs();
         InitializeNoteSelector();
         TemplateComboBox.AddHandler(ComboBoxItem.PreviewMouseLeftButtonUpEvent, new MouseButtonEventHandler(OnTemplateItemClicked), true);
         StatusComboBox.AddHandler(System.Windows.Controls.TextBox.TextChangedEvent, new TextChangedEventHandler(OnStatusTextChanged));
@@ -141,6 +159,1006 @@ public partial class MainWindow : Window
         _viewModel.StatusMessage = "履歴を更新しました。";
     }
 
+    private void InitializeProductSettings()
+    {
+        _productEntries.Clear();
+        foreach (var product in _settings.Products)
+        {
+            _productEntries.Add(new ProductEntry
+            {
+                Name = product.Name,
+                BasePath = product.BasePath,
+            });
+        }
+
+        if (ProductGrid != null)
+        {
+            ProductGrid.ItemsSource = _productEntries;
+        }
+    }
+
+    private void InitializeStatusTab()
+    {
+        if (StatusSummaryGrid != null)
+        {
+            StatusSummaryGrid.ItemsSource = _productSummaries;
+        }
+
+        if (OpenCaseGrid != null)
+        {
+            OpenCaseGrid.ItemsSource = _openCases;
+        }
+
+        if (StaleCaseGrid != null)
+        {
+            StaleCaseGrid.ItemsSource = _staleCases;
+        }
+
+        if (ExcludedCaseGrid != null)
+        {
+            ExcludedCaseGrid.ItemsSource = _excludedCases;
+        }
+    }
+
+    private void InitializeMainTabs()
+    {
+        if (MainTabControl == null)
+        {
+            return;
+        }
+
+        _suppressMainTabChange = true;
+        try
+        {
+            MainTabControl.Items.Clear();
+            var products = _settings.Products;
+            if (products.Count == 0)
+            {
+                SetBasePathEditingEnabled(true);
+                _activeProduct = null;
+                var defaultTab = new TabItem { Header = "案件", Tag = "default" };
+                MainTabControl.Items.Add(defaultTab);
+                _statusTabItem = new TabItem { Header = "ステータス", Tag = "status" };
+                MainTabControl.Items.Add(_statusTabItem);
+                _settingsTabItem = new TabItem { Header = "設定", Tag = "settings" };
+                MainTabControl.Items.Add(_settingsTabItem);
+                MainTabControl.SelectedItem = defaultTab;
+                return;
+            }
+
+            foreach (var product in products)
+            {
+                var tab = new TabItem
+                {
+                    Header = product.Name,
+                    Tag = product,
+                };
+                MainTabControl.Items.Add(tab);
+            }
+
+            _statusTabItem = new TabItem { Header = "ステータス", Tag = "status" };
+            MainTabControl.Items.Add(_statusTabItem);
+            _settingsTabItem = new TabItem { Header = "設定", Tag = "settings" };
+            MainTabControl.Items.Add(_settingsTabItem);
+
+            var activeName = _settings.ActiveProduct;
+            var activeTab = MainTabControl.Items.OfType<TabItem>()
+                .FirstOrDefault(item => item.Tag is ProductProfile profile &&
+                                        string.Equals(profile.Name, activeName, StringComparison.Ordinal));
+
+            MainTabControl.SelectedItem = activeTab ?? MainTabControl.Items.OfType<TabItem>()
+                .FirstOrDefault(item => item.Tag is ProductProfile);
+        }
+        finally
+        {
+            _suppressMainTabChange = false;
+        }
+
+        ApplySelectedMainTab();
+    }
+
+    private void OnMainTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressMainTabChange)
+        {
+            return;
+        }
+
+        ApplySelectedMainTab();
+    }
+
+    private void ApplySelectedMainTab()
+    {
+        if (MainTabControl.SelectedItem is not TabItem tab)
+        {
+            return;
+        }
+
+        if (tab.Tag is ProductProfile product)
+        {
+            SettingsContentGrid.Visibility = Visibility.Collapsed;
+            StatusContentGrid.Visibility = Visibility.Collapsed;
+            CaseContentGrid.Visibility = Visibility.Visible;
+            ActivateProduct(product);
+            return;
+        }
+
+        if (tab.Tag is string tag && tag == "settings")
+        {
+            SettingsContentGrid.Visibility = Visibility.Visible;
+            StatusContentGrid.Visibility = Visibility.Collapsed;
+            CaseContentGrid.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (tab.Tag is string statusTag && statusTag == "status")
+        {
+            SettingsContentGrid.Visibility = Visibility.Collapsed;
+            CaseContentGrid.Visibility = Visibility.Collapsed;
+            StatusContentGrid.Visibility = Visibility.Visible;
+            RefreshStatusTab();
+            return;
+        }
+
+        SettingsContentGrid.Visibility = Visibility.Collapsed;
+        StatusContentGrid.Visibility = Visibility.Collapsed;
+        CaseContentGrid.Visibility = Visibility.Visible;
+        SetBasePathEditingEnabled(true);
+    }
+    private void ActivateProduct(ProductProfile product)
+    {
+        _activeProduct = product;
+        _settings.ActiveProduct = product.Name;
+        BasePathTextBox.Text = product.BasePath;
+        SetBasePathEditingEnabled(false);
+        RefreshView();
+    }
+
+    private void SetBasePathEditingEnabled(bool enabled)
+    {
+        BasePathTextBox.IsReadOnly = !enabled;
+        BrowseButton.IsEnabled = enabled;
+    }
+
+
+    private void OnProductAdd(object sender, RoutedEventArgs e)
+    {
+        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, BasePathTextBox.Text.Trim())
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _productEntries.Add(new ProductEntry { Name = dialog.ProductName, BasePath = dialog.BasePath });
+    }
+
+    private void OnProductRemove(object sender, RoutedEventArgs e)
+    {
+        if (ProductGrid.SelectedItem is ProductEntry entry)
+        {
+            _productEntries.Remove(entry);
+        }
+    }
+
+    private void OnProductEdit(object sender, RoutedEventArgs e)
+    {
+        if (ProductGrid.SelectedItem is not ProductEntry entry)
+        {
+            MessageBox.Show(this, "編集するプロダクトを選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new ProductEditorDialog("プロダクト編集", entry.Name, entry.BasePath)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        entry.Name = dialog.ProductName;
+        entry.BasePath = dialog.BasePath;
+        ProductGrid.Items.Refresh();
+    }
+
+    private void OnProductMoveUp(object sender, RoutedEventArgs e)
+    {
+        MoveProductEntry(-1);
+    }
+
+    private void OnProductMoveDown(object sender, RoutedEventArgs e)
+    {
+        MoveProductEntry(1);
+    }
+
+    private void MoveProductEntry(int delta)
+    {
+        if (ProductGrid.SelectedItem is not ProductEntry entry)
+        {
+            MessageBox.Show(this, "移動するプロダクトを選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var index = _productEntries.IndexOf(entry);
+        if (index < 0)
+        {
+            return;
+        }
+
+        var targetIndex = index + delta;
+        if (targetIndex < 0 || targetIndex >= _productEntries.Count)
+        {
+            return;
+        }
+
+        _productEntries.Move(index, targetIndex);
+        ProductGrid.SelectedItem = entry;
+        ProductGrid.ScrollIntoView(entry);
+    }
+
+    private void OnProductBrowse(object sender, RoutedEventArgs e)
+    {
+        if (ProductGrid.SelectedItem is not ProductEntry entry)
+        {
+            MessageBox.Show(this, "参照するプロダクトを選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        using var dialog = new System.Windows.Forms.FolderBrowserDialog
+        {
+            Description = "ベースフォルダを選択",
+            UseDescriptionForTitle = true,
+            SelectedPath = string.IsNullOrWhiteSpace(entry.BasePath) ? BasePathTextBox.Text : entry.BasePath,
+        };
+
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+        {
+            return;
+        }
+
+        entry.BasePath = dialog.SelectedPath;
+        ProductGrid.Items.Refresh();
+    }
+
+    private void OnProductAddCurrent(object sender, RoutedEventArgs e)
+    {
+        var basePath = BasePathTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            MessageBox.Show(this, "現在のベースフォルダが未設定です。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, basePath)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        _productEntries.Add(new ProductEntry { Name = dialog.ProductName, BasePath = dialog.BasePath });
+    }
+
+    private void OnProductSave(object sender, RoutedEventArgs e)
+    {
+        ProductGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+        var cleaned = _productEntries
+            .Select(entry => new ProductEntry { Name = entry.Name?.Trim() ?? string.Empty, BasePath = entry.BasePath?.Trim() ?? string.Empty })
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(entry.BasePath))
+            .ToList();
+
+        var duplicates = cleaned
+            .GroupBy(entry => entry.Name, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToList();
+
+        if (duplicates.Count > 0)
+        {
+            MessageBox.Show(this, $"同名のプロダクトがあります: {string.Join(", ", duplicates)}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        _settings.Products = cleaned
+            .Select(entry => new ProductProfile { Name = entry.Name, BasePath = entry.BasePath })
+            .ToList();
+
+        if (_settings.Products.Count == 0)
+        {
+            _settings.ActiveProduct = string.Empty;
+        }
+        else if (string.IsNullOrWhiteSpace(_settings.ActiveProduct) ||
+                 !_settings.Products.Any(item => item.Name == _settings.ActiveProduct))
+        {
+            _settings.ActiveProduct = _settings.Products[0].Name;
+        }
+
+        _config.Save(_settings);
+        InitializeMainTabs();
+        InitializeProductSettings();
+        RefreshStatusTab();
+        _viewModel.StatusMessage = "プロダクト設定を保存しました。";
+    }
+
+    private void OnStatusRefresh(object sender, RoutedEventArgs e)
+    {
+        RefreshStatusTab();
+    }
+
+    private void RefreshStatusTab()
+    {
+        _isRefreshingStatusTab = true;
+        _productSummaries.Clear();
+        _openCases.Clear();
+        _staleCases.Clear();
+        _excludedCases.Clear();
+
+        var products = _settings.Products;
+        if (products.Count == 0)
+        {
+            _viewModel.StatusMessage = "プロダクトが未設定です。";
+            _isRefreshingStatusTab = false;
+            return;
+        }
+
+        var excludedSet = new HashSet<string>(
+            _settings.ExcludedCases.Select(NormalizePath),
+            StringComparer.OrdinalIgnoreCase);
+
+        var statusList = new List<string>();
+        var statusSet = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var status in _settings.Statuses)
+        {
+            AddStatusOption(statusList, statusSet, status);
+        }
+        var allCasesByPath = new Dictionary<string, (string ProductName, CaseRecord Record)>(StringComparer.OrdinalIgnoreCase);
+        var cutoff = DateTime.Today.AddDays(-StaleDaysThreshold);
+        foreach (var product in products)
+        {
+            if (string.IsNullOrWhiteSpace(product.BasePath))
+            {
+                continue;
+            }
+
+            var repo = new CaseRepository(_logger);
+            repo.SetBasePath(product.BasePath);
+            var productRoot = NormalizePath(product.BasePath);
+            var cases = repo.AllCases()
+                .Where(record => IsPathUnderBase(productRoot, record.FolderPath))
+                .ToList();
+
+            foreach (var record in cases)
+            {
+                var pathKey = NormalizePath(record.FolderPath);
+                if (!string.IsNullOrWhiteSpace(pathKey) && !allCasesByPath.ContainsKey(pathKey))
+                {
+                    allCasesByPath[pathKey] = (product.Name, record);
+                }
+            }
+
+            var filtered = cases
+                .Where(record => !excludedSet.Contains(NormalizePath(record.FolderPath)))
+                .ToList();
+
+            var directCases = filtered
+                .Where(record => IsDirectChild(productRoot, record.FolderPath))
+                .ToList();
+            var openCases = directCases.Where(record => !IsClosedStatus(record.Status)).ToList();
+            var staleCases = openCases.Where(record => IsStale(record, cutoff)).ToList();
+
+            _productSummaries.Add(new ProductSummaryEntry
+            {
+                Name = product.Name,
+                Total = directCases.Count,
+                Open = openCases.Count,
+                Stale = staleCases.Count,
+                LatestUpdated = BuildLatestUpdated(directCases),
+            });
+
+            foreach (var record in openCases)
+            {
+                var displayStatus = NormalizeStatusLabel(record.Status);
+                AddStatusOption(statusList, statusSet, displayStatus);
+
+                _openCases.Add(new OpenCaseEntry
+                {
+                    ProductName = product.Name,
+                    Company = record.Company,
+                    SupportNumber = record.SupportNumber,
+                    Status = displayStatus,
+                    LastUpdatedDisplay = FormatDate(record.LastUpdated),
+                    FolderPath = NormalizePath(record.FolderPath),
+                });
+            }
+
+            foreach (var record in staleCases)
+            {
+                var displayStatus = NormalizeStatusLabel(record.Status);
+                AddStatusOption(statusList, statusSet, displayStatus);
+
+                _staleCases.Add(new StaleCaseEntry
+                {
+                    ProductName = product.Name,
+                    Company = record.Company,
+                    SupportNumber = record.SupportNumber,
+                    Status = displayStatus,
+                    LastUpdatedDisplay = FormatDate(record.LastUpdated),
+                    FolderPath = NormalizePath(record.FolderPath),
+                });
+            }
+        }
+
+        foreach (var excluded in excludedSet)
+        {
+            if (string.IsNullOrWhiteSpace(excluded))
+            {
+                continue;
+            }
+
+            if (allCasesByPath.TryGetValue(excluded, out var info))
+            {
+                var displayStatus = NormalizeStatusLabel(info.Record.Status);
+                AddStatusOption(statusList, statusSet, displayStatus);
+
+                _excludedCases.Add(new ExcludedCaseEntry
+                {
+                    ProductName = info.ProductName,
+                    Company = info.Record.Company,
+                    SupportNumber = info.Record.SupportNumber,
+                    Status = displayStatus,
+                    LastUpdatedDisplay = FormatDate(info.Record.LastUpdated),
+                    FolderPath = excluded,
+                });
+            }
+            else
+            {
+                _excludedCases.Add(new ExcludedCaseEntry
+                {
+                    ProductName = "-",
+                    Company = string.Empty,
+                    SupportNumber = string.Empty,
+                    Status = string.Empty,
+                    LastUpdatedDisplay = string.Empty,
+                    FolderPath = excluded,
+                });
+            }
+        }
+
+        var currentStatuses = new List<string>();
+        var currentSet = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var status in _settings.Statuses)
+        {
+            AddStatusOption(currentStatuses, currentSet, status);
+        }
+
+        if (!statusList.SequenceEqual(currentStatuses))
+        {
+            _settings.Statuses = statusList;
+            _config.Save(_settings);
+            RefreshStatusOptions();
+        }
+
+        _viewModel.StatusMessage = "ステータスを更新しました。";
+        _isRefreshingStatusTab = false;
+    }
+
+    private static bool IsClosedStatus(string? status)
+    {
+        return !string.IsNullOrWhiteSpace(status) && status.Contains("クローズ", StringComparison.Ordinal);
+    }
+
+    private static bool IsStale(CaseRecord record, DateTime cutoff)
+    {
+        if (!TryParseTimestamp(record.LastUpdated, out var lastUpdated))
+        {
+            return false;
+        }
+
+        return lastUpdated.Date <= cutoff.Date;
+    }
+
+    private static bool TryParseTimestamp(string? value, out DateTime parsed)
+    {
+        parsed = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var utc))
+        {
+            parsed = utc;
+            return true;
+        }
+
+        if (DateTime.TryParse(value, out var local))
+        {
+            parsed = local;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string FormatDate(string? value)
+    {
+        return TryParseTimestamp(value, out var parsed)
+            ? parsed.ToString("yyyy/MM/dd")
+            : value ?? string.Empty;
+    }
+
+    private static string BuildLatestUpdated(IEnumerable<CaseRecord> cases)
+    {
+        var latest = cases
+            .Select(record => TryParseTimestamp(record.LastUpdated, out var parsed) ? parsed : (DateTime?)null)
+            .Where(parsed => parsed.HasValue)
+            .Select(parsed => parsed!.Value)
+            .DefaultIfEmpty()
+            .Max();
+
+        return latest == default
+            ? "-"
+            : latest.ToString("yyyy/MM/dd");
+    }
+
+    private void OnStaleCaseOpen(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is StaleCaseEntry entry)
+        {
+            NavigateToCase(entry, focusStatus: true);
+        }
+    }
+
+    private void OnOpenCaseOpen(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is OpenCaseEntry entry)
+        {
+            NavigateToCase(entry, focusStatus: true);
+        }
+    }
+
+    private void OnStaleCaseStatusChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingStatusTab)
+        {
+            return;
+        }
+
+        if (sender is not System.Windows.Controls.ComboBox combo)
+        {
+            return;
+        }
+
+        if (!combo.IsDropDownOpen && !combo.IsKeyboardFocusWithin)
+        {
+            return;
+        }
+
+        if (combo.DataContext is not StaleCaseEntry entry)
+        {
+            return;
+        }
+
+        var newStatus = combo.SelectedItem?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(newStatus))
+        {
+            return;
+        }
+
+        if (string.Equals(entry.Status, newStatus, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var oldStatus = entry.Status;
+        if (TryUpdateCaseStatus(entry.ProductName, entry.FolderPath, newStatus))
+        {
+            RefreshStatusTab();
+        }
+        else
+        {
+            entry.Status = oldStatus;
+        }
+    }
+
+    private void OnOpenCaseStatusChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_isRefreshingStatusTab)
+        {
+            return;
+        }
+
+        if (sender is not System.Windows.Controls.ComboBox combo)
+        {
+            return;
+        }
+
+        if (!combo.IsDropDownOpen && !combo.IsKeyboardFocusWithin)
+        {
+            return;
+        }
+
+        if (combo.DataContext is not OpenCaseEntry entry)
+        {
+            return;
+        }
+
+        var newStatus = combo.SelectedItem?.ToString()?.Trim();
+        if (string.IsNullOrWhiteSpace(newStatus))
+        {
+            return;
+        }
+
+        if (string.Equals(entry.Status, newStatus, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var oldStatus = entry.Status;
+        if (TryUpdateCaseStatus(entry.ProductName, entry.FolderPath, newStatus))
+        {
+            RefreshStatusTab();
+        }
+        else
+        {
+            entry.Status = oldStatus;
+        }
+    }
+
+    private bool TryUpdateCaseStatus(string productName, string folderPath, string newStatus)
+    {
+        var product = _settings.Products.FirstOrDefault(p => string.Equals(p.Name, productName, StringComparison.Ordinal));
+        if (product == null)
+        {
+            MessageBox.Show(this, $"プロダクト設定が見つかりません: {productName}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        var record = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(folderPath));
+        if (record == null)
+        {
+            MessageBox.Show(this, "案件情報の解析に失敗しました。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        EnsureStatusOption(newStatus);
+
+        var baseDir = Path.GetDirectoryName(folderPath) ?? string.Empty;
+        var newName = CaseNaming.BuildFolderName(
+            record.CreatedOn,
+            record.Company,
+            record.SupportNumber,
+            newStatus,
+            DateTime.Now.ToString("yyyyMMdd"));
+        var newPath = Path.Combine(baseDir, newName);
+
+        if (Directory.Exists(newPath))
+        {
+            MessageBox.Show(this, "同名のフォルダが既に存在します。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        try
+        {
+            Directory.Move(folderPath, newPath);
+
+            var updated = new CaseRecord(
+                record.Company,
+                record.SupportNumber,
+                newStatus,
+                record.CreatedOn,
+                newName,
+                newPath,
+                CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
+                GetCategoryFromPath(product.BasePath, newPath),
+                false);
+
+            _settings.RecentCases = _settings.RecentCases
+                .Where(item => !string.Equals(item, folderPath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            _config.Save(_settings);
+            _config.AddRecentCase(_settings, newPath);
+
+            _caseCache.Remove(folderPath);
+            _caseCache[newPath] = updated;
+
+            var repo = new CaseRepository(_logger);
+            repo.SetBasePath(product.BasePath);
+            repo.UpdateCaseEntry(updated);
+
+            if (_activeProduct != null && string.Equals(_activeProduct.Name, product.Name, StringComparison.Ordinal))
+            {
+                RefreshView();
+            }
+
+            _viewModel.StatusMessage = "ステータスを更新しました。";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"ステータス更新に失敗しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+    }
+
+    private void OnStaleCaseExclude(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is StaleCaseEntry entry)
+        {
+            var result = MessageBox.Show(this, "この案件を除外リストに追加します。よろしいですか？", "確認", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            AddExcludedCase(entry.FolderPath);
+        }
+    }
+
+    private void OnOpenCaseExclude(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is OpenCaseEntry entry)
+        {
+            var result = MessageBox.Show(this, "この案件を除外リストに追加します。よろしいですか？", "確認", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.OK)
+            {
+                return;
+            }
+
+            AddExcludedCase(entry.FolderPath);
+        }
+    }
+
+    private void OnStaleCaseRowDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (StaleCaseGrid.SelectedItem is StaleCaseEntry entry)
+        {
+            NavigateToCase(entry, focusStatus: true);
+        }
+    }
+
+    private void OnOpenCaseRowDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (OpenCaseGrid.SelectedItem is OpenCaseEntry entry)
+        {
+            NavigateToCase(entry, focusStatus: true);
+        }
+    }
+
+    private void NavigateToCase(StaleCaseEntry entry, bool focusStatus)
+    {
+        NavigateToCase(entry.ProductName, entry.FolderPath, entry.SupportNumber, focusStatus);
+    }
+
+    private void NavigateToCase(OpenCaseEntry entry, bool focusStatus)
+    {
+        NavigateToCase(entry.ProductName, entry.FolderPath, entry.SupportNumber, focusStatus);
+    }
+
+    private void NavigateToCase(string productName, string folderPath, string supportNumber, bool focusStatus)
+    {
+        var targetTab = MainTabControl.Items
+            .OfType<TabItem>()
+            .FirstOrDefault(item => item.Tag is ProductProfile profile &&
+                                    string.Equals(profile.Name, productName, StringComparison.Ordinal));
+
+        if (targetTab == null)
+        {
+            MessageBox.Show(this, $"対象プロダクトが見つかりません: {productName}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        MainTabControl.SelectedItem = targetTab;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!string.IsNullOrWhiteSpace(folderPath) && _caseCache.TryGetValue(folderPath, out var record))
+            {
+                SetCurrentCase(record);
+                if (focusStatus)
+                {
+                    FocusStatusEditor();
+                }
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(supportNumber))
+            {
+                var found = _repository.FindBySupport(supportNumber);
+                if (found != null)
+                {
+                    SetCurrentCase(found);
+                    if (focusStatus)
+                    {
+                        FocusStatusEditor();
+                    }
+                }
+            }
+        }), DispatcherPriority.Background);
+    }
+    private void FocusStatusEditor()
+    {
+        StatusComboBox.Focus();
+        StatusComboBox.IsDropDownOpen = true;
+    }
+
+    private void AddExcludedCase(string? folderPath)
+    {
+        var normalized = NormalizePath(folderPath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        if (_settings.ExcludedCases.Any(path => string.Equals(NormalizePath(path), normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _settings.ExcludedCases.Add(normalized);
+        _config.Save(_settings);
+        RefreshStatusTab();
+    }
+
+    private void OnExcludedCaseRestore(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is ExcludedCaseEntry entry)
+        {
+            RestoreExcludedCase(entry.FolderPath);
+        }
+    }
+
+    private void RestoreExcludedCase(string? folderPath)
+    {
+        var normalized = NormalizePath(folderPath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return;
+        }
+
+        _settings.ExcludedCases = _settings.ExcludedCases
+            .Where(path => !string.Equals(NormalizePath(path), normalized, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        _config.Save(_settings);
+        RefreshStatusTab();
+    }
+
+    private static string GetCategoryFromPath(string? basePath, string targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var relative = Path.GetRelativePath(basePath, targetPath);
+            if (string.IsNullOrWhiteSpace(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+            {
+                return string.Empty;
+            }
+
+            var segments = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (segments.Length <= 1)
+            {
+                return string.Empty;
+            }
+
+            return segments[0];
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = path.Trim();
+        try
+        {
+            return Path.GetFullPath(trimmed);
+        }
+        catch
+        {
+            return trimmed;
+        }
+    }
+
+    private static bool IsPathUnderBase(string basePath, string? targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            return false;
+        }
+
+        var target = NormalizePath(targetPath);
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return false;
+        }
+
+        if (string.Equals(target, basePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var withSeparator = basePath.EndsWith(Path.DirectorySeparatorChar)
+            ? basePath
+            : basePath + Path.DirectorySeparatorChar;
+        return target.StartsWith(withSeparator, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeStatusLabel(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? "未設定" : value.Trim();
+    }
+
+    private static void AddStatusOption(List<string> list, HashSet<string> set, string? value)
+    {
+        var normalized = NormalizeStatusLabel(value);
+        if (set.Add(normalized))
+        {
+            list.Add(normalized);
+        }
+    }
+
+    private static bool IsDirectChild(string basePath, string? targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            return false;
+        }
+
+        var target = NormalizePath(targetPath);
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return false;
+        }
+
+        if (string.Equals(target, basePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        try
+        {
+            var relative = Path.GetRelativePath(basePath, target);
+            if (string.IsNullOrWhiteSpace(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            return relative.IndexOf(Path.DirectorySeparatorChar) < 0
+                   && relative.IndexOf(Path.AltDirectorySeparatorChar) < 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private void LoadCategories()
     {
         CategoryComboBox.Items.Clear();
@@ -149,8 +1167,26 @@ public partial class MainWindow : Window
         var baseItem = new ComboBoxItem { Content = "(ベース直下)", Tag = string.Empty };
         CategoryComboBox.Items.Add(baseItem);
 
+        var basePath = _repository.BasePath;
+        if (string.IsNullOrWhiteSpace(basePath))
+        {
+            CategoryComboBox.SelectedIndex = 0;
+            return;
+        }
+
         foreach (var name in _repository.ListCategories())
         {
+            var path = System.IO.Path.Combine(basePath, name);
+            if (!Directory.Exists(path))
+            {
+                continue;
+            }
+
+            if (CaseParser.ParseCaseFromDirectory(new DirectoryInfo(path)) == null)
+            {
+                continue;
+            }
+
             var item = new ComboBoxItem { Content = name, Tag = name };
             CategoryComboBox.Items.Add(item);
             _categoryPaths[name] = name;
@@ -331,6 +1367,12 @@ public partial class MainWindow : Window
         if (unique.Count == 0)
         {
             unique = Defaults.DefaultStatuses.ToList();
+        }
+
+        _statusOptions.Clear();
+        foreach (var option in unique)
+        {
+            _statusOptions.Add(option);
         }
 
         StatusComboBox.Items.Clear();
@@ -1390,6 +2432,51 @@ public partial class MainWindow : Window
         }
 
         return list;
+    }
+
+    private sealed class ProductEntry
+    {
+        public string Name { get; set; } = string.Empty;
+        public string BasePath { get; set; } = string.Empty;
+    }
+
+    private sealed class ProductSummaryEntry
+    {
+        public string Name { get; set; } = string.Empty;
+        public int Total { get; set; }
+        public int Open { get; set; }
+        public int Stale { get; set; }
+        public string LatestUpdated { get; set; } = "-";
+    }
+
+    private sealed class StaleCaseEntry
+    {
+        public string ProductName { get; set; } = string.Empty;
+        public string Company { get; set; } = string.Empty;
+        public string SupportNumber { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string LastUpdatedDisplay { get; set; } = string.Empty;
+        public string FolderPath { get; set; } = string.Empty;
+    }
+
+    private sealed class OpenCaseEntry
+    {
+        public string ProductName { get; set; } = string.Empty;
+        public string Company { get; set; } = string.Empty;
+        public string SupportNumber { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string LastUpdatedDisplay { get; set; } = string.Empty;
+        public string FolderPath { get; set; } = string.Empty;
+    }
+
+    private sealed class ExcludedCaseEntry
+    {
+        public string ProductName { get; set; } = string.Empty;
+        public string Company { get; set; } = string.Empty;
+        public string SupportNumber { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string LastUpdatedDisplay { get; set; } = string.Empty;
+        public string FolderPath { get; set; } = string.Empty;
     }
 
     private readonly record struct TemplateEntry(string Name, string Text);
