@@ -74,7 +74,7 @@
                                 <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
                                 <DatePicker x:Name="CreatedDatePicker" Grid.Row="0" Grid.Column="1" Margin="8,4" SelectedDateChanged="OnPreviewChanged" />
                                 <TextBlock Text="会社名" Grid.Row="0" Grid.Column="2" VerticalAlignment="Center" />
-                                <TextBox x:Name="CompanyTextBox" Grid.Row="0" Grid.Column="3" Margin="8,4" TextChanged="OnPreviewChanged" />
+                                <TextBox x:Name="CompanyTextBox" Grid.Row="0" Grid.Column="3" Margin="8,4" TextChanged="OnPreviewChanged" MouseDoubleClick="OnCompanyCopyDoubleClick" />
                                 <StackPanel Grid.Row="0" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4,0,4">
                                     <Button x:Name="NewButton" Content="新規" Click="OnNewCase" />
                                     <Button x:Name="CreateButton" Content="フォルダ作成" Margin="8,0,0,0" Click="OnCreateCase" />
@@ -82,7 +82,7 @@
                                 </StackPanel>
 
                                 <TextBlock Text="サポート番号" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
-                                <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" />
+                                <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" MouseDoubleClick="OnSupportCopyDoubleClick" />
                                 <TextBlock Text="ステータス" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" />
                                 <ComboBox x:Name="StatusComboBox" Grid.Row="1" Grid.Column="3" Margin="8,4" IsEditable="True" SelectionChanged="OnPreviewChanged" />
                                 <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4">
@@ -95,7 +95,7 @@
                                 <Button x:Name="StatusUpdateButton" Grid.Row="2" Grid.Column="4" Content="ステータス更新" Width="100" Margin="0,4" HorizontalAlignment="Left" Click="OnStatusUpdate" />
 
                                 <TextBlock Text="作成フォルダ" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" />
-                                <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" />
+                                <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" MouseDoubleClick="OnPreviewBaseCopyDoubleClick" />
 
                                 <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" />
                             </Grid>
@@ -137,10 +137,12 @@
                                      MinHeight="200"
                                      AcceptsReturn="True"
                                      TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto" />
+                                     VerticalScrollBarVisibility="Auto"
+                                     MouseDoubleClick="OnNotePreviewDoubleClick" />
 
                             <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
                                 <Button x:Name="NoteOpenButton" Content="ノートを開く" Click="OnNoteOpen" />
+                                <Button x:Name="NotePreviewButton" Content="プレビュー" Margin="8,0,0,0" Click="OnNotePreviewLatest" />
                                 <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
                                 <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
                                 <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
@@ -169,7 +171,8 @@
                               Margin="0,0,0,8">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="プロダクト名" Binding="{Binding Name}" Width="200" />
-                            <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BasePath}" Width="*" />
+                            <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BasePath}" Width="2*" />
+                            <DataGridTextColumn Header="クローズフォルダ" Binding="{Binding ClosedPath}" Width="*" />
                         </DataGrid.Columns>
                     </DataGrid>
 
@@ -333,6 +336,68 @@
                             </DataGrid>
                         </GroupBox>
                     </Grid>
+                </Grid>
+
+                <Grid x:Name="ClosedContentGrid" Background="{DynamicResource AppBackground}" Margin="12" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                        <TextBlock Text="クローズ案件を一覧表示します。" VerticalAlignment="Center" />
+                        <Button x:Name="ClosedRefreshButton" Content="再読み込み" Margin="16,0,0,0" Click="OnClosedRefresh" />
+                        <Button x:Name="ClosedOrganizeButton" Content="年フォルダ整理" Margin="8,0,0,0" Click="OnClosedOrganize" />
+                    </StackPanel>
+
+                    <GroupBox Grid.Row="1" Header="ベース直下のクローズ" Margin="0,0,0,8">
+                        <DataGrid x:Name="ClosedBaseGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
+                                <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
+                                <DataGridTextColumn Header="受付日" Binding="{Binding CreatedOnDisplay}" Width="110" />
+                                <DataGridTextColumn Header="ステータス" Binding="{Binding Status}" Width="140" />
+                                <DataGridTextColumn Header="最終更新" Binding="{Binding LastUpdatedDisplay}" Width="140" />
+                                <DataGridTemplateColumn Header="移動" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="移動" Padding="6,2" Click="OnClosedBaseMove" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="2" Header="クローズフォルダ">
+                        <DataGrid x:Name="ClosedFolderGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  IsReadOnly="True"
+                                  HeadersVisibility="Column">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
+                                <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
+                                <DataGridTextColumn Header="受付日" Binding="{Binding CreatedOnDisplay}" Width="110" />
+                                <DataGridTextColumn Header="ステータス" Binding="{Binding Status}" Width="140" />
+                                <DataGridTextColumn Header="最終更新" Binding="{Binding LastUpdatedDisplay}" Width="140" />
+                                <DataGridTemplateColumn Header="戻す" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="戻す" Padding="6,2" Click="OnClosedFolderRestore" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
                 </Grid>
             </Grid>
         </Grid>

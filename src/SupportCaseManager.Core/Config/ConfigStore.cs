@@ -72,12 +72,14 @@ public sealed class ConfigStore
             ["NoteTemplates"] = settings.NoteTemplates ?? new List<Dictionary<string, string>>(),
             ["Products"] = settings.Products?
                 .Where(item => !string.IsNullOrWhiteSpace(item.Name) && !string.IsNullOrWhiteSpace(item.BasePath))
-                .Select(item => new Dictionary<string, string>
+                .Select(item => new Dictionary<string, object?>
                 {
                     ["Name"] = item.Name,
                     ["BasePath"] = item.BasePath,
+                    ["ClosedPath"] = item.ClosedPath ?? string.Empty,
+                    ["NoteTemplates"] = SerializeTemplates(item.NoteTemplates ?? new List<Dictionary<string, string>>()),
                 })
-                .ToList() ?? new List<Dictionary<string, string>>(),
+                .ToList() ?? new List<Dictionary<string, object?>>(),
             ["ActiveProduct"] = settings.ActiveProduct,
             ["ExcludedCases"] = settings.ExcludedCases ?? new List<string>(),
         };
@@ -223,6 +225,12 @@ public sealed class ConfigStore
                 ?? ReadObjectString(item, "BaseFolder")
                 ?? ReadObjectString(item, "basePath")
                 ?? ReadObjectString(item, "baseFolder");
+            var closedPath = ReadObjectString(item, "ClosedPath")
+                ?? ReadObjectString(item, "ClosedFolder")
+                ?? ReadObjectString(item, "CloseFolder")
+                ?? ReadObjectString(item, "closePath")
+                ?? ReadObjectString(item, "closeFolder");
+            var templates = ReadTemplateList(item, "NoteTemplates");
 
             if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(basePath))
             {
@@ -233,6 +241,8 @@ public sealed class ConfigStore
             {
                 Name = name,
                 BasePath = basePath,
+                ClosedPath = closedPath ?? string.Empty,
+                NoteTemplates = templates,
             });
         }
 
@@ -274,6 +284,31 @@ public sealed class ConfigStore
             }
 
             list.Add(dict);
+        }
+
+        return list;
+    }
+
+    private static List<Dictionary<string, string>> SerializeTemplates(IEnumerable<Dictionary<string, string>> templates)
+    {
+        var list = new List<Dictionary<string, string>>();
+        foreach (var template in templates)
+        {
+            if (!template.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            if (!template.TryGetValue("text", out var text))
+            {
+                text = string.Empty;
+            }
+
+            list.Add(new Dictionary<string, string>
+            {
+                ["name"] = name,
+                ["text"] = text,
+            });
         }
 
         return list;

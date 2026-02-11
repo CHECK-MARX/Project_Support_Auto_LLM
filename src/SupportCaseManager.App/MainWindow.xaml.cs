@@ -18,6 +18,7 @@ using SupportCaseManager.App.Theme;
 using SupportCaseManager.App.Dialogs;
 using SupportCaseManager.App.ViewModels;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Config;
 using SupportCaseManager.Core.Logging;
 using SupportCaseManager.Core.Notes;
@@ -39,6 +40,8 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<OpenCaseEntry> _openCases = new();
     private readonly ObservableCollection<StaleCaseEntry> _staleCases = new();
     private readonly ObservableCollection<ExcludedCaseEntry> _excludedCases = new();
+    private readonly ObservableCollection<ClosedCaseEntry> _closedBaseCases = new();
+    private readonly ObservableCollection<ClosedCaseEntry> _closedFolderCases = new();
     private readonly ObservableCollection<string> _statusOptions = new();
     private CaseRecord? _currentCase;
     private NoteDefinition _currentNote = NoteDefinitions.All[0];
@@ -49,8 +52,11 @@ public partial class MainWindow : Window
     private ProductProfile? _activeProduct;
     private TabItem? _settingsTabItem;
     private TabItem? _statusTabItem;
+    private TabItem? _closedTabItem;
     private const int StaleDaysThreshold = 7;
     private bool _isRefreshingStatusTab;
+    private bool _isNotePreviewActive;
+    private string _notePreviewBody = string.Empty;
 
     public ObservableCollection<string> StatusOptions => _statusOptions;
 
@@ -73,6 +79,7 @@ public partial class MainWindow : Window
         RefreshTemplateCombo(null);
         InitializeProductSettings();
         InitializeStatusTab();
+        InitializeClosedTab();
         InitializeMainTabs();
         InitializeNoteSelector();
         TemplateComboBox.AddHandler(ComboBoxItem.PreviewMouseLeftButtonUpEvent, new MouseButtonEventHandler(OnTemplateItemClicked), true);
@@ -168,6 +175,8 @@ public partial class MainWindow : Window
             {
                 Name = product.Name,
                 BasePath = product.BasePath,
+                ClosedPath = product.ClosedPath,
+                NoteTemplates = NormalizeTemplates(product.NoteTemplates ?? new List<Dictionary<string, string>>()),
             });
         }
 
@@ -200,6 +209,19 @@ public partial class MainWindow : Window
         }
     }
 
+    private void InitializeClosedTab()
+    {
+        if (ClosedBaseGrid != null)
+        {
+            ClosedBaseGrid.ItemsSource = _closedBaseCases;
+        }
+
+        if (ClosedFolderGrid != null)
+        {
+            ClosedFolderGrid.ItemsSource = _closedFolderCases;
+        }
+    }
+
     private void InitializeMainTabs()
     {
         if (MainTabControl == null)
@@ -216,10 +238,13 @@ public partial class MainWindow : Window
             {
                 SetBasePathEditingEnabled(true);
                 _activeProduct = null;
+                RefreshTemplateCombo(null);
                 var defaultTab = new TabItem { Header = "案件", Tag = "default" };
                 MainTabControl.Items.Add(defaultTab);
                 _statusTabItem = new TabItem { Header = "ステータス", Tag = "status" };
                 MainTabControl.Items.Add(_statusTabItem);
+                _closedTabItem = new TabItem { Header = "クローズ", Tag = "closed" };
+                MainTabControl.Items.Add(_closedTabItem);
                 _settingsTabItem = new TabItem { Header = "設定", Tag = "settings" };
                 MainTabControl.Items.Add(_settingsTabItem);
                 MainTabControl.SelectedItem = defaultTab;
@@ -238,6 +263,8 @@ public partial class MainWindow : Window
 
             _statusTabItem = new TabItem { Header = "ステータス", Tag = "status" };
             MainTabControl.Items.Add(_statusTabItem);
+            _closedTabItem = new TabItem { Header = "クローズ", Tag = "closed" };
+            MainTabControl.Items.Add(_closedTabItem);
             _settingsTabItem = new TabItem { Header = "設定", Tag = "settings" };
             MainTabControl.Items.Add(_settingsTabItem);
 
@@ -278,6 +305,7 @@ public partial class MainWindow : Window
         {
             SettingsContentGrid.Visibility = Visibility.Collapsed;
             StatusContentGrid.Visibility = Visibility.Collapsed;
+            ClosedContentGrid.Visibility = Visibility.Collapsed;
             CaseContentGrid.Visibility = Visibility.Visible;
             ActivateProduct(product);
             return;
@@ -287,6 +315,7 @@ public partial class MainWindow : Window
         {
             SettingsContentGrid.Visibility = Visibility.Visible;
             StatusContentGrid.Visibility = Visibility.Collapsed;
+            ClosedContentGrid.Visibility = Visibility.Collapsed;
             CaseContentGrid.Visibility = Visibility.Collapsed;
             return;
         }
@@ -295,13 +324,25 @@ public partial class MainWindow : Window
         {
             SettingsContentGrid.Visibility = Visibility.Collapsed;
             CaseContentGrid.Visibility = Visibility.Collapsed;
+            ClosedContentGrid.Visibility = Visibility.Collapsed;
             StatusContentGrid.Visibility = Visibility.Visible;
             RefreshStatusTab();
             return;
         }
 
+        if (tab.Tag is string closedTag && closedTag == "closed")
+        {
+            SettingsContentGrid.Visibility = Visibility.Collapsed;
+            CaseContentGrid.Visibility = Visibility.Collapsed;
+            StatusContentGrid.Visibility = Visibility.Collapsed;
+            ClosedContentGrid.Visibility = Visibility.Visible;
+            RefreshClosedTab();
+            return;
+        }
+
         SettingsContentGrid.Visibility = Visibility.Collapsed;
         StatusContentGrid.Visibility = Visibility.Collapsed;
+        ClosedContentGrid.Visibility = Visibility.Collapsed;
         CaseContentGrid.Visibility = Visibility.Visible;
         SetBasePathEditingEnabled(true);
     }
@@ -311,6 +352,8 @@ public partial class MainWindow : Window
         _settings.ActiveProduct = product.Name;
         BasePathTextBox.Text = product.BasePath;
         SetBasePathEditingEnabled(false);
+        EnsureActiveProductTemplates();
+        RefreshTemplateCombo(null);
         RefreshView();
     }
 
@@ -323,7 +366,7 @@ public partial class MainWindow : Window
 
     private void OnProductAdd(object sender, RoutedEventArgs e)
     {
-        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, BasePathTextBox.Text.Trim())
+        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, BasePathTextBox.Text.Trim(), string.Empty)
         {
             Owner = this
         };
@@ -333,7 +376,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        _productEntries.Add(new ProductEntry { Name = dialog.ProductName, BasePath = dialog.BasePath });
+        _productEntries.Add(new ProductEntry
+        {
+            Name = dialog.ProductName,
+            BasePath = dialog.BasePath,
+            ClosedPath = dialog.ClosedPath,
+            NoteTemplates = new List<Dictionary<string, string>>(),
+        });
     }
 
     private void OnProductRemove(object sender, RoutedEventArgs e)
@@ -352,7 +401,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ProductEditorDialog("プロダクト編集", entry.Name, entry.BasePath)
+        var dialog = new ProductEditorDialog("プロダクト編集", entry.Name, entry.BasePath, entry.ClosedPath)
         {
             Owner = this
         };
@@ -364,6 +413,7 @@ public partial class MainWindow : Window
 
         entry.Name = dialog.ProductName;
         entry.BasePath = dialog.BasePath;
+        entry.ClosedPath = dialog.ClosedPath;
         ProductGrid.Items.Refresh();
     }
 
@@ -435,7 +485,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, basePath)
+        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, basePath, string.Empty)
         {
             Owner = this
         };
@@ -445,7 +495,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        _productEntries.Add(new ProductEntry { Name = dialog.ProductName, BasePath = dialog.BasePath });
+        _productEntries.Add(new ProductEntry
+        {
+            Name = dialog.ProductName,
+            BasePath = dialog.BasePath,
+            ClosedPath = dialog.ClosedPath,
+            NoteTemplates = new List<Dictionary<string, string>>(),
+        });
     }
 
     private void OnProductSave(object sender, RoutedEventArgs e)
@@ -453,7 +509,13 @@ public partial class MainWindow : Window
         ProductGrid.CommitEdit(DataGridEditingUnit.Row, true);
 
         var cleaned = _productEntries
-            .Select(entry => new ProductEntry { Name = entry.Name?.Trim() ?? string.Empty, BasePath = entry.BasePath?.Trim() ?? string.Empty })
+            .Select(entry => new ProductEntry
+            {
+                Name = entry.Name?.Trim() ?? string.Empty,
+                BasePath = entry.BasePath?.Trim() ?? string.Empty,
+                ClosedPath = entry.ClosedPath?.Trim() ?? string.Empty,
+                NoteTemplates = NormalizeTemplates(entry.NoteTemplates ?? new List<Dictionary<string, string>>()),
+            })
             .Where(entry => !string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(entry.BasePath))
             .ToList();
 
@@ -470,7 +532,13 @@ public partial class MainWindow : Window
         }
 
         _settings.Products = cleaned
-            .Select(entry => new ProductProfile { Name = entry.Name, BasePath = entry.BasePath })
+            .Select(entry => new ProductProfile
+            {
+                Name = entry.Name,
+                BasePath = entry.BasePath,
+                ClosedPath = entry.ClosedPath,
+                NoteTemplates = entry.NoteTemplates ?? new List<Dictionary<string, string>>(),
+            })
             .ToList();
 
         if (_settings.Products.Count == 0)
@@ -487,12 +555,84 @@ public partial class MainWindow : Window
         InitializeMainTabs();
         InitializeProductSettings();
         RefreshStatusTab();
+        RefreshClosedTab();
         _viewModel.StatusMessage = "プロダクト設定を保存しました。";
     }
 
     private void OnStatusRefresh(object sender, RoutedEventArgs e)
     {
         RefreshStatusTab();
+    }
+
+    private void OnClosedRefresh(object sender, RoutedEventArgs e)
+    {
+        RefreshClosedTab();
+    }
+
+    private void OnClosedOrganize(object sender, RoutedEventArgs e)
+    {
+        var result = MessageBox.Show(this, "クローズフォルダ内の案件を年フォルダへ整理します。よろしいですか？", "確認", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        if (result != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        var moved = 0;
+        var skipped = 0;
+        var failed = 0;
+        var refreshNeeded = false;
+
+        foreach (var product in _settings.Products)
+        {
+            var closedRoot = NormalizePath(product.ClosedPath);
+            if (string.IsNullOrWhiteSpace(closedRoot) || !Directory.Exists(closedRoot))
+            {
+                continue;
+            }
+
+            foreach (var record in ScanCasesUnder(closedRoot))
+            {
+                if (!IsClosedStatus(record.Status))
+                {
+                    continue;
+                }
+
+                var folderPath = NormalizePath(record.FolderPath);
+                if (!IsPathUnderBase(closedRoot, folderPath))
+                {
+                    continue;
+                }
+
+                var expectedYear = GetYearFromCreatedOn(record.CreatedOn);
+                var currentYear = GetYearFolderFromPath(closedRoot, folderPath);
+                if (!string.IsNullOrWhiteSpace(currentYear) && string.Equals(currentYear, expectedYear, StringComparison.Ordinal))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (TryMoveClosedCaseInternal(product, folderPath, closedRoot, useYearFolder: true, refreshView: false, out _))
+                {
+                    moved++;
+                    if (_activeProduct != null && string.Equals(_activeProduct.Name, product.Name, StringComparison.Ordinal))
+                    {
+                        refreshNeeded = true;
+                    }
+                }
+                else
+                {
+                    failed++;
+                }
+            }
+        }
+
+        if (refreshNeeded)
+        {
+            RefreshView();
+        }
+
+        RefreshClosedTab();
+        MessageBox.Show(this, $"整理完了: 移動 {moved} / スキップ {skipped} / 失敗 {failed}", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void RefreshStatusTab()
@@ -652,9 +792,232 @@ public partial class MainWindow : Window
         _isRefreshingStatusTab = false;
     }
 
+    private void RefreshClosedTab()
+    {
+        _closedBaseCases.Clear();
+        _closedFolderCases.Clear();
+
+        var products = _settings.Products;
+        if (products.Count == 0)
+        {
+            _viewModel.StatusMessage = "プロダクトが未設定です。";
+            return;
+        }
+
+        foreach (var product in products)
+        {
+            if (string.IsNullOrWhiteSpace(product.BasePath))
+            {
+                continue;
+            }
+
+            var baseRoot = NormalizePath(product.BasePath);
+            var closedRoot = NormalizePath(product.ClosedPath);
+            var repo = new CaseRepository(_logger);
+            repo.SetBasePath(product.BasePath);
+
+            var cases = repo.AllCases()
+                .Where(record => IsPathUnderBase(baseRoot, record.FolderPath))
+                .ToList();
+
+            var merged = new Dictionary<string, CaseRecord>(StringComparer.OrdinalIgnoreCase);
+            foreach (var record in cases)
+            {
+                var pathKey = NormalizePath(record.FolderPath);
+                if (!string.IsNullOrWhiteSpace(pathKey) && !merged.ContainsKey(pathKey))
+                {
+                    merged[pathKey] = record;
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(closedRoot) && Directory.Exists(closedRoot))
+            {
+                foreach (var record in ScanCasesUnder(closedRoot))
+                {
+                    var pathKey = NormalizePath(record.FolderPath);
+                    if (!string.IsNullOrWhiteSpace(pathKey) && !merged.ContainsKey(pathKey))
+                    {
+                        merged[pathKey] = record;
+                    }
+                }
+            }
+
+            foreach (var record in merged.Values)
+            {
+                if (!IsClosedStatus(record.Status))
+                {
+                    continue;
+                }
+
+                var normalizedPath = NormalizePath(record.FolderPath);
+                var entry = new ClosedCaseEntry
+                {
+                    ProductName = product.Name,
+                    Company = record.Company,
+                    SupportNumber = record.SupportNumber,
+                    Status = NormalizeStatusLabel(record.Status),
+                    CreatedOnDisplay = FormatCreatedOn(record.CreatedOn),
+                    LastUpdatedDisplay = FormatDate(record.LastUpdated),
+                    FolderPath = normalizedPath,
+                };
+
+                if (!string.IsNullOrWhiteSpace(closedRoot) && IsPathUnderBase(closedRoot, normalizedPath))
+                {
+                    _closedFolderCases.Add(entry);
+                }
+                else if (IsDirectChild(baseRoot, normalizedPath))
+                {
+                    _closedBaseCases.Add(entry);
+                }
+            }
+        }
+
+        _viewModel.StatusMessage = "クローズ一覧を更新しました。";
+    }
+
     private static bool IsClosedStatus(string? status)
     {
-        return !string.IsNullOrWhiteSpace(status) && status.Contains("クローズ", StringComparison.Ordinal);
+        return string.Equals(status?.Trim(), "クローズ", StringComparison.Ordinal);
+    }
+
+    private static string ResolveTargetRoot(string baseRoot, string closedRoot, string newStatus)
+    {
+        if (IsClosedStatus(newStatus) && !string.IsNullOrWhiteSpace(closedRoot))
+        {
+            return closedRoot;
+        }
+
+        return baseRoot;
+    }
+
+    private static string ResolveCategoryFromFolder(string baseRoot, string closedRoot, string folderPath, string fallbackCategory)
+    {
+        var normalizedBase = NormalizePath(baseRoot);
+        var normalizedClosed = NormalizePath(closedRoot);
+        var normalizedFolder = NormalizePath(folderPath);
+
+        var sourceRoot = normalizedBase;
+        if (!string.IsNullOrWhiteSpace(normalizedClosed) && IsPathUnderBase(normalizedClosed, normalizedFolder))
+        {
+            sourceRoot = normalizedClosed;
+        }
+        else if (!string.IsNullOrWhiteSpace(normalizedBase) && IsPathUnderBase(normalizedBase, normalizedFolder))
+        {
+            sourceRoot = normalizedBase;
+        }
+
+        var category = string.Equals(sourceRoot, normalizedClosed, StringComparison.OrdinalIgnoreCase)
+            ? GetCategoryFromClosedPath(normalizedClosed, normalizedFolder)
+            : GetCategoryFromPath(sourceRoot, normalizedFolder);
+        return string.IsNullOrWhiteSpace(category) ? fallbackCategory : category;
+    }
+
+    private static string GetCategoryFromClosedPath(string closedRoot, string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(closedRoot))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var relative = Path.GetRelativePath(closedRoot, folderPath);
+            if (string.IsNullOrWhiteSpace(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+            {
+                return string.Empty;
+            }
+
+            var segments = relative
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Where(segment => !string.IsNullOrWhiteSpace(segment))
+                .ToArray();
+
+            if (segments.Length <= 1)
+            {
+                return string.Empty;
+            }
+
+            var startIndex = IsYearSegment(segments[0]) ? 1 : 0;
+            if (segments.Length - startIndex <= 1)
+            {
+                return string.Empty;
+            }
+
+            return segments[startIndex];
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static bool IsYearSegment(string value)
+    {
+        if (value.Length != 4 || !int.TryParse(value, out var year))
+        {
+            return false;
+        }
+
+        return year >= 1900 && year <= 2100;
+    }
+
+    private static bool IsUnderYearFolder(string root, string targetPath)
+    {
+        return !string.IsNullOrWhiteSpace(GetYearFolderFromPath(root, targetPath));
+    }
+
+    private static string? GetYearFolderFromPath(string root, string targetPath)
+    {
+        try
+        {
+            var relative = Path.GetRelativePath(root, targetPath);
+            if (string.IsNullOrWhiteSpace(relative) || relative.StartsWith("..", StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var segments = relative
+                .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                .Where(segment => !string.IsNullOrWhiteSpace(segment))
+                .ToArray();
+
+            if (segments.Length < 2)
+            {
+                return null;
+            }
+
+            return IsYearSegment(segments[0]) ? segments[0] : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string GetYearFromCreatedOn(string? createdOn)
+    {
+        if (!string.IsNullOrWhiteSpace(createdOn))
+        {
+            var trimmed = createdOn.Trim();
+            if (trimmed.Length >= 4 && int.TryParse(trimmed.Substring(0, 4), out var year) && year >= 1900 && year <= 2100)
+            {
+                return year.ToString("0000");
+            }
+
+            if (DateTime.TryParse(trimmed, out var parsed))
+            {
+                return parsed.Year.ToString("0000");
+            }
+        }
+
+        return DateTime.Today.Year.ToString("0000");
+    }
+
+    private static string BuildClosedTargetDir(string closedRoot, string createdOn, string category)
+    {
+        var year = GetYearFromCreatedOn(createdOn);
+        var target = Path.Combine(closedRoot, year);
+        return string.IsNullOrWhiteSpace(category) ? target : Path.Combine(target, category);
     }
 
     private static bool IsStale(CaseRecord record, DateTime cutoff)
@@ -697,6 +1060,27 @@ public partial class MainWindow : Window
             : value ?? string.Empty;
     }
 
+    private static string FormatCreatedOn(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        if (trimmed.Length == 8 && DateTime.TryParseExact(trimmed, "yyyyMMdd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            return parsed.ToString("yyyy/MM/dd");
+        }
+
+        if (DateTime.TryParse(trimmed, out var fallback))
+        {
+            return fallback.ToString("yyyy/MM/dd");
+        }
+
+        return trimmed;
+    }
+
     private static string BuildLatestUpdated(IEnumerable<CaseRecord> cases)
     {
         var latest = cases
@@ -709,6 +1093,44 @@ public partial class MainWindow : Window
         return latest == default
             ? "-"
             : latest.ToString("yyyy/MM/dd");
+    }
+
+    private static List<CaseRecord> ScanCasesUnder(string root)
+    {
+        var normalized = NormalizePath(root);
+        if (string.IsNullOrWhiteSpace(normalized) || !Directory.Exists(normalized))
+        {
+            return new List<CaseRecord>();
+        }
+
+        var stack = new Stack<string>();
+        stack.Push(normalized);
+        var found = new List<CaseRecord>();
+
+        while (stack.Count > 0)
+        {
+            var current = stack.Pop();
+            try
+            {
+                foreach (var entry in Directory.EnumerateDirectories(current))
+                {
+                    var info = new DirectoryInfo(entry);
+                    var record = CaseParser.ParseCaseFromDirectory(info);
+                    if (record != null)
+                    {
+                        found.Add(record);
+                    }
+
+                    stack.Push(entry);
+                }
+            }
+            catch
+            {
+                // ignore inaccessible folders
+            }
+        }
+
+        return found;
     }
 
     private void OnStaleCaseOpen(object sender, RoutedEventArgs e)
@@ -839,14 +1261,28 @@ public partial class MainWindow : Window
 
         EnsureStatusOption(newStatus);
 
-        var baseDir = Path.GetDirectoryName(folderPath) ?? string.Empty;
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
+        var targetRoot = ResolveTargetRoot(baseRoot, closedRoot, newStatus);
+        if (string.IsNullOrWhiteSpace(targetRoot))
+        {
+            MessageBox.Show(this, "移動先のベースフォルダが未設定です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        var targetDir = string.Equals(targetRoot, closedRoot, StringComparison.OrdinalIgnoreCase)
+            ? BuildClosedTargetDir(targetRoot, record.CreatedOn, category)
+            : (string.IsNullOrWhiteSpace(category) ? targetRoot : Path.Combine(targetRoot, category));
+        Directory.CreateDirectory(targetDir);
+
         var newName = CaseNaming.BuildFolderName(
             record.CreatedOn,
             record.Company,
             record.SupportNumber,
             newStatus,
             DateTime.Now.ToString("yyyyMMdd"));
-        var newPath = Path.Combine(baseDir, newName);
+        var newPath = Path.Combine(targetDir, newName);
 
         if (Directory.Exists(newPath))
         {
@@ -866,7 +1302,7 @@ public partial class MainWindow : Window
                 newName,
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
-                GetCategoryFromPath(product.BasePath, newPath),
+                category,
                 false);
 
             _settings.RecentCases = _settings.RecentCases
@@ -922,6 +1358,22 @@ public partial class MainWindow : Window
             }
 
             AddExcludedCase(entry.FolderPath);
+        }
+    }
+
+    private void OnClosedBaseMove(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is ClosedCaseEntry entry)
+        {
+            MoveClosedCaseToClosedFolder(entry);
+        }
+    }
+
+    private void OnClosedFolderRestore(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is ClosedCaseEntry entry)
+        {
+            RestoreClosedCaseToBase(entry);
         }
     }
 
@@ -996,6 +1448,153 @@ public partial class MainWindow : Window
     {
         StatusComboBox.Focus();
         StatusComboBox.IsDropDownOpen = true;
+    }
+
+    private void MoveClosedCaseToClosedFolder(ClosedCaseEntry entry)
+    {
+        var product = _settings.Products.FirstOrDefault(p => string.Equals(p.Name, entry.ProductName, StringComparison.Ordinal));
+        if (product == null)
+        {
+            MessageBox.Show(this, $"プロダクト設定が見つかりません: {entry.ProductName}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(product.ClosedPath))
+        {
+            MessageBox.Show(this, "クローズフォルダが未設定です。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        if (string.IsNullOrWhiteSpace(closedRoot) || string.Equals(baseRoot, closedRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "クローズフォルダが無効です。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        MoveClosedCase(entry, baseRoot, closedRoot, closedRoot, useYearFolder: true);
+    }
+
+    private void RestoreClosedCaseToBase(ClosedCaseEntry entry)
+    {
+        var product = _settings.Products.FirstOrDefault(p => string.Equals(p.Name, entry.ProductName, StringComparison.Ordinal));
+        if (product == null)
+        {
+            MessageBox.Show(this, $"プロダクト設定が見つかりません: {entry.ProductName}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        if (string.IsNullOrWhiteSpace(baseRoot))
+        {
+            MessageBox.Show(this, "ベースフォルダが未設定です。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        MoveClosedCase(entry, baseRoot, closedRoot, baseRoot, useYearFolder: false);
+    }
+
+    private void MoveClosedCase(ClosedCaseEntry entry, string baseRoot, string closedRoot, string targetRoot, bool useYearFolder)
+    {
+        var folderPath = entry.FolderPath;
+        var product = _settings.Products.FirstOrDefault(p => string.Equals(p.Name, entry.ProductName, StringComparison.Ordinal));
+        if (product == null)
+        {
+            MessageBox.Show(this, $"プロダクト設定が見つかりません: {entry.ProductName}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        if (!TryMoveClosedCaseInternal(product, folderPath, targetRoot, useYearFolder, refreshView: true, out var error))
+        {
+            MessageBox.Show(this, error ?? "フォルダ移動に失敗しました。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        RefreshClosedTab();
+    }
+
+    private bool TryMoveClosedCaseInternal(ProductProfile product, string folderPath, string targetRoot, bool useYearFolder, bool refreshView, out string? error)
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            error = "案件フォルダが見つかりません。";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(targetRoot))
+        {
+            error = "移動先フォルダが未設定です。";
+            return false;
+        }
+
+        var record = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(folderPath));
+        if (record == null)
+        {
+            error = "案件情報の解析に失敗しました。";
+            return false;
+        }
+
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
+        var targetDir = useYearFolder
+            ? BuildClosedTargetDir(targetRoot, record.CreatedOn, category)
+            : (string.IsNullOrWhiteSpace(category) ? targetRoot : Path.Combine(targetRoot, category));
+        Directory.CreateDirectory(targetDir);
+
+        var newName = Path.GetFileName(folderPath);
+        var newPath = Path.Combine(targetDir, newName);
+
+        if (Directory.Exists(newPath))
+        {
+            error = "移動先に同名フォルダが既に存在します。";
+            return false;
+        }
+
+        try
+        {
+            Directory.Move(folderPath, newPath);
+
+            var updated = new CaseRecord(
+                record.Company,
+                record.SupportNumber,
+                record.Status,
+                record.CreatedOn,
+                newName,
+                newPath,
+                CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
+                category,
+                false);
+
+            _settings.RecentCases = _settings.RecentCases
+                .Where(item => !string.Equals(item, folderPath, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            _config.Save(_settings);
+            _config.AddRecentCase(_settings, newPath);
+
+            _caseCache.Remove(folderPath);
+            _caseCache[newPath] = updated;
+
+            var repo = new CaseRepository(_logger);
+            repo.SetBasePath(product.BasePath);
+            repo.UpdateCaseEntry(updated);
+
+            if (refreshView && _activeProduct != null &&
+                string.Equals(_activeProduct.Name, product.Name, StringComparison.Ordinal))
+            {
+                RefreshView();
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"フォルダ移動に失敗しました: {ex.Message}";
+            return false;
+        }
     }
 
     private void AddExcludedCase(string? folderPath)
@@ -1337,6 +1936,25 @@ public partial class MainWindow : Window
         UpdateNoteFileLabel();
     }
 
+    private void OnCompanyCopyDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        CopyToClipboard(CompanyTextBox.Text, "会社名をコピーしました。");
+        e.Handled = true;
+    }
+
+    private void OnSupportCopyDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        CopyToClipboard(SupportTextBox.Text, "サポート番号をコピーしました。");
+        e.Handled = true;
+    }
+
+    private void OnPreviewBaseCopyDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        var baseText = ExtractPreviewBase(PreviewTextBox.Text);
+        CopyToClipboard(baseText, "作成フォルダの先頭をコピーしました。");
+        e.Handled = true;
+    }
+
     private void OnStatusTextChanged(object sender, TextChangedEventArgs e)
     {
         UpdatePreview();
@@ -1357,6 +1975,42 @@ public partial class MainWindow : Window
         catch
         {
             PreviewTextBox.Text = "(必須項目を入力してください)";
+        }
+    }
+
+    private static string ExtractPreviewBase(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = value.Trim();
+        var endIndex = trimmed.IndexOf(')');
+        if (endIndex >= 0)
+        {
+            return trimmed[..(endIndex + 1)];
+        }
+
+        return trimmed;
+    }
+
+    private void CopyToClipboard(string? value, string message)
+    {
+        var trimmed = value?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Windows.Clipboard.SetText(trimmed);
+            _viewModel.StatusMessage = message;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"コピーに失敗しました: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -1496,14 +2150,35 @@ public partial class MainWindow : Window
         }
 
         var folder = _currentCase.FolderPath;
-        var baseDir = System.IO.Path.GetDirectoryName(folder) ?? string.Empty;
+        var baseRoot = NormalizePath(_activeProduct?.BasePath ?? _repository.BasePath ?? string.Empty);
+        var closedRoot = NormalizePath(_activeProduct?.ClosedPath ?? string.Empty);
+        var fallbackCategory = GetSelectedCategoryName();
+        if (string.IsNullOrWhiteSpace(fallbackCategory))
+        {
+            fallbackCategory = _currentCase.Category;
+        }
+
+        var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folder, fallbackCategory);
+        var targetRoot = ResolveTargetRoot(baseRoot, closedRoot, newStatus);
+        if (string.IsNullOrWhiteSpace(targetRoot))
+        {
+            MessageBox.Show(this, "移動先のベースフォルダが未設定です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        var createdOn = CreatedDatePicker.SelectedDate?.ToString("yyyyMMdd") ?? string.Empty;
+        var targetDir = string.Equals(targetRoot, closedRoot, StringComparison.OrdinalIgnoreCase)
+            ? BuildClosedTargetDir(targetRoot, createdOn, category)
+            : (string.IsNullOrWhiteSpace(category) ? targetRoot : System.IO.Path.Combine(targetRoot, category));
+        Directory.CreateDirectory(targetDir);
+
         var newName = CaseNaming.BuildFolderName(
-            CreatedDatePicker.SelectedDate?.ToString("yyyyMMdd") ?? string.Empty,
+            createdOn,
             CompanyTextBox.Text,
             SupportTextBox.Text,
             newStatus,
             DateTime.Now.ToString("yyyyMMdd"));
-        var newPath = System.IO.Path.Combine(baseDir, newName);
+        var newPath = System.IO.Path.Combine(targetDir, newName);
 
         if (Directory.Exists(newPath))
         {
@@ -1522,7 +2197,7 @@ public partial class MainWindow : Window
                 newName,
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
-                GetSelectedCategoryName(),
+                category,
                 false);
 
             _currentCase = updated;
@@ -1738,6 +2413,57 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnNoteEdit(object sender, RoutedEventArgs e)
+    {
+        var text = LoadNoteText();
+        if (text == null)
+        {
+            return;
+        }
+
+        NoteEditorTextBox.Text = text;
+        _isNotePreviewActive = false;
+        _notePreviewBody = string.Empty;
+        _viewModel.StatusMessage = "ノート内容を読み込みました。";
+    }
+
+    private void OnNotePreviewAll(object sender, RoutedEventArgs e)
+    {
+        var text = LoadNoteText();
+        if (text == null)
+        {
+            return;
+        }
+
+        NoteEditorTextBox.Text = BuildPreviewAll(text);
+        _viewModel.StatusMessage = "プレビューを表示しました。";
+    }
+
+    private void OnNotePreviewLatest(object sender, RoutedEventArgs e)
+    {
+        var text = LoadNoteText();
+        if (text == null)
+        {
+            return;
+        }
+
+        var segments = ParseNoteSegments(text);
+        if (segments.Count == 0)
+        {
+            _notePreviewBody = string.Empty;
+            _isNotePreviewActive = true;
+            NoteEditorTextBox.Text = string.Empty;
+            _viewModel.StatusMessage = "プレビューを表示しました。";
+            return;
+        }
+
+        var latest = PickLatestSegment(segments);
+        _notePreviewBody = latest.Body ?? string.Empty;
+        _isNotePreviewActive = true;
+        NoteEditorTextBox.Text = BuildPreviewFromSegment(latest);
+        _viewModel.StatusMessage = "プレビューを表示しました。";
+    }
+
     private void OnNoteAppend(object sender, RoutedEventArgs e)
     {
         if (_currentCase == null)
@@ -1769,15 +2495,303 @@ public partial class MainWindow : Window
         }
 
         NoteEditorTextBox.Text = string.Empty;
+        _isNotePreviewActive = false;
+        _notePreviewBody = string.Empty;
         _currentCase.LastUpdated = CaseNaming.ToIsoTimestamp(DateTime.UtcNow);
         _repository.UpdateCaseEntry(_currentCase);
         _viewModel.StatusMessage = "ノートを追記しました。";
     }
 
+    private string? LoadNoteText()
+    {
+        if (_currentCase == null)
+        {
+            MessageBox.Show(this, "案件を選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        var path = GetNoteFilePath();
+        if (string.IsNullOrEmpty(path))
+        {
+            MessageBox.Show(this, "ノートファイルが見つかりません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return null;
+        }
+
+        if (!File.Exists(path))
+        {
+            NoteService.EnsureNoteFile(_currentCase.FolderPath, _currentNote, _currentCase.SupportNumber);
+        }
+
+        try
+        {
+            var data = File.ReadAllBytes(path);
+            return EncodingPolicy.DecodeNoteText(data);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"ノートを読み込めません: {ex.Message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return null;
+        }
+    }
+
+    private static string BuildPreviewAll(string text)
+    {
+        var segments = ParseNoteSegments(text);
+        if (segments.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (segments.Count == 1 && string.IsNullOrEmpty(segments[0].Header))
+        {
+            return segments[0].Body;
+        }
+
+        var ordered = OrderSegments(segments);
+        var lines = new List<string>();
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var segment = ordered[i];
+            if (!string.IsNullOrEmpty(segment.Header))
+            {
+                lines.Add(segment.Header);
+            }
+
+            if (!string.IsNullOrWhiteSpace(segment.Body))
+            {
+                lines.Add(segment.Body);
+            }
+
+            if (i != ordered.Count - 1)
+            {
+                lines.Add("--------------------------------------------------");
+            }
+        }
+
+        return string.Join(EncodingPolicy.LineEnding, lines);
+    }
+
+    private static string BuildPreviewLatest(string text)
+    {
+        var segments = ParseNoteSegments(text);
+        if (segments.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var latest = PickLatestSegment(segments);
+        return BuildPreviewFromSegment(latest);
+    }
+
+    private static string BuildPreviewFromSegment(NoteSegment segment)
+    {
+        if (string.IsNullOrEmpty(segment.Header))
+        {
+            return segment.Body;
+        }
+
+        if (string.IsNullOrWhiteSpace(segment.Body))
+        {
+            return segment.Header;
+        }
+
+        return string.Join(EncodingPolicy.LineEnding, segment.Header, segment.Body);
+    }
+
+    private static List<NoteSegment> ParseNoteSegments(string text)
+    {
+        var segments = new List<NoteSegment>();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return segments;
+        }
+
+        var lines = text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var preHeader = new List<string>();
+        var body = new List<string>();
+        var currentHeader = string.Empty;
+        var currentTimestamp = (DateTime?)null;
+        var hasHeader = false;
+        var index = 0;
+
+        foreach (var raw in lines)
+        {
+            var line = raw ?? string.Empty;
+            if (line.StartsWith("*****追記部_", StringComparison.Ordinal))
+            {
+                if (hasHeader)
+                {
+                    segments.Add(new NoteSegment(currentHeader, JoinLines(body), currentTimestamp, index++));
+                    body.Clear();
+                }
+                else if (preHeader.Count > 0)
+                {
+                    segments.Add(new NoteSegment(string.Empty, JoinLines(preHeader), null, index++));
+                    preHeader.Clear();
+                }
+
+                currentHeader = line.TrimEnd();
+                currentTimestamp = TryParseNoteHeaderTimestamp(currentHeader, out var parsed) ? parsed : null;
+                hasHeader = true;
+                continue;
+            }
+
+            if (line.Trim() == "--------------------------------------------------")
+            {
+                continue;
+            }
+
+            if (!hasHeader)
+            {
+                preHeader.Add(line);
+            }
+            else
+            {
+                body.Add(line);
+            }
+        }
+
+        if (hasHeader)
+        {
+            segments.Add(new NoteSegment(currentHeader, JoinLines(body), currentTimestamp, index++));
+        }
+        else if (preHeader.Count > 0)
+        {
+            segments.Add(new NoteSegment(string.Empty, JoinLines(preHeader), null, index++));
+        }
+
+        return segments;
+    }
+
+    private static List<NoteSegment> OrderSegments(List<NoteSegment> segments)
+    {
+        var withTimestamp = segments
+            .Where(seg => seg.Timestamp.HasValue)
+            .OrderByDescending(seg => seg.Timestamp!.Value)
+            .ThenByDescending(seg => seg.Index)
+            .ToList();
+
+        var withoutTimestamp = segments
+            .Where(seg => !seg.Timestamp.HasValue)
+            .OrderBy(seg => seg.Index)
+            .ToList();
+
+        withTimestamp.AddRange(withoutTimestamp);
+        return withTimestamp;
+    }
+
+    private static NoteSegment PickLatestSegment(List<NoteSegment> segments)
+    {
+        var withBody = segments
+            .Where(seg => !string.IsNullOrWhiteSpace(seg.Body))
+            .ToList();
+
+        if (withBody.Count > 0)
+        {
+            var withTimestamp = withBody
+                .Where(seg => seg.Timestamp.HasValue)
+                .OrderByDescending(seg => seg.Timestamp!.Value)
+                .ThenByDescending(seg => seg.Index)
+                .FirstOrDefault();
+
+            if (withTimestamp.Timestamp.HasValue)
+            {
+                return withTimestamp;
+            }
+
+            return withBody.OrderByDescending(seg => seg.Index).First();
+        }
+
+        var fallbackTimestamp = segments
+            .Where(seg => seg.Timestamp.HasValue)
+            .OrderByDescending(seg => seg.Timestamp!.Value)
+            .ThenByDescending(seg => seg.Index)
+            .FirstOrDefault();
+
+        if (fallbackTimestamp.Timestamp.HasValue)
+        {
+            return fallbackTimestamp;
+        }
+
+        return segments[^1];
+    }
+
+    private static bool TryParseNoteHeaderTimestamp(string header, out DateTime timestamp)
+    {
+        timestamp = default;
+        if (string.IsNullOrWhiteSpace(header))
+        {
+            return false;
+        }
+
+        var marker = "追記部_";
+        var startIndex = header.IndexOf(marker, StringComparison.Ordinal);
+        if (startIndex < 0)
+        {
+            return false;
+        }
+
+        startIndex += marker.Length;
+        var endIndex = header.IndexOf('(', startIndex);
+        var candidate = endIndex >= 0
+            ? header.Substring(startIndex, endIndex - startIndex)
+            : header.Substring(startIndex);
+        candidate = candidate.Trim();
+
+        var formats = new[] { "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm" };
+        if (DateTime.TryParseExact(candidate, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+        {
+            timestamp = parsed;
+            return true;
+        }
+
+        if (DateTime.TryParse(candidate, out parsed))
+        {
+            timestamp = parsed;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string JoinLines(List<string> lines)
+    {
+        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
+        {
+            lines.RemoveAt(lines.Count - 1);
+        }
+
+        return string.Join(EncodingPolicy.LineEnding, lines);
+    }
+
     private void OnNoteClear(object sender, RoutedEventArgs e)
     {
         NoteEditorTextBox.Clear();
+        _isNotePreviewActive = false;
+        _notePreviewBody = string.Empty;
         _viewModel.StatusMessage = "入力内容をクリアしました。";
+    }
+
+    private void OnNotePreviewDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isNotePreviewActive)
+        {
+            return;
+        }
+
+        var body = _notePreviewBody?.Trim();
+        if (string.IsNullOrEmpty(body))
+        {
+            MessageBox.Show(this, "本文がありません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var dialog = new NotePreviewDialog(body)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+        e.Handled = true;
     }
 
     private void OnNoteSubfolder(object sender, RoutedEventArgs e)
@@ -1852,7 +2866,7 @@ public partial class MainWindow : Window
         try
         {
             TemplateComboBox.Items.Clear();
-            foreach (var entry in _settings.NoteTemplates)
+            foreach (var entry in GetActiveTemplateList())
             {
                 if (!entry.TryGetValue("name", out var name))
                 {
@@ -2066,7 +3080,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var existing = _settings.NoteTemplates ?? new List<Dictionary<string, string>>();
+        var existing = GetActiveTemplateList();
         var existingByName = existing
             .Where(entry => entry.TryGetValue("name", out var n) && !string.IsNullOrWhiteSpace(n))
             .ToDictionary(entry => entry["name"], entry => entry, StringComparer.Ordinal);
@@ -2111,8 +3125,7 @@ public partial class MainWindow : Window
             lastImported = template.Name;
         }
 
-        _settings.NoteTemplates = existing;
-        _config.Save(_settings);
+        SaveActiveTemplates(existing);
         RefreshTemplateCombo(lastImported);
         _viewModel.StatusMessage = "テンプレートをインポートしました。";
         MessageBox.Show(this, $"追加: {added} / 更新: {updated} / スキップ: {skipped}", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2120,7 +3133,7 @@ public partial class MainWindow : Window
 
     private void OnTemplateExport(object sender, RoutedEventArgs e)
     {
-        var templates = NormalizeTemplates(_settings.NoteTemplates);
+        var templates = NormalizeTemplates(GetActiveTemplateList());
         if (templates.Count == 0)
         {
             MessageBox.Show(this, "エクスポートできるテンプレートがありません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2165,7 +3178,7 @@ public partial class MainWindow : Window
 
     private void UpdateTemplateEntry(string name, string text)
     {
-        var templates = _settings.NoteTemplates;
+        var templates = GetActiveTemplateList();
         var existing = templates.FirstOrDefault(entry => entry.TryGetValue("name", out var n) && n == name);
         if (existing != null)
         {
@@ -2180,8 +3193,7 @@ public partial class MainWindow : Window
             });
         }
 
-        _settings.NoteTemplates = templates;
-        _config.Save(_settings);
+        SaveActiveTemplates(templates);
         RefreshTemplateCombo(name);
         _viewModel.StatusMessage = "テンプレートを更新しました。";
     }
@@ -2194,13 +3206,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_settings.NoteTemplates.Any(entry => entry.TryGetValue("name", out var n) && n == newName))
+        var templates = GetActiveTemplateList();
+        if (templates.Any(entry => entry.TryGetValue("name", out var n) && n == newName))
         {
             MessageBox.Show(this, "同名のテンプレートが存在します。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        foreach (var entry in _settings.NoteTemplates)
+        foreach (var entry in templates)
         {
             if (entry.TryGetValue("name", out var name) && name == oldName)
             {
@@ -2209,17 +3222,17 @@ public partial class MainWindow : Window
             }
         }
 
-        _config.Save(_settings);
+        SaveActiveTemplates(templates);
         RefreshTemplateCombo(newName);
         _viewModel.StatusMessage = "テンプレート名を変更しました。";
     }
 
     private void DeleteTemplateEntry(string name)
     {
-        _settings.NoteTemplates = _settings.NoteTemplates
+        var templates = GetActiveTemplateList()
             .Where(entry => !(entry.TryGetValue("name", out var n) && n == name))
             .ToList();
-        _config.Save(_settings);
+        SaveActiveTemplates(templates);
         RefreshTemplateCombo(null);
         _viewModel.StatusMessage = "テンプレートを削除しました。";
     }
@@ -2279,7 +3292,7 @@ public partial class MainWindow : Window
 
     private bool MoveTemplateEntry(string name, int delta, bool keepDropDownOpen)
     {
-        var templates = _settings.NoteTemplates ?? new List<Dictionary<string, string>>();
+        var templates = GetActiveTemplateList();
         if (templates.Count == 0)
         {
             return false;
@@ -2300,8 +3313,7 @@ public partial class MainWindow : Window
         _pendingTemplateDialogItem = null;
         _templateDialogQueued = false;
         (templates[index], templates[targetIndex]) = (templates[targetIndex], templates[index]);
-        _settings.NoteTemplates = templates;
-        _config.Save(_settings);
+        SaveActiveTemplates(templates);
         RefreshTemplateCombo(name);
         _viewModel.StatusMessage = "テンプレート順を変更しました。";
         if (keepDropDownOpen)
@@ -2309,6 +3321,54 @@ public partial class MainWindow : Window
             TemplateComboBox.IsDropDownOpen = true;
         }
         return true;
+    }
+
+    private List<Dictionary<string, string>> GetActiveTemplateList()
+    {
+        if (_activeProduct != null)
+        {
+            _activeProduct.NoteTemplates ??= new List<Dictionary<string, string>>();
+            return _activeProduct.NoteTemplates;
+        }
+
+        _settings.NoteTemplates ??= new List<Dictionary<string, string>>();
+        return _settings.NoteTemplates;
+    }
+
+    private void SaveActiveTemplates(List<Dictionary<string, string>> templates)
+    {
+        if (_activeProduct != null)
+        {
+            _activeProduct.NoteTemplates = templates;
+        }
+        else
+        {
+            _settings.NoteTemplates = templates;
+        }
+
+        _config.Save(_settings);
+    }
+
+    private void EnsureActiveProductTemplates()
+    {
+        if (_activeProduct == null)
+        {
+            return;
+        }
+
+        _activeProduct.NoteTemplates ??= new List<Dictionary<string, string>>();
+        if (_activeProduct.NoteTemplates.Count > 0)
+        {
+            return;
+        }
+
+        if (_settings.NoteTemplates.Count == 0)
+        {
+            return;
+        }
+
+        _activeProduct.NoteTemplates = NormalizeTemplates(_settings.NoteTemplates);
+        _config.Save(_settings);
     }
 
     private static List<TemplateEntry> ParseTemplatesFromJson(string json, out string? error)
@@ -2438,6 +3498,8 @@ public partial class MainWindow : Window
     {
         public string Name { get; set; } = string.Empty;
         public string BasePath { get; set; } = string.Empty;
+        public string ClosedPath { get; set; } = string.Empty;
+        public List<Dictionary<string, string>> NoteTemplates { get; set; } = new();
     }
 
     private sealed class ProductSummaryEntry
@@ -2478,6 +3540,19 @@ public partial class MainWindow : Window
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
     }
+
+    private sealed class ClosedCaseEntry
+    {
+        public string ProductName { get; set; } = string.Empty;
+        public string Company { get; set; } = string.Empty;
+        public string SupportNumber { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string CreatedOnDisplay { get; set; } = string.Empty;
+        public string LastUpdatedDisplay { get; set; } = string.Empty;
+        public string FolderPath { get; set; } = string.Empty;
+    }
+
+    private readonly record struct NoteSegment(string Header, string Body, DateTime? Timestamp, int Index);
 
     private readonly record struct TemplateEntry(string Name, string Text);
 }

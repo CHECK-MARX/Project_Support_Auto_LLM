@@ -9,16 +9,19 @@ public sealed class ProductEditorDialog : Window
 {
     private readonly System.Windows.Controls.TextBox _nameBox;
     private readonly System.Windows.Controls.TextBox _basePathBox;
+    private readonly System.Windows.Controls.TextBox _closedPathBox;
 
     public string ProductName => _nameBox.Text.Trim();
     public string BasePath => _basePathBox.Text.Trim();
+    public string ClosedPath => _closedPathBox.Text.Trim();
 
-    public ProductEditorDialog(string title, string name, string basePath)
+    public ProductEditorDialog(string title, string name, string basePath, string closedPath)
     {
         Title = title;
-        Width = 520;
-        Height = 220;
+        Width = 560;
+        Height = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        ResizeMode = ResizeMode.NoResize;
 
         var root = new Grid { Margin = new Thickness(16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -51,10 +54,26 @@ public sealed class ProductEditorDialog : Window
         root.Children.Add(_basePathBox);
 
         var browseButton = new System.Windows.Controls.Button { Content = "参照...", Margin = new Thickness(0, 0, 0, 8) };
-        browseButton.Click += (_, _) => BrowseFolder();
+        browseButton.Click += (_, _) => BrowseFolder(_basePathBox, "ベースフォルダを選択");
         Grid.SetRow(browseButton, 1);
         Grid.SetColumn(browseButton, 2);
         root.Children.Add(browseButton);
+
+        var closedLabel = new TextBlock { Text = "クローズフォルダ", VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetRow(closedLabel, 2);
+        Grid.SetColumn(closedLabel, 0);
+        root.Children.Add(closedLabel);
+
+        _closedPathBox = new System.Windows.Controls.TextBox { Text = closedPath, Margin = new Thickness(8, 0, 8, 8) };
+        Grid.SetRow(_closedPathBox, 2);
+        Grid.SetColumn(_closedPathBox, 1);
+        root.Children.Add(_closedPathBox);
+
+        var closedBrowseButton = new System.Windows.Controls.Button { Content = "参照...", Margin = new Thickness(0, 0, 0, 8) };
+        closedBrowseButton.Click += (_, _) => BrowseFolder(_closedPathBox, "クローズフォルダを選択");
+        Grid.SetRow(closedBrowseButton, 2);
+        Grid.SetColumn(closedBrowseButton, 2);
+        root.Children.Add(closedBrowseButton);
 
         var buttonRow = new StackPanel
         {
@@ -76,18 +95,18 @@ public sealed class ProductEditorDialog : Window
         Content = root;
     }
 
-    private void BrowseFolder()
+    private void BrowseFolder(System.Windows.Controls.TextBox target, string description)
     {
         using var dialog = new System.Windows.Forms.FolderBrowserDialog
         {
-            Description = "ベースフォルダを選択",
+            Description = description,
             UseDescriptionForTitle = true,
-            SelectedPath = _basePathBox.Text,
+            SelectedPath = target.Text,
         };
 
         if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
         {
-            _basePathBox.Text = dialog.SelectedPath;
+            target.Text = dialog.SelectedPath;
         }
     }
 
@@ -101,7 +120,7 @@ public sealed class ProductEditorDialog : Window
 
         if (string.IsNullOrWhiteSpace(BasePath))
         {
-            MessageBox.Show(this, "ベースフォルダを入力してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "ベースフォルダを選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
