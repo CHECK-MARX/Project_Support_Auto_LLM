@@ -1,6 +1,7 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <ProjectReference Include="..\SupportCaseManager.Ai.Contracts\SupportCaseManager.Ai.Contracts.csproj" />
     <ProjectReference Include="..\SupportCaseManager.Core\SupportCaseManager.Core.csproj" />
   </ItemGroup>
 
@@ -16,8 +17,8 @@
 
   <ItemGroup>
     <Content Include="Assets\\config\\user-settings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
       <Link>config\\user-settings.json</Link>
     </Content>
     <Content Include="Assets\\app.ico">

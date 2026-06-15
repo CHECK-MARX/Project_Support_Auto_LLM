@@ -60,7 +60,8 @@ public sealed class CaseRepository
     public List<CaseRecord> AllCases()
     {
         var filesystem = ScanFolders();
-        var merged = MergeCases(_caseIndex, filesystem);
+        var indexed = FilterIndexForCurrentBase(_caseIndex);
+        var merged = MergeCases(indexed, filesystem);
         _caseIndex = merged.Select(item => item.CloneWith(isFromFolder: false)).ToList();
         SaveIndex();
         return merged;
@@ -318,10 +319,80 @@ public sealed class CaseRepository
 
     private static List<CaseRecord> MergeCases(IEnumerable<CaseRecord> indexed, IEnumerable<CaseRecord> folders)
     {
-        var orderedIndex = indexed.OrderByDescending(item => item.LastUpdated, StringComparer.Ordinal).ToList();
         var orderedFolder = folders.OrderByDescending(item => item.LastUpdated, StringComparer.Ordinal).ToList();
-        var combined = CaseCollection.EnsureUniqueCases(orderedIndex.Concat(orderedFolder));
+        var orderedIndex = indexed.OrderByDescending(item => item.LastUpdated, StringComparer.Ordinal).ToList();
+        // フォルダ実体を優先して重複（同一サポート番号）を解決し、
+        // 旧インデックスに残った移動前パスで案件が消えるのを防ぐ。
+        var combined = CaseCollection.EnsureUniqueCases(orderedFolder.Concat(orderedIndex));
         combined.Sort((a, b) => string.CompareOrdinal(b.LastUpdated, a.LastUpdated));
         return combined;
+    }
+
+    private List<CaseRecord> FilterIndexForCurrentBase(IEnumerable<CaseRecord> records)
+    {
+        if (string.IsNullOrWhiteSpace(_basePath))
+        {
+            return new List<CaseRecord>();
+        }
+
+        var normalizedBase = NormalizePath(_basePath);
+        var filtered = new List<CaseRecord>();
+        foreach (var record in records)
+        {
+            var folderPath = NormalizePath(record.FolderPath);
+            if (string.IsNullOrWhiteSpace(folderPath))
+            {
+                continue;
+            }
+
+            if (!IsPathUnderBase(normalizedBase, folderPath))
+            {
+                continue;
+            }
+
+            if (!Directory.Exists(folderPath))
+            {
+                continue;
+            }
+
+            filtered.Add(record);
+        }
+
+        return filtered;
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Path.GetFullPath(path.Trim());
+        }
+        catch
+        {
+            return path.Trim();
+        }
+    }
+
+    private static bool IsPathUnderBase(string basePath, string targetPath)
+    {
+        if (string.IsNullOrWhiteSpace(basePath) || string.IsNullOrWhiteSpace(targetPath))
+        {
+            return false;
+        }
+
+        if (string.Equals(basePath, targetPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var root = basePath.EndsWith(Path.DirectorySeparatorChar)
+            ? basePath
+            : basePath + Path.DirectorySeparatorChar;
+        return targetPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 }

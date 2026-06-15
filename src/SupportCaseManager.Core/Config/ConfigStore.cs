@@ -17,22 +17,35 @@ public sealed class ConfigStore
     {
         var baseDir = AppContext.BaseDirectory;
         var defaultDir = Path.Combine(baseDir, "config");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var localDir = Path.Combine(local, "itoke", "SupportCaseManager");
+        var forcePortable = string.Equals(
+            Environment.GetEnvironmentVariable("SUPPORT_CASE_MANAGER_PORTABLE"),
+            "1",
+            StringComparison.Ordinal);
+        var portableMarker = Path.Combine(defaultDir, "portable.mode");
         if (!string.IsNullOrWhiteSpace(configDir))
         {
             _configDir = configDir;
         }
-        else if (Directory.Exists(defaultDir))
+        else if (forcePortable || File.Exists(portableMarker))
         {
             _configDir = defaultDir;
         }
         else
         {
-            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            _configDir = Path.Combine(local, "itoke", "SupportCaseManager");
+            _configDir = localDir;
         }
 
         Directory.CreateDirectory(_configDir);
         _path = Path.Combine(_configDir, "user-settings.json");
+
+        // 旧バージョンで EXE 配下 config を使っていた場合、
+        // LocalAppData に設定が無ければ一度だけ移行する。
+        if (string.IsNullOrWhiteSpace(configDir) && !forcePortable && !File.Exists(portableMarker))
+        {
+            TryMigrateLegacySettings(defaultDir, _path);
+        }
     }
 
     public string SettingsPath => _path;
@@ -312,5 +325,34 @@ public sealed class ConfigStore
         }
 
         return list;
+    }
+
+    private static void TryMigrateLegacySettings(string legacyConfigDir, string localSettingsPath)
+    {
+        try
+        {
+            if (File.Exists(localSettingsPath))
+            {
+                return;
+            }
+
+            var legacyPath = Path.Combine(legacyConfigDir, "user-settings.json");
+            if (!File.Exists(legacyPath))
+            {
+                return;
+            }
+
+            var localDir = Path.GetDirectoryName(localSettingsPath);
+            if (!string.IsNullOrWhiteSpace(localDir))
+            {
+                Directory.CreateDirectory(localDir);
+            }
+
+            File.Copy(legacyPath, localSettingsPath, overwrite: false);
+        }
+        catch
+        {
+            // ignore migration failures and continue with defaults
+        }
     }
 }

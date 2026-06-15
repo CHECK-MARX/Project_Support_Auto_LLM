@@ -31,7 +31,7 @@ public class RepositoryTests
     }
 
     [Fact]
-    public void AllCases_PreservesIndexData()
+    public void AllCases_RemovesEntriesOutsideBasePath()
     {
         using var temp = new TempDirectory();
         var basePath = temp.Path;
@@ -57,12 +57,52 @@ public class RepositoryTests
         repository.SetBasePath(basePath);
         var cases = repository.AllCases();
 
-        Assert.Single(cases);
-        Assert.Equal("ABC", cases[0].Company);
-        Assert.Equal("00000001", cases[0].SupportNumber);
+        Assert.Empty(cases);
 
         var json = File.ReadAllText(indexPath, SupportCaseManager.Core.Compatibility.EncodingPolicy.Utf8NoBom);
         using var doc = JsonDocument.Parse(json);
         Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
+        Assert.Empty(doc.RootElement.EnumerateArray());
+    }
+
+    [Fact]
+    public void AllCases_PrefersFilesystemRecordOverStaleIndexPath()
+    {
+        using var temp = new TempDirectory();
+        var basePath = temp.Path;
+        var indexPath = Path.Combine(basePath, "cases-index.json");
+        var currentName = "20250102(ABC_00000001)調査中_20250103";
+        var currentPath = Path.Combine(basePath, currentName);
+        Directory.CreateDirectory(currentPath);
+        var stalePath = Path.Combine(basePath, "2025", currentName);
+        var sample = $$"""
+[
+  {
+    "company": "ABC",
+    "support_number": "00000001",
+    "status": "調査中",
+    "created_on": "20250102",
+    "folder_name": "{{currentName}}",
+    "folder_path": "{{stalePath.Replace("\\", "\\\\")}}",
+    "last_updated": "2025-01-03T12:34:56.123456",
+    "category": "",
+    "is_from_folder": false
+  }
+]
+""";
+        File.WriteAllText(indexPath, sample, SupportCaseManager.Core.Compatibility.EncodingPolicy.Utf8NoBom);
+
+        var repository = new CaseRepository(NullLogger.Instance);
+        repository.SetBasePath(basePath);
+        var cases = repository.AllCases();
+
+        Assert.Single(cases);
+        Assert.Equal(currentPath, cases[0].FolderPath);
+        Assert.True(File.Exists(indexPath));
+
+        var json = File.ReadAllText(indexPath, SupportCaseManager.Core.Compatibility.EncodingPolicy.Utf8NoBom);
+        using var doc = JsonDocument.Parse(json);
+        var saved = doc.RootElement.EnumerateArray().Single();
+        Assert.Equal(currentPath, saved.GetProperty("folder_path").GetString());
     }
 }

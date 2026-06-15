@@ -8,7 +8,27 @@
         PreviewKeyDown="OnPreviewKeyDown">
     <DockPanel Margin="16">
         <StatusBar DockPanel.Dock="Bottom">
-            <TextBlock Text="{Binding StatusMessage}" />
+            <Grid Width="{Binding RelativeSource={RelativeSource AncestorType=StatusBar}, Path=ActualWidth}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusMessage}" VerticalAlignment="Center" />
+                <StackPanel x:Name="LoadingIndicatorPanel"
+                            Grid.Column="1"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            Visibility="Collapsed">
+                    <TextBlock x:Name="LoadingLabelText" Text="読み込み中" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ProgressBar x:Name="LoadingProgressBar"
+                                 Width="180"
+                                 Height="12"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 Value="0" />
+                    <TextBlock x:Name="LoadingPercentText" Text="0%" VerticalAlignment="Center" Margin="8,0,0,0" MinWidth="42" />
+                </StackPanel>
+            </Grid>
         </StatusBar>
 
         <Grid>
@@ -146,6 +166,7 @@
                                 <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
                                 <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
                                 <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
+                                <Button x:Name="AiAssistantOpenButton" Content="AI回答支援で開く" Margin="16,0,0,0" Click="OnAiAssistantOpen" />
                             </StackPanel>
                         </Grid>
                     </GroupBox>
@@ -207,15 +228,7 @@
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   IsReadOnly="True"
-                                  HeadersVisibility="Column">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="プロダクト名" Binding="{Binding Name}" Width="200" />
-                                <DataGridTextColumn Header="件数" Binding="{Binding Total}" Width="80" />
-                                <DataGridTextColumn Header="進行中" Binding="{Binding Open}" Width="80" />
-                                <DataGridTextColumn Header="停滞(7日+)" Binding="{Binding Stale}" Width="100" />
-                                <DataGridTextColumn Header="最終更新" Binding="{Binding LatestUpdated}" Width="140" />
-                            </DataGrid.Columns>
-                        </DataGrid>
+                                  HeadersVisibility="Column" />
                     </GroupBox>
 
                     <GroupBox Grid.Row="2" Header="進行中 (未クローズ)" Margin="0,0,0,8">
@@ -223,10 +236,21 @@
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
                                   IsReadOnly="True"
+                                  EnableRowVirtualization="False"
+                                  EnableColumnVirtualization="False"
                                   HeadersVisibility="Column"
                                   MouseDoubleClick="OnOpenCaseRowDoubleClick">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                <DataGridTemplateColumn Header="プロダクト" Width="180">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <ComboBox ItemsSource="{Binding ProductNameOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                      SelectedItem="{Binding ProductName}"
+                                                      Width="160"
+                                                      SelectionChanged="OnOpenCaseProductChanged" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                                 <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
                                 <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
                                 <DataGridTemplateColumn Header="ステータス" Width="160">
@@ -278,10 +302,21 @@
                                       AutoGenerateColumns="False"
                                       CanUserAddRows="False"
                                       IsReadOnly="True"
+                                      EnableRowVirtualization="False"
+                                      EnableColumnVirtualization="False"
                                       HeadersVisibility="Column"
                                       MouseDoubleClick="OnStaleCaseRowDoubleClick">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="プロダクト" Binding="{Binding ProductName}" Width="160" />
+                                    <DataGridTemplateColumn Header="プロダクト" Width="180">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox ItemsSource="{Binding ProductNameOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                          SelectedItem="{Binding ProductName}"
+                                                          Width="160"
+                                                          SelectionChanged="OnStaleCaseProductChanged" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                     <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="160" />
                                     <DataGridTextColumn Header="サポート番号" Binding="{Binding SupportNumber}" Width="110" />
                                     <DataGridTemplateColumn Header="ステータス" Width="160">
@@ -341,6 +376,8 @@
                 <Grid x:Name="ClosedContentGrid" Background="{DynamicResource AppBackground}" Margin="12" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
@@ -349,9 +386,48 @@
                         <TextBlock Text="クローズ案件を一覧表示します。" VerticalAlignment="Center" />
                         <Button x:Name="ClosedRefreshButton" Content="再読み込み" Margin="16,0,0,0" Click="OnClosedRefresh" />
                         <Button x:Name="ClosedOrganizeButton" Content="年フォルダ整理" Margin="8,0,0,0" Click="OnClosedOrganize" />
+                        <TextBlock Text="検索:" Margin="20,0,4,0" VerticalAlignment="Center" />
+                        <TextBox x:Name="ClosedSearchTextBox"
+                                 Width="240"
+                                 VerticalAlignment="Center"
+                                 KeyDown="OnClosedSearchKeyDown"
+                                 TextChanged="OnClosedSearchTextChanged" />
+                        <Button x:Name="ClosedSearchButton" Content="検索" Margin="8,0,0,0" Click="OnClosedSearch" />
+                        <Button x:Name="ClosedSearchClearButton" Content="クリア" Margin="8,0,0,0" Click="OnClosedSearchClear" />
                     </StackPanel>
 
-                    <GroupBox Grid.Row="1" Header="ベース直下のクローズ" Margin="0,0,0,8">
+                    <GroupBox Grid.Row="1" Header="クローズ件数サマリー" Margin="0,0,0,8">
+                        <DataGrid x:Name="ClosedSummaryGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserSortColumns="False"
+                                  IsReadOnly="True"
+                                  EnableRowVirtualization="False"
+                                  EnableColumnVirtualization="False"
+                                  Sorting="OnClosedSummarySorting"
+                                  PreviewMouseLeftButtonUp="OnClosedSummaryHeaderClick"
+                                  SelectionMode="Single"
+                                  SelectionUnit="Cell"
+                                  HeadersVisibility="Column"
+                                  MaxHeight="180" />
+                    </GroupBox>
+
+                    <GroupBox x:Name="ClosedMonthlySummaryGroup" Grid.Row="2" Header="年別月次サマリー (年をクリックして表示)" Margin="0,0,0,8">
+                        <DataGrid x:Name="ClosedMonthlySummaryGrid"
+                                  AutoGenerateColumns="False"
+                                  CanUserAddRows="False"
+                                  CanUserSortColumns="False"
+                                  IsReadOnly="True"
+                                  EnableRowVirtualization="False"
+                                  EnableColumnVirtualization="False"
+                                  SelectionMode="Single"
+                                  SelectionUnit="Cell"
+                                  PreviewMouseLeftButtonUp="OnClosedMonthlySummaryClick"
+                                  HeadersVisibility="Column"
+                                  MaxHeight="180" />
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="3" Header="ベース直下のクローズ" Margin="0,0,0,8">
                         <DataGrid x:Name="ClosedBaseGrid"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"
@@ -375,7 +451,7 @@
                         </DataGrid>
                     </GroupBox>
 
-                    <GroupBox Grid.Row="2" Header="クローズフォルダ">
+                    <GroupBox Grid.Row="4" Header="クローズフォルダ">
                         <DataGrid x:Name="ClosedFolderGrid"
                                   AutoGenerateColumns="False"
                                   CanUserAddRows="False"

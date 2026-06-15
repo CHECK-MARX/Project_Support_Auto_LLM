@@ -1,0 +1,856 @@
+<Window x:Class="SupportCaseManager.AiAssistant.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="{DynamicResource WindowTitle}"
+        Width="1180"
+        Height="780"
+        MinWidth="980"
+        MinHeight="640"
+        Background="{DynamicResource AppBackgroundBrush}"
+        Foreground="{DynamicResource AppForegroundBrush}">
+    <DockPanel Margin="12" Background="{DynamicResource AppBackgroundBrush}">
+        <Border DockPanel.Dock="Bottom"
+                BorderBrush="{DynamicResource AppBorderBrush}"
+                BorderThickness="1"
+                Padding="8"
+                Margin="0,8,0,0"
+                Background="{DynamicResource AppPanelBackgroundBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+                <TextBlock Grid.Column="1"
+                           Text="{DynamicResource BusyLabel}"
+                           Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                <TextBlock Grid.Column="2"
+                           Text="{Binding IsBusy}"
+                           Foreground="{DynamicResource AppMutedForegroundBrush}" />
+            </Grid>
+        </Border>
+
+        <TabControl>
+            <TabItem Header="{DynamicResource SettingsTabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="{DynamicResource AppearanceSettingsHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource UiLanguageLabel}" />
+                                <ComboBox Grid.Column="1"
+                                          Width="180"
+                                          HorizontalAlignment="Left"
+                                          SelectedValue="{Binding UiLanguage, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectedValuePath="Tag">
+                                    <ComboBoxItem Tag="ja-JP" Content="{DynamicResource LanguageJapanese}" />
+                                    <ComboBoxItem Tag="en-US" Content="{DynamicResource LanguageEnglish}" />
+                                </ComboBox>
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource DarkModeLabel}" />
+                                <CheckBox Grid.Row="1"
+                                          Grid.Column="1"
+                                          IsChecked="{Binding UseDarkMode, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource AiDataFoldersHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource AiDataFolderLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding AiDataFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectAiDataFolderCommand}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource BaseFolderLabel}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding BaseFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Row="1" Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectBaseFolderCommand}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource ClosedCasesFolderLabel}" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CloseFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Row="2" Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectCloseFolderCommand}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="現在の使用コンテキスト">
+                            <StackPanel>
+                                <TextBox Text="{Binding CurrentProductContextText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="100" />
+                                <TextBlock Text="{Binding ManualFolderUsageText, Mode=OneWay}"
+                                           Foreground="{DynamicResource AppMutedForegroundBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource CaseNoteIndexHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource AiIndexFolderLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding AiIndexFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectAiIndexFolderCommand}" />
+
+                                <Button Grid.Row="1"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Left"
+                                        Content="{DynamicResource BuildPastCaseIndexButton}"
+                                        Command="{Binding BuildIndexCommand}" />
+
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding IndexBuildResultText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="80" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource ManualIndexHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource ManualFolderLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding ManualFolder, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectManualFolderCommand}" />
+
+                                <Button Grid.Row="1"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Left"
+                                        Content="{DynamicResource BuildManualIndexButton}"
+                                        Command="{Binding BuildManualIndexCommand}" />
+
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding ManualIndexBuildResultText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="80" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="製品別ナレッジ設定">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="既存設定ファイル" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding SupportToolSettingsFilePath, UpdateSourceTrigger=PropertyChanged}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                                    <Button Content="選択" Command="{Binding SelectSupportToolSettingsFileCommand}" />
+                                    <Button Content="読み込み" Command="{Binding LoadSupportToolSettingsCommand}" Margin="6,0,0,0" />
+                                </StackPanel>
+
+                                <TextBlock Grid.Row="1" Text="製品一覧" />
+                                <DataGrid Grid.Row="1"
+                                          Grid.Column="1"
+                                          Grid.ColumnSpan="2"
+                                          ItemsSource="{Binding Products}"
+                                          SelectedItem="{Binding SelectedProductKnowledge}"
+                                          AutoGenerateColumns="False"
+                                          IsReadOnly="True"
+                                          SelectionMode="Single"
+                                          MinHeight="120">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="製品名" Binding="{Binding ProductName, Mode=OneWay}" Width="160" />
+                                        <DataGridCheckBoxColumn Header="有効" Binding="{Binding IsEnabled, Mode=TwoWay}" Width="70" IsReadOnly="False" />
+                                        <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BaseFolder, Mode=OneWay}" Width="2*" />
+                                        <DataGridTextColumn Header="クローズフォルダ" Binding="{Binding CloseFolder, Mode=OneWay}" Width="2*" />
+                                        <DataGridTextColumn Header="マニュアル" Binding="{Binding ManualFoldersSummary, Mode=OneWay}" Width="2*" />
+                                        <DataGridTextColumn Header="URL" Binding="{Binding DocumentUrlsSummary, Mode=OneWay}" Width="2*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+
+                                <TextBlock Grid.Row="2" Text="選択製品" />
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding SelectedProductKnowledge.ProductName, Mode=OneWay}"
+                                         IsReadOnly="True" />
+
+                                <TextBlock Grid.Row="3" Text="ベースフォルダ" />
+                                <TextBox Grid.Row="3"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding SelectedProductKnowledge.BaseFolder, Mode=OneWay}"
+                                         IsReadOnly="True" />
+
+                                <TextBlock Grid.Row="4" Text="クローズフォルダ" />
+                                <TextBox Grid.Row="4"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding SelectedProductKnowledge.CloseFolder, Mode=OneWay}"
+                                         IsReadOnly="True" />
+
+                                <TextBlock Grid.Row="5" Text="製品別索引" />
+                                <TextBox Grid.Row="5"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding SelectedProductIndexFolder, Mode=OneWay}"
+                                         IsReadOnly="True" />
+
+                                <TextBlock Grid.Row="6" Text="マニュアルフォルダ" />
+                                <DockPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="2">
+                                    <StackPanel DockPanel.Dock="Right" Orientation="Vertical" Margin="8,0,0,0">
+                                        <Button Content="追加" Command="{Binding AddProductManualFolderCommand}" />
+                                        <Button Content="削除" Command="{Binding RemoveProductManualFolderCommand}" Margin="0,6,0,0" />
+                                    </StackPanel>
+                                    <ListBox ItemsSource="{Binding SelectedProductKnowledge.ManualFolders}"
+                                             SelectedItem="{Binding SelectedManualFolderPath}"
+                                             MinHeight="70" />
+                                </DockPanel>
+
+                                <TextBlock Grid.Row="7" Text="公式URL登録" />
+                                <DockPanel Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2">
+                                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                                        <TextBox Width="520"
+                                                 Text="{Binding NewDocumentUrl, UpdateSourceTrigger=PropertyChanged}" />
+                                        <Button Content="追加" Command="{Binding AddProductDocumentUrlCommand}" Margin="6,0,0,0" />
+                                        <Button Content="削除" Command="{Binding RemoveProductDocumentUrlCommand}" Margin="6,0,0,0" />
+                                    </StackPanel>
+                                    <ListBox ItemsSource="{Binding SelectedProductKnowledge.DocumentUrls}"
+                                             SelectedItem="{Binding SelectedDocumentUrl}"
+                                             MinHeight="70" />
+                                </DockPanel>
+
+                                <TextBlock Grid.Row="8" Text="状態" />
+                                <TextBox Grid.Row="8"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="2"
+                                         Text="{Binding ProductKnowledgeStatusText, Mode=OneWay}"
+                                         IsReadOnly="True" />
+
+                                <StackPanel Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal">
+                                    <Button Content="選択製品を検索対象にする" Command="{Binding UseSelectedProductCommand}" />
+                                    <Button Content="製品別設定を保存" Command="{Binding SaveProductKnowledgeSettingsCommand}" Margin="8,0,0,0" />
+                                    <Button Content="公式URLインデックス作成" Command="{Binding BuildOfficialDocumentIndexCommand}" Margin="8,0,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="公式URLインデックス作成結果">
+                            <TextBox Text="{Binding OfficialDocumentIndexBuildResultText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="90" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource LlmSettingsHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource ProviderLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding LlmProvider, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource OllamaEndpointLabel}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource ChatModelLabel}" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource EmbeddingModelLabel}" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding EmbeddingModel, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="4" Text="{DynamicResource MaxEvidenceItemsLabel}" />
+                                <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding MaxEvidenceItems, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="5" Text="{DynamicResource MaxPromptCharsLabel}" />
+                                <TextBox Grid.Row="5" Grid.Column="1" Text="{Binding MaxPromptChars, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="6" Text="{DynamicResource TemperatureLabel}" />
+                                <TextBox Grid.Row="6" Grid.Column="1" Text="{Binding Temperature, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="7" Text="{DynamicResource MaxOutputTokensLabel}" />
+                                <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding MaxOutputTokens, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="8" Text="{DynamicResource TimeoutSecondsLabel}" />
+                                <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding TimeoutSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox Content="{DynamicResource EnableCloudLlmLabel}" IsChecked="{Binding EnableCloudLlm}" />
+                            <CheckBox Content="{DynamicResource MaskSensitiveDataForCloudLabel}" IsChecked="{Binding MaskSensitiveDataForCloud}" />
+                            <CheckBox Content="Thinkingを無効化" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
+                        </StackPanel>
+
+                        <GroupBox Header="モデル比較 / 推奨設定">
+                            <TextBox Text="{Binding ModelRecommendationText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{DynamicResource LoadSettingsButton}" Command="{Binding LoadSettingsCommand}" />
+                            <Button Content="{DynamicResource SaveSettingsButton}" Command="{Binding SaveSettingsCommand}" />
+                            <Button Content="{DynamicResource CheckOllamaConnectionButton}" Command="{Binding CheckOllamaConnectionCommand}" />
+                            <Button Content="Ollama本番生成ミニテスト" Command="{Binding RunOllamaProductionMiniTestCommand}" />
+                        </StackPanel>
+
+                        <GroupBox Header="{DynamicResource OllamaConnectionResultHeader}">
+                            <TextBox Text="{Binding OllamaConnectionResultText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="100" />
+                        </GroupBox>
+
+                        <GroupBox Header="Ollama本番生成ミニテスト">
+                            <TextBox Text="{Binding OllamaProductionMiniTestResultText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="100" />
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="{DynamicResource CaseLoadTabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="{DynamicResource CaseFolderHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource CaseFolderPathLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding CaseFolderPath, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2" Content="{DynamicResource SelectCaseFolderButton}" Command="{Binding SelectCaseFolderCommand}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource ProductLabel}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding ProductName, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource BaseFolderLabel}" />
+                                <TextBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding BaseFolder, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource ClosedFolderLabel}" />
+                                <TextBox Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding CloseFolder, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource CaseInformationHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource CompanyLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding CompanyName, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="2" Text="{DynamicResource SupportNumberLabel}" />
+                                <TextBox Grid.Column="3" Text="{Binding SupportNumber, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource StatusLabel}" />
+                                <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Status, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{DynamicResource ReceptionDateLabel}" />
+                                <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ReceptionDate, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{DynamicResource LoadCaseButton}" Command="{Binding LoadCaseCommand}" />
+                            <Button Content="{DynamicResource ReloadNotesButton}" Command="{Binding ReloadNotesCommand}" />
+                        </StackPanel>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="320" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <GroupBox Header="{DynamicResource NotesHeader}">
+                                <ListBox ItemsSource="{Binding Notes}"
+                                         SelectedItem="{Binding SelectedNote}"
+                                         DisplayMemberPath="FileName"
+                                         MinHeight="260" />
+                            </GroupBox>
+                            <GroupBox Grid.Column="1" Header="{DynamicResource SelectedNotePreviewHeader}">
+                                <TextBox Text="{Binding SelectedNoteText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="260" />
+                            </GroupBox>
+                        </Grid>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="{DynamicResource InquiryTabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="{DynamicResource InquiryTextHeader}">
+                            <TextBox Text="{Binding InquiryText, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="160" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource AdditionalInstructionHeader}">
+                            <TextBox Text="{Binding AdditionalInstruction, UpdateSourceTrigger=PropertyChanged}"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource EvidenceControlHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource MaxEvidenceItemsLabel}" />
+                                <TextBox Grid.Column="1" Text="{Binding MaxEvidenceItems, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Column="2" Text="{DynamicResource SearchResultsLabel}" />
+                                <TextBlock Grid.Column="3" Text="{Binding SearchResultCount}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource SelectedEvidenceLabel}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding SelectedEvidenceCount}" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="{DynamicResource EvidenceToSendLabel}" />
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding EvidenceToSendCount}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource LastUsedEvidenceLabel}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding UsedEvidenceCount}" />
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="{DynamicResource PromptCharsLabel}" />
+                                <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding PromptApproxChars}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource WarningLabel}" />
+                                <TextBlock Grid.Row="3"
+                                           Grid.Column="1"
+                                           Grid.ColumnSpan="3"
+                                           Text="{Binding EvidenceLimitWarningText}"
+                                           Foreground="{DynamicResource AppWarningBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="4" Text="{DynamicResource TypeCountsLabel}" />
+                                <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal">
+                                    <TextBlock Text="{DynamicResource PastCaseNoteCountLabel}" />
+                                    <TextBlock Text="{Binding PastCaseNoteSelectedCount}" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="4" Grid.Column="2" Orientation="Horizontal">
+                                    <TextBlock Text="{DynamicResource ManualCountLabel}" />
+                                    <TextBlock Text="{Binding ManualSelectedCount}" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="4" Grid.Column="3" Orientation="Horizontal">
+                                    <TextBlock Text="公式: " />
+                                    <TextBlock Text="{Binding OfficialDocSelectedCount}" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal">
+                                    <TextBlock Text="{DynamicResource ExcludedByLimitCountLabel}" />
+                                    <TextBlock Text="{Binding ExcludedByLimitCount}" />
+                                </StackPanel>
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="問い合わせ焦点 / 鮮度判定">
+                            <TextBox Text="{Binding InquiryFocusSummaryText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <GroupBox Header="OfficialDoc診断">
+                            <TextBox Text="{Binding OfficialDocDiagnosticsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="120" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource EvidenceSearchHeader}">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="{DynamicResource SearchPastCasesButton}" Command="{Binding SearchPastCasesCommand}" />
+                                        <Button Content="{DynamicResource SearchManualsButton}" Command="{Binding SearchManualsCommand}" />
+                                        <TextBlock Text="{DynamicResource FilterLabel}" Margin="12,0,4,0" />
+                                        <ComboBox Width="140"
+                                                  SelectedValue="{Binding SourceTypeFilter, UpdateSourceTrigger=PropertyChanged}"
+                                                  SelectedValuePath="Tag">
+                                            <ComboBoxItem Tag="All" Content="{DynamicResource SourceFilterAll}" />
+                                            <ComboBoxItem Tag="PastCaseNote" Content="{DynamicResource SourceFilterPastCaseNote}" />
+                                            <ComboBoxItem Tag="Manual" Content="{DynamicResource SourceFilterManual}" />
+                                            <ComboBoxItem Tag="OfficialDoc" Content="公式" />
+                                        </ComboBox>
+                                        <TextBlock Text="{DynamicResource VisibleCountLabel}" Margin="12,0,0,0" />
+                                        <TextBlock Text="{Binding FilteredSearchResultCount}" />
+                                    </StackPanel>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button Content="{DynamicResource SelectVisibleButton}" Command="{Binding SelectVisibleSourcesCommand}" />
+                                        <Button Content="{DynamicResource ClearVisibleButton}" Command="{Binding ClearVisibleSourcesCommand}" />
+                                        <Button Content="{DynamicResource SelectHighScoreButton}" Command="{Binding SelectHighScoreSourcesCommand}" />
+                                        <TextBlock Text="{DynamicResource MinDisplayScoreLabel}" Margin="8,0,4,0" />
+                                        <TextBox Width="70" Text="{Binding MinimumDisplayScore, UpdateSourceTrigger=PropertyChanged}" />
+                                        <TextBlock Text="{DynamicResource AutoSelectMinScoreLabel}" Margin="8,0,4,0" />
+                                        <TextBox Width="70" Text="{Binding HighScoreThreshold, UpdateSourceTrigger=PropertyChanged}" />
+                                        <Button Content="{DynamicResource ClearAllButton}" Command="{Binding ClearAllSourcesCommand}" />
+                                        <Button Content="{DynamicResource ToggleSelectedButton}" Command="{Binding ToggleSelectedSourceCommand}" />
+                                        <Button Content="{DynamicResource OpenSelectedFileButton}" Command="{Binding OpenSelectedSourceFileCommand}" />
+                                        <Button Content="{DynamicResource OpenSelectedFolderButton}" Command="{Binding OpenSelectedSourceFolderCommand}" />
+                                    </StackPanel>
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding FilteredSearchResults}"
+                                          SelectedItem="{Binding SelectedSearchResult}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          IsReadOnly="False"
+                                          MinHeight="220">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="{DynamicResource UseColumnHeader}" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" />
+                                        <DataGridTextColumn Header="{DynamicResource ScoreColumnHeader}" Binding="{Binding ScoreText, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="{DynamicResource CoverageColumnHeader}" Binding="{Binding QueryCoverage, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="{DynamicResource MatchedTermsColumnHeader}" Binding="{Binding MatchedTermsText, Mode=OneWay}" IsReadOnly="True" Width="180" />
+                                        <DataGridTextColumn Header="{DynamicResource TypeColumnHeader}" Binding="{Binding SourceType, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="製品" Binding="{Binding ProductName, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="{DynamicResource TitleColumnHeader}" Binding="{Binding Title, Mode=OneWay}" IsReadOnly="True" Width="220" />
+                                        <DataGridTextColumn Header="{DynamicResource SupportNumberColumnHeader}" Binding="{Binding SupportNumber, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="{DynamicResource ExcerptColumnHeader}" Binding="{Binding Excerpt, Mode=OneWay}" IsReadOnly="True" Width="360" />
+                                        <DataGridTextColumn Header="{DynamicResource FileColumnHeader}" Binding="{Binding FilePath, Mode=OneWay}" IsReadOnly="True" Width="260" />
+                                        <DataGridTextColumn Header="URL" Binding="{Binding Url, Mode=OneWay}" IsReadOnly="True" Width="260" />
+                                        <DataGridTextColumn Header="取得日時" Binding="{Binding RetrievedAtText, Mode=OneWay}" IsReadOnly="True" Width="150" />
+                                        <DataGridTextColumn Header="{DynamicResource PlanColumnHeader}" Binding="{Binding SendStatusText, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="{DynamicResource LastSentColumnHeader}" Binding="{Binding UsedInLastDraftText, Mode=OneWay}" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource SelectedEvidencePreviewHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="{DynamicResource SourceTypeLabel}" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedSearchResult.SourceType, Mode=OneWay}" />
+                                <TextBlock Grid.Column="2" Text="{DynamicResource ScoreLabel}" />
+                                <TextBlock Grid.Column="3" Text="{Binding SelectedSearchResult.ScoreText, Mode=OneWay}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource TitleLabel}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.Title, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource SupportNumberCompactLabel}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SelectedSearchResult.SupportNumber, Mode=OneWay}" />
+                                <TextBlock Grid.Row="2" Grid.Column="2" Text="{DynamicResource SendStatusLabel}" />
+                                <TextBlock Grid.Row="2" Grid.Column="3" Text="{Binding SelectedSearchResult.SendStatusText, Mode=OneWay}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource FilePathLabel}" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.FilePath, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="4" Text="{DynamicResource MatchedTermsLabel}" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.MatchedTermsText, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="5" Text="URL" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.Url, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="6" Text="取得日時" />
+                                <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.RetrievedAtText, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="7" Text="{DynamicResource ScoreBreakdownLabel}" />
+                                <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.ScoreBreakdown, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="8" Text="{DynamicResource SelectionReasonLabel}" />
+                                <TextBlock Grid.Row="8" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.SelectionReasonText, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="9" Text="{DynamicResource ExcerptLabel}" />
+                                <TextBlock Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.Excerpt, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="10" Text="{DynamicResource TextPreviewLabel}" />
+                                <TextBox Grid.Row="10"
+                                         Grid.Column="1"
+                                         Grid.ColumnSpan="3"
+                                         Text="{Binding SelectedSearchResult.Text, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="120" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource EvidenceSummaryHeader}">
+                            <TextBox Text="{Binding EvidenceSummaryText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="90" />
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{DynamicResource GenerateDraftButton}" Command="{Binding GenerateDraftCommand}" />
+                            <Button Content="{DynamicResource ClearInputButton}" Command="{Binding ClearInquiryCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="{DynamicResource DraftResultTabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="生成情報">
+                            <TextBox Text="{Binding DraftProviderStatusText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource CustomerReplyDraftHeader}">
+                            <TextBox Text="{Binding CustomerReplyDraft, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="150" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource InternalMemoHeader}">
+                            <TextBox Text="{Binding InternalMemo, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="90" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource NeedConfirmationsHeader}">
+                            <TextBox Text="{Binding NeedConfirmationsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource EvidenceHeader}">
+                            <StackPanel>
+                                <GroupBox Header="{DynamicResource UsedEvidenceHeader}">
+                                    <TextBox Text="{Binding UsedSourcesText, Mode=OneWay}"
+                                             AcceptsReturn="True"
+                                             IsReadOnly="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             MinHeight="100" />
+                                </GroupBox>
+                                <GroupBox Header="{DynamicResource ReturnedEvidenceHeader}">
+                                    <TextBox Text="{Binding EvidenceText, Mode=OneWay}"
+                                             AcceptsReturn="True"
+                                             IsReadOnly="True"
+                                             TextWrapping="Wrap"
+                                             VerticalScrollBarVisibility="Auto"
+                                             MinHeight="80" />
+                                </GroupBox>
+                            </StackPanel>
+                        </GroupBox>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="160" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="{DynamicResource ConfidenceLabel}" />
+                            <TextBlock Grid.Column="1" Text="{Binding ConfidenceText}" />
+                        </Grid>
+
+                        <GroupBox Header="回答生成診断">
+                            <TextBox Text="{Binding GenerationDiagnosticsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="90" />
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource WarningsHeader}">
+                            <TextBox Text="{Binding WarningsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="70" />
+                        </GroupBox>
+
+                        <TextBlock Text="{Binding SavedDraftPath}" Foreground="{DynamicResource AppMutedForegroundBrush}" TextWrapping="Wrap" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{DynamicResource CopyCustomerReplyButton}" Command="{Binding CopyCustomerReplyCommand}" />
+                            <Button Content="{DynamicResource CopyInternalMemoButton}" Command="{Binding CopyInternalMemoCommand}" />
+                            <Button Content="{DynamicResource CopyAllButton}" Command="{Binding CopyAllCommand}" />
+                            <Button Content="{DynamicResource SaveDraftButton}" Command="{Binding SaveDraftCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="{DynamicResource LogsDiagnosticsTabHeader}">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="{DynamicResource DiagnosticsStatusHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="160" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="{DynamicResource CurrentStatusLabel}" />
+                                <TextBlock Grid.Column="1" Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource LastResultLabel}" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding LastOperationResult}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource LogFileLabel}" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding LogFilePath}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource ErrorLabel}" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ErrorText}" Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" />
+                            </Grid>
+                        </GroupBox>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="{DynamicResource WriteTestLogButton}" Command="{Binding WriteTestLogCommand}" />
+                            <Button Content="{DynamicResource OpenLogButton}" Command="{Binding OpenLogCommand}" />
+                        </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+    </DockPanel>
+</Window>

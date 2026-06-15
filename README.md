@@ -1,82 +1,171 @@
-﻿# サポート受付ディレクトリ作成ツール (WPF/.NET)
+# SupportCaseManager / AI回答支援
 
-C# (WPF) で再構築したサポート案件管理ツールです。旧 Python 版は別プロジェクトへ退避済みで、現行のメンテ対象は C# 版となります。ベースフォルダ管理、履歴検索、ノート追記、ステータス更新など従来のフローを引き継ぎつつ、UI/UX と安定性を向上させています。
+サポート案件管理用の既存WPFアプリと、独立したAI回答支援WPFアプリを含む .NET 10 ソリューションです。
+
+既存案件データ、ノート、`cases-index.json`、`user-settings.json` は既存アプリ側の管理対象です。AI回答支援の設定・ログ・インデックス・ドラフトは `ai-data` / `ai-index` 配下に分離します。
+
+---
+
+## プロジェクト構成
+
+| プロジェクト | 役割 |
+| --- | --- |
+| `src/SupportCaseManager.App` | 既存のサポート案件管理WPFアプリ |
+| `src/SupportCaseManager.Core` | 案件、ノート、設定、リポジトリなど既存アプリの中核処理 |
+| `src/SupportCaseManager.Ai.Contracts` | AI回答支援用DTO |
+| `src/SupportCaseManager.Ai.Core` | RAG、検索、Fact解決、プロンプト、LLM、ドラフト保存、診断ログ |
+| `src/SupportCaseManager.AiAssistant.App` | 独立AI回答支援WPFアプリ |
+| `tests/*` | xUnitテスト |
 
 ---
 
 ## 動作要件
-- Windows 10 / 11
-- .NET 10 SDK（開発/ビルド時）
-- 配布 EXE 利用時は追加ランタイム不要（self-contained）
 
-### 開発/起動
+- Windows 10 / 11
+- .NET 10 SDK
+- AI回答支援でOllamaを使う場合は、ローカルOllamaと対象モデル
+
+---
+
+## 起動
+
+### 既存サポート案件管理アプリ
+
 ```powershell
 dotnet run --project src\SupportCaseManager.App\SupportCaseManager.App.csproj
 ```
 
+### AI回答支援アプリ
+
+```powershell
+dotnet run --project src\SupportCaseManager.AiAssistant.App\SupportCaseManager.AiAssistant.App.csproj
+```
+
 ---
 
-## 配布用ビルド（single-file / self-contained）
+## ビルド / テスト
+
+```powershell
+dotnet build SupportCaseManager.slnx
+dotnet test SupportCaseManager.slnx
+dotnet build src\SupportCaseManager.AiAssistant.App\SupportCaseManager.AiAssistant.App.csproj
+```
+
+配布用ビルド:
+
 ```powershell
 dotnet publish src\SupportCaseManager.App\SupportCaseManager.App.csproj -p:PublishProfile=WinX64SingleFile
 ```
-出力先: `src/SupportCaseManager.App/bin/Release/net10.0-windows/win-x64/publish/`
-
-### 注意（single-file の展開先）
-- single-file 版は初回実行時に一時展開を行うため、**書き込み権限が必要**です。
-- 展開先を制御したい場合は環境変数 `DOTNET_BUNDLE_EXTRACT_BASE_DIR` を設定してください。
-  ```powershell
-  setx DOTNET_BUNDLE_EXTRACT_BASE_DIR "C:\SupportCaseManager\bundle"
-  ```
-
-### 配布物に含まれる初期設定
-- publish 出力に `config/user-settings.json` の初期テンプレートが同梱されます。
-- `config/` が同階層にある場合はそれを優先して読み込みます。
 
 ---
 
-## 主な機能
-- **案件メタ情報**: 受付日 / 会社名 / サポート番号 / ステータス / 保存先フォルダ。必須欄は未入力時に赤枠表示。
-- **ステータス管理**: プルダウン横の `+` / `-` で項目追加・削除。設定へ即保存。
-- **フォルダ作成**: `YYYYMMDD(会社名_サポート番号)ステータス_YYYYMMDD` 形式。衝突時は `_2`, `_3` … を自動付与。「作成後にフォルダを開く」を ON にするとエクスプローラを開きます。
-- **履歴/検索**: サポート番号検索は `cases-index.json` と実ディレクトリを横断。履歴ドロップダウンは最大 20 件で、クローズ案件や存在しないフォルダは自動で除外。
-- **旧フォルダ互換**: `202503(itoke101)調査中0322` のような旧命名も解析し、メタ情報・ノートに反映。既存ノートが無い場合のみ自動で3ファイルを作成します。
-- **ノート編集**: 種別ごとに UTF-8(CRLF) のテキストへ追記。追記フォーマットは `*****追記部_YYYY/MM/DD HH:mm:ss(ステータス)******`。テンプレート機能で本文を保存/閲覧/コピー/編集/削除可能。
-- **サブフォルダ作成**: `項目名_yyyyMMdd_<サポート番号>[_n]` 形式で添付資料ディレクトリを生成。
-- **ショートカット**: Ctrl+S(追記保存) / Ctrl+O(ノートを開く) / Ctrl+N(新規) / Ctrl+F(検索欄フォーカス)。
-- **ダークモード**: 初期状態 ON。切り替えは即時反映・永続化。
-- **ログ/エラー**: `logs/SupportCaseManager.log` に INFO/ERROR を出力し、例外時はダイアログとログで通知。
+## 既存サポート案件管理アプリ
 
----
+主な機能:
 
-## データと保存場所
+- 案件メタ情報管理: 受付日、会社名、サポート番号、ステータス、保存先フォルダ
+- 案件フォルダ作成: `YYYYMMDD(会社名_サポート番号)ステータス_YYYYMMDD` 形式
+- 履歴/検索: `cases-index.json` と実ディレクトリを横断
+- ノート編集: お客様ご相談内容、調査内容、回答内容などのテキスト追記
+- 旧フォルダ互換: 既存フォルダ名からメタ情報を復元
+- テンプレート、サブフォルダ作成、ショートカット、ダークモード
+
+既存アプリの設定/ログ:
+
 | パス | 説明 |
-|------|------|
-| `config/user-settings.json` | ベースフォルダ / ダークモード / 履歴 / ステータス / テンプレート（同階層に `config/` がある場合に使用） |
+| --- | --- |
+| `config/user-settings.json` | ベースフォルダ、ステータス、履歴、テンプレートなど |
 | `%LOCALAPPDATA%\itoke\SupportCaseManager\user-settings.json` | `config/` が無い場合の設定保存先 |
-| `<ベースフォルダ>/cases-index.json` | 案件検索用インデックス（自動生成） |
-| `logs/SupportCaseManager.log` | 実行ログ |
-| `<案件フォルダ>/お客様ご相談内容_<番号>.txt` など | ノート本体 (UTF-8, CRLF) |
+| `<ベースフォルダ>/cases-index.json` | 案件検索用インデックス |
+| `logs/SupportCaseManager.log` | 既存アプリの実行ログ |
+| `<案件フォルダ>/*.txt` | 既存ノート |
 
 ---
 
-## 受入テスト
-1. **フォルダ作成**: 受付日=2025/10/13, 会社名=MMM, サポート番号=00001234, ステータス=調査中 → `20251013(MMM_00001234)調査中_YYYYMMDD` が生成され開ける。
-2. **追記保存**: 3種ノートすべてでヘッダ `*****追記部_YYYY/MM/DD HH:mm:ss(調査中)******` が入る。
-3. **ノートを開く**: 既定エディタ (メモ帳) で開く。
-4. **サブフォルダ作成**: `返信案_YYYYMMDD_00001234` が生成され、衝突時は `_2` 付番。
-5. **履歴復帰**: 履歴の最新案件を選ぶとメタ情報が復元される。
-6. **ダークモード**: ダーク状態で終了 → 再起動でもダーク。
-7. **旧フォルダ互換**: `202503(itoke101)調査中0322` を選んでもメタ情報/ノートを表示し、既存ノートには手を加えない。
+## AI回答支援アプリ
 
-### WPF 版の実施メモ
-- 起動後にベースフォルダを入力し「履歴更新」を押す
-- 履歴が 0 件でも UI が固まらないこと
-- 新規作成後に履歴へ反映されること
-- 検索で既存案件が即時に復元されること
+目的:
+
+- 過去案件、ローカルマニュアル、公式ドキュメントを根拠として回答案を作成
+- 生成結果に根拠、参照元、要確認事項、信頼度、警告を表示
+- 既存案件フォルダや既存ノートには自動書き込みしない
+
+主な機能:
+
+- 設定: `ai-data` / `ai-index`、Ollama、モデル、プロンプト上限、根拠件数
+- インデックス: 過去案件、TXT/MDマニュアル、公式ドキュメント
+- 検索: 過去案件、Manual、OfficialDocの統合検索
+- 根拠制御: SourceTypeフィルタ、選択/除外、最大根拠件数制御
+- 回答生成: Fake / Ollama切り替え、Ollama `/api/chat`
+- Fact解決: `CuratedFactCatalog` を優先して最新バージョンなどの重要Factを確定
+- 保存: AIドラフトを `ai-data/drafts` に保存
+- 診断: AI専用ログを `ai-data/logs/AiAssistant.log` に保存
+
+AI用データ:
+
+| パス | 説明 |
+| --- | --- |
+| `ai-data/settings.json` | AI回答支援アプリ専用設定 |
+| `ai-data/drafts/` | 生成した回答案のJSON保存先 |
+| `ai-data/logs/AiAssistant.log` | AI回答支援専用ログ |
+| `ai-index/products/<製品名>/` | 製品別インデックス |
+| `ai-index/products/<製品名>/curated-facts.json` | 製品別の正本Fact |
 
 ---
 
-## 注意点
-- 初回「履歴更新」はベースフォルダ全体を走査するため、案件数が多い環境では数秒かかる場合があります。
-- 共有ドライブで使う場合は `config/` と `logs/` の書き込み権限を確認してください。
+## CuratedFactCatalog
+
+最新バージョンなど、サポート側で正本管理すべきFactはRAG抽出だけで断定しません。
+
+例:
+
+```json
+{
+  "productName": "Checkmarx",
+  "latestSastVersion": "9.7.0",
+  "latestEnginePackVersion": "9.7.6",
+  "latestHotfixVersion": "HF10",
+  "sourceUrls": [
+    "https://docs.checkmarx.com/en/34965-321884-release-notes-for-9-7-0.html",
+    "https://docs.checkmarx.com/en/34965-591177-engine-pack-version-9-7-6.html",
+    "https://docs.checkmarx.com/en/34965-337700-hotfixes-9-7-0.html"
+  ],
+  "updatedAt": "2026-06-10T00:00:00+09:00"
+}
+```
+
+優先順位:
+
+1. `CuratedFactCatalog`
+2. `UserConfirmed` 候補
+3. 組み込みCurated fallback
+4. `ProductFactCatalog` / `VersionCatalog`
+5. `OfficialDoc` 候補
+6. `Manual`
+7. `PastCaseNote`
+
+---
+
+## 安全設計
+
+- 既存ノートへ自動追記しない
+- `cases-index.json` / `user-settings.json` をAI側から変更しない
+- 自動送信、自動返信、自動クローズはしない
+- APIキー、メールアドレス、電話番号などはログ出力前にマスクする
+- クラウドLLM利用時はマスキング前提。初期利用はローカルOllama想定
+- LLM出力は必ず人間が確認する
+
+---
+
+## 生成物の扱い
+
+以下はビルド/検証で生成される一時物です。リポジトリには含めません。
+
+- `publish/`
+- `_publish/`
+- `_verify_build/`
+- `**/_verify_build/`
+- `bin/`
+- `obj/`
+- `logs/`
+- `docs/SupportCaseManager_UserGuide_ja_updated*.docx`

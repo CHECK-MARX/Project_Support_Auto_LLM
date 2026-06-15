@@ -37,3 +37,12 @@ __pycache__/
 # Misc build folders
 build/
 dist/
+publish/
+_publish/
+_verify_build/
+**/_verify_build/
+
+# Generated document iterations
+docs/*.docx
+docs/assets/
+docs/SupportCaseManager_UserGuide_ja_updated*.docx

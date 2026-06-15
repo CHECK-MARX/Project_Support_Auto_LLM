@@ -1,9 +1,15 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/SupportCaseManager.Ai.Contracts/SupportCaseManager.Ai.Contracts.csproj" />
+    <Project Path="src/SupportCaseManager.Ai.Core/SupportCaseManager.Ai.Core.csproj" />
+    <Project Path="src/SupportCaseManager.AiAssistant.App/SupportCaseManager.AiAssistant.App.csproj" />
     <Project Path="src/SupportCaseManager.App/SupportCaseManager.App.csproj" />
     <Project Path="src/SupportCaseManager.Core/SupportCaseManager.Core.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/SupportCaseManager.App.Tests/SupportCaseManager.App.Tests.csproj" />
+    <Project Path="tests/SupportCaseManager.AiAssistant.App.Tests/SupportCaseManager.AiAssistant.App.Tests.csproj" />
+    <Project Path="tests/SupportCaseManager.Ai.Tests/SupportCaseManager.Ai.Tests.csproj" />
     <Project Path="tests/SupportCaseManager.Tests/SupportCaseManager.Tests.csproj" />
   </Folder>
 </Solution>
