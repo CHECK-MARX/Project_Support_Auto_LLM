@@ -35,7 +35,7 @@ jobs:
         run: dotnet build SupportCaseManager.slnx -c Release --no-restore
 
       - name: Test
-        run: dotnet test tests/SupportCaseManager.Tests/SupportCaseManager.Tests.csproj -c Release --no-build --logger "trx;LogFileName=test-results.trx"
+        run: dotnet test SupportCaseManager.slnx -c Release --no-build --logger "trx;LogFileName=test-results.trx"
 
       - name: Publish
         if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
