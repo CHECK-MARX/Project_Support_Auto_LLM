@@ -146,6 +146,31 @@ public sealed class SearchSourceSummaryBuilderTests
         Assert.Equal("visible-low", Assert.Single(summary.Selection.ExcludedByScoreSources).SourceId);
     }
 
+    [Fact]
+    public void BuildAndApplyPlan_WithTopNFallbackMarksFallbackSourcesAsWillSend()
+    {
+        var items = new[]
+        {
+            CreateViewModel("low-1", "Manual", 0.20, isSelected: false),
+            CreateViewModel("low-2", "PastCaseNote", 0.10, isSelected: false),
+            CreateViewModel("low-3", "Manual", 0.05, isSelected: false),
+        };
+
+        var summary = SearchSourceSummaryBuilder.BuildAndApplyPlan(
+            items,
+            SearchSourceFiltering.All,
+            maxEvidenceItems: 2,
+            autoSelectMinimumScore: 0.65,
+            enableTopNFallback: true);
+
+        Assert.True(summary.Selection.TopNFallbackApplied);
+        Assert.Equal(["low-1", "low-2"], summary.Selection.Sources.Select(static source => source.SourceId));
+        Assert.True(items[0].WillBeSentToLlm);
+        Assert.True(items[1].WillBeSentToLlm);
+        Assert.False(items[2].WillBeSentToLlm);
+        Assert.Equal("Will send by fallback", items[0].SendStatusText);
+    }
+
     private static SearchSourceViewModel CreateViewModel(
         string sourceId,
         string sourceType,

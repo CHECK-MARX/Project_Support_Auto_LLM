@@ -137,6 +137,7 @@ public sealed partial class AiDraftStore : IAiDraftStore
             TimeoutSeconds = settings.TimeoutSeconds,
             Temperature = settings.Temperature,
             MaxOutputTokens = settings.MaxOutputTokens,
+            ContextWindowTokens = settings.ContextWindowTokens,
             ApiKeyEnvironmentVariable = RemoveApiKeyLikeSecrets(settings.ApiKeyEnvironmentVariable),
         };
     }

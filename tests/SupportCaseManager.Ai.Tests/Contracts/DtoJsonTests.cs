@@ -182,19 +182,23 @@ public class DtoJsonTests
         Assert.Null(settings.BaseFolder);
         Assert.Null(settings.CloseFolder);
         Assert.Null(settings.DefaultProductName);
-        Assert.Equal(8, settings.MaxEvidenceItems);
-        Assert.Equal(0.65, settings.AutoSelectMinimumScore);
+        Assert.Equal(2, settings.MaxEvidenceItems);
+        Assert.Equal(0.30, settings.AutoSelectMinimumScore);
         Assert.Equal(0, settings.MinimumDisplayScore);
-        Assert.Equal(24000, settings.MaxPromptChars);
+        Assert.Equal(6000, settings.MaxPromptChars);
         Assert.False(settings.EnableCloudLlm);
         Assert.True(settings.MaskSensitiveDataForCloud);
+        Assert.True(settings.DisableThinking);
+        Assert.True(settings.SkipGenerationWhenNoEvidence);
+        Assert.True(settings.EnableTopNFallback);
         Assert.Equal("Ollama", settings.LlmProvider.Provider);
         Assert.Equal("http://localhost:11434", settings.LlmProvider.Endpoint);
         Assert.Equal("llama3.1", settings.LlmProvider.ChatModel);
         Assert.Null(settings.LlmProvider.EmbeddingModel);
         Assert.Equal(120, settings.LlmProvider.TimeoutSeconds);
         Assert.Equal(0.2, settings.LlmProvider.Temperature);
-        Assert.Equal(2048, settings.LlmProvider.MaxOutputTokens);
+        Assert.Equal(800, settings.LlmProvider.MaxOutputTokens);
+        Assert.Equal(8192, settings.LlmProvider.ContextWindowTokens);
         Assert.Null(settings.LlmProvider.ApiKeyEnvironmentVariable);
     }
 

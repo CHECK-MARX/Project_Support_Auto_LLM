@@ -4,7 +4,7 @@ namespace SupportCaseManager.Ai.Core.Evidence;
 
 public sealed class EvidenceBuilder : IEvidenceBuilder
 {
-    private const int DefaultMaxEvidenceItems = 8;
+    private const int DefaultMaxEvidenceItems = 2;
     private const int ExcerptMaxLength = 240;
 
     public IReadOnlyList<EvidenceItem> BuildEvidence(AnswerDraftRequest request)

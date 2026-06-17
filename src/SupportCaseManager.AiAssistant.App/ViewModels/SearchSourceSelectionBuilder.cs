@@ -12,7 +12,8 @@ public static class SearchSourceSelectionBuilder
         IEnumerable<SearchSourceViewModel> searchResults,
         int maxEvidenceItems,
         double autoSelectMinimumScore = SearchSourceSummaryBuilder.DefaultAutoSelectMinimumScore,
-        bool isFreshnessSensitive = false)
+        bool isFreshnessSensitive = false,
+        bool enableTopNFallback = false)
     {
         if (searchResults is null)
         {
@@ -34,6 +35,26 @@ public static class SearchSourceSelectionBuilder
             .Except(selectedCandidates)
             .Select(static item => item.Source)
             .ToList();
+        var topNFallbackApplied = false;
+
+        if (selectedCandidates.Count == 0 && enableTopNFallback && maxItems > 0)
+        {
+            var fallbackCandidates = allItems
+                .Where(static item => !item.IsManuallyExcluded);
+            selectedCandidates = isFreshnessSensitive
+                ? fallbackCandidates
+                    .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(item.SourceType, isFreshnessSensitive))
+                    .ThenByDescending(static item => item.Score ?? 0)
+                    .ThenBy(static item => item.SourceId ?? string.Empty, StringComparer.Ordinal)
+                    .Take(maxItems)
+                    .ToList()
+                : fallbackCandidates
+                    .OrderByDescending(static item => item.Score ?? 0)
+                    .ThenBy(static item => item.SourceId ?? string.Empty, StringComparer.Ordinal)
+                    .Take(maxItems)
+                    .ToList();
+            topNFallbackApplied = selectedCandidates.Count > 0;
+        }
 
         List<SearchSourceViewModel> orderedSelectedItems = isFreshnessSensitive
             ? selectedCandidates
@@ -94,6 +115,7 @@ public static class SearchSourceSelectionBuilder
             AutoSelectMinimumScore = threshold,
             WasLimited = wasLimited,
             FreshnessNoOfficialDocLimitApplied = freshnessNoOfficialDocLimitApplied,
+            TopNFallbackApplied = topNFallbackApplied,
             Warning = BuildWarning(
                 selectedItems.Count,
                 sources.Count,
@@ -101,7 +123,8 @@ public static class SearchSourceSelectionBuilder
                 wasLimited,
                 excludedByScore.Count,
                 threshold,
-                freshnessNoOfficialDocLimitApplied),
+                freshnessNoOfficialDocLimitApplied,
+                topNFallbackApplied),
         };
     }
 
@@ -120,11 +143,17 @@ public static class SearchSourceSelectionBuilder
         bool wasLimited,
         int excludedByScoreCount,
         double autoSelectMinimumScore,
-        bool freshnessNoOfficialDocLimitApplied)
+        bool freshnessNoOfficialDocLimitApplied,
+        bool topNFallbackApplied)
     {
         if (usedCount == 0)
         {
             return "LLMへ送信予定の根拠が0件です。根拠なしでも生成できますが、回答内容の確認が必要です。";
+        }
+
+        if (topNFallbackApplied)
+        {
+            return $"TopN fallback applied. Sending top {usedCount} source(s) by score because normal selection was empty.";
         }
 
         if (freshnessNoOfficialDocLimitApplied)
@@ -180,6 +209,8 @@ public sealed record class SearchSourceSelectionResult
     public bool WasLimited { get; init; }
 
     public bool FreshnessNoOfficialDocLimitApplied { get; init; }
+
+    public bool TopNFallbackApplied { get; init; }
 
     public string Warning { get; init; } = string.Empty;
 }

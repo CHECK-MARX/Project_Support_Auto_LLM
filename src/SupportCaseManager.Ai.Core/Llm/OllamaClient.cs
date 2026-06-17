@@ -1,5 +1,5 @@
-using System.Net.Http.Json;
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Prompts;
@@ -9,6 +9,10 @@ namespace SupportCaseManager.Ai.Core.Llm;
 public sealed class OllamaClient : ILlmClient
 {
     private const int DefaultTimeoutSeconds = 120;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
 
     private readonly HttpClient httpClient;
 
@@ -65,7 +69,9 @@ public sealed class OllamaClient : ILlmClient
 
         try
         {
-            using var response = await httpClient.PostAsJsonAsync(uri, requestBody, timeoutCts.Token);
+            var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            using var response = await httpClient.PostAsync(uri, content, timeoutCts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 var responseText = await response.Content.ReadAsStringAsync(timeoutCts.Token);
@@ -105,21 +111,28 @@ public sealed class OllamaClient : ILlmClient
         bool thinkDisabledSent,
         CancellationToken cancellationToken)
     {
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var root = document.RootElement;
+        var chatResponse = await JsonSerializer.DeserializeAsync<OllamaChatResponse>(
+            stream,
+            JsonOptions,
+            cancellationToken);
 
-        var content = ReadMessageString(root, "content");
-        var thinking = ReadMessageString(root, "thinking");
-        var doneReason = ReadStringProperty(root, "done_reason");
-        var totalDuration = ReadLongProperty(root, "total_duration");
-        var evalCount = ReadIntProperty(root, "eval_count");
-        var promptEvalCount = ReadIntProperty(root, "prompt_eval_count");
+        var content = chatResponse?.Message?.Content ?? string.Empty;
+        var thinking = chatResponse?.Message?.Thinking;
+        var doneReason = chatResponse?.DoneReason;
+        var totalDuration = chatResponse?.TotalDuration;
+        var evalCount = chatResponse?.EvalCount;
+        var promptEvalCount = chatResponse?.PromptEvalCount;
 
         var diagnostics = new List<string>();
         if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrWhiteSpace(thinking))
         {
             diagnostics.Add("モデルがthinking出力のみを返しました。No-think設定または think:false が有効か確認してください。");
             throw new InvalidOperationException(diagnostics[0]);
+        }
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException("Ollama response message.content is empty.");
         }
 
         if (string.Equals(doneReason, "length", StringComparison.OrdinalIgnoreCase))
@@ -150,56 +163,6 @@ public sealed class OllamaClient : ILlmClient
 
         uri = new Uri(baseUri, "api/chat");
         return uri.Scheme is "http" or "https";
-    }
-
-    private static string ReadMessageString(JsonElement root, string propertyName)
-    {
-        if (!root.TryGetProperty("message", out var messageElement) ||
-            messageElement.ValueKind != JsonValueKind.Object ||
-            !messageElement.TryGetProperty(propertyName, out var property))
-        {
-            return string.Empty;
-        }
-
-        return property.ValueKind == JsonValueKind.String
-            ? property.GetString() ?? string.Empty
-            : string.Empty;
-    }
-
-    private static string? ReadStringProperty(JsonElement element, string propertyName)
-    {
-        return element.TryGetProperty(propertyName, out var property) &&
-            property.ValueKind == JsonValueKind.String
-            ? property.GetString()
-            : null;
-    }
-
-    private static long? ReadLongProperty(JsonElement element, string propertyName)
-    {
-        if (!element.TryGetProperty(propertyName, out var property))
-        {
-            return null;
-        }
-
-        return property.ValueKind switch
-        {
-            JsonValueKind.Number when property.TryGetInt64(out var value) => value,
-            _ => null,
-        };
-    }
-
-    private static int? ReadIntProperty(JsonElement element, string propertyName)
-    {
-        if (!element.TryGetProperty(propertyName, out var property))
-        {
-            return null;
-        }
-
-        return property.ValueKind switch
-        {
-            JsonValueKind.Number when property.TryGetInt32(out var value) => value,
-            _ => null,
-        };
     }
 
     private static string Truncate(string value)

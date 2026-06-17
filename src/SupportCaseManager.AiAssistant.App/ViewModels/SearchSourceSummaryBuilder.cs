@@ -2,7 +2,7 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
 public static class SearchSourceSummaryBuilder
 {
-    public const double DefaultAutoSelectMinimumScore = 0.65;
+    public const double DefaultAutoSelectMinimumScore = 0.30;
 
     public static SearchSourceSummary BuildAndApplyPlan(
         IEnumerable<SearchSourceViewModel> searchResults,
@@ -10,7 +10,8 @@ public static class SearchSourceSummaryBuilder
         int maxEvidenceItems,
         double autoSelectMinimumScore = DefaultAutoSelectMinimumScore,
         double minimumDisplayScore = 0,
-        bool isFreshnessSensitive = false)
+        bool isFreshnessSensitive = false,
+        bool enableTopNFallback = false)
     {
         if (searchResults is null)
         {
@@ -18,7 +19,7 @@ public static class SearchSourceSummaryBuilder
         }
 
         var allItems = searchResults.ToList();
-        var summary = Build(allItems, sourceTypeFilter, maxEvidenceItems, autoSelectMinimumScore, minimumDisplayScore, isFreshnessSensitive);
+        var summary = Build(allItems, sourceTypeFilter, maxEvidenceItems, autoSelectMinimumScore, minimumDisplayScore, isFreshnessSensitive, enableTopNFallback);
         ApplyPlannedState(allItems, summary.Selection);
         return summary;
     }
@@ -29,7 +30,8 @@ public static class SearchSourceSummaryBuilder
         int maxEvidenceItems,
         double autoSelectMinimumScore = DefaultAutoSelectMinimumScore,
         double minimumDisplayScore = 0,
-        bool isFreshnessSensitive = false)
+        bool isFreshnessSensitive = false,
+        bool enableTopNFallback = false)
     {
         if (searchResults is null)
         {
@@ -41,7 +43,7 @@ public static class SearchSourceSummaryBuilder
         var autoScore = Math.Clamp(autoSelectMinimumScore, 0.0, 1.0);
         var filteredItems = SearchSourceFiltering.Apply(allItems, sourceTypeFilter, displayScore);
         var sourceTypeFilteredItems = SearchSourceFiltering.Apply(allItems, sourceTypeFilter);
-        var selection = SearchSourceSelectionBuilder.Build(allItems, maxEvidenceItems, autoScore, isFreshnessSensitive);
+        var selection = SearchSourceSelectionBuilder.Build(allItems, maxEvidenceItems, autoScore, isFreshnessSensitive, enableTopNFallback);
 
         return new SearchSourceSummary
         {
@@ -73,8 +75,9 @@ public static class SearchSourceSummaryBuilder
         {
             item.WillBeSentToLlm = sendIds.Contains(item.SourceId);
             item.IsExcludedByLimit = excludedIds.Contains(item.SourceId);
-            item.IsExcludedByScore = scoreExcludedIds.Contains(item.SourceId)
-                || (!item.IsSelected && (item.Score ?? 0) < selection.AutoSelectMinimumScore);
+            item.IsExcludedByScore = !sendIds.Contains(item.SourceId) &&
+                (scoreExcludedIds.Contains(item.SourceId)
+                    || (!item.IsSelected && (item.Score ?? 0) < selection.AutoSelectMinimumScore));
         }
     }
 }

@@ -29,16 +29,16 @@ public sealed record class AiAssistantSettings
     public bool UseDarkMode { get; init; }
 
     [JsonPropertyName("maxEvidenceItems")]
-    public int MaxEvidenceItems { get; init; } = 8;
+    public int MaxEvidenceItems { get; init; } = 2;
 
     [JsonPropertyName("autoSelectMinimumScore")]
-    public double AutoSelectMinimumScore { get; init; } = 0.65;
+    public double AutoSelectMinimumScore { get; init; } = 0.30;
 
     [JsonPropertyName("minimumDisplayScore")]
     public double MinimumDisplayScore { get; init; }
 
     [JsonPropertyName("maxPromptChars")]
-    public int MaxPromptChars { get; init; } = 24000;
+    public int MaxPromptChars { get; init; } = 6000;
 
     [JsonPropertyName("enableCloudLlm")]
     public bool EnableCloudLlm { get; init; }
@@ -48,6 +48,12 @@ public sealed record class AiAssistantSettings
 
     [JsonPropertyName("disableThinking")]
     public bool DisableThinking { get; init; } = true;
+
+    [JsonPropertyName("skipGenerationWhenNoEvidence")]
+    public bool SkipGenerationWhenNoEvidence { get; init; } = true;
+
+    [JsonPropertyName("enableTopNFallback")]
+    public bool EnableTopNFallback { get; init; } = true;
 
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();

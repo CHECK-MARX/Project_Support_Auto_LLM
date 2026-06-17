@@ -58,6 +58,7 @@ public class AiDraftStoreTests
         Assert.Single(document.Warnings);
         Assert.Equal("Ollama", document.Provider.Provider);
         Assert.Equal("llama3.1", document.Provider.ChatModel);
+        Assert.Equal(8192, document.Provider.ContextWindowTokens);
     }
 
     [Fact]

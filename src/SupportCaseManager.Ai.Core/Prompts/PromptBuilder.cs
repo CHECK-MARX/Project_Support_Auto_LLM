@@ -5,7 +5,7 @@ namespace SupportCaseManager.Ai.Core.Prompts;
 
 public sealed class PromptBuilder : IPromptBuilder
 {
-    private const int DefaultMaxPromptChars = 24000;
+    private const int DefaultMaxPromptChars = 6000;
 
     public PromptMessages Build(AnswerDraftRequest request)
     {

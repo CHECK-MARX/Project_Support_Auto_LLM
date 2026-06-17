@@ -30,11 +30,15 @@ public static class ModelRecommendationHelper
         return """
             qwen3:14b 推奨初期設定:
             最大根拠件数: 2
+            自動選択最小スコア: 0.30
             最大プロンプト文字数: 6000
-            最大出力トークン: 600
+            最大出力トークン: 800
+            num_ctx: 8192
             タイムアウト秒数: 600
             Temperature: 0.2
             Thinkingを無効化: ON
+            根拠0件時は生成しない: ON
+            TopN fallback: ON
             """;
     }
 
@@ -42,12 +46,16 @@ public static class ModelRecommendationHelper
     {
         return """
             qwen3:8b 推奨初期設定:
-            最大根拠件数: 2〜3
-            最大プロンプト文字数: 6000〜8000
-            最大出力トークン: 600〜800
+            最大根拠件数: 2
+            自動選択最小スコア: 0.30
+            最大プロンプト文字数: 6000
+            最大出力トークン: 800
+            num_ctx: 8192
             タイムアウト秒数: 300〜600
             Temperature: 0.2
             Thinkingを無効化: ON
+            根拠0件時は生成しない: ON
+            TopN fallback: ON
             """;
     }
 

@@ -38,9 +38,13 @@
     <sys:String x:Key="MaxPromptCharsLabel">Max prompt chars</sys:String>
     <sys:String x:Key="TemperatureLabel">Temperature</sys:String>
     <sys:String x:Key="MaxOutputTokensLabel">Max output tokens</sys:String>
+    <sys:String x:Key="ContextWindowTokensLabel">Context window tokens (num_ctx)</sys:String>
     <sys:String x:Key="TimeoutSecondsLabel">Timeout seconds</sys:String>
     <sys:String x:Key="EnableCloudLlmLabel">Enable cloud LLM</sys:String>
     <sys:String x:Key="MaskSensitiveDataForCloudLabel">Mask sensitive data for cloud</sys:String>
+    <sys:String x:Key="DisableThinkingLabel">Disable Thinking</sys:String>
+    <sys:String x:Key="SkipGenerationWhenNoEvidenceLabel">Skip generation when evidence is empty</sys:String>
+    <sys:String x:Key="EnableTopNFallbackLabel">TopN fallback</sys:String>
     <sys:String x:Key="LoadSettingsButton">Load settings</sys:String>
     <sys:String x:Key="SaveSettingsButton">Save settings</sys:String>
     <sys:String x:Key="CheckOllamaConnectionButton">Check Ollama connection</sys:String>

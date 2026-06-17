@@ -4,6 +4,8 @@ namespace SupportCaseManager.Ai.Contracts;
 
 public sealed record class LlmProviderSettings
 {
+    public const int DefaultContextWindowTokens = 8192;
+
     [JsonPropertyName("provider")]
     public string Provider { get; init; } = "Ollama";
 
@@ -23,7 +25,10 @@ public sealed record class LlmProviderSettings
     public double Temperature { get; init; } = 0.2;
 
     [JsonPropertyName("maxOutputTokens")]
-    public int MaxOutputTokens { get; init; } = 2048;
+    public int MaxOutputTokens { get; init; } = 800;
+
+    [JsonPropertyName("contextWindowTokens")]
+    public int ContextWindowTokens { get; init; } = DefaultContextWindowTokens;
 
     [JsonPropertyName("apiKeyEnvironmentVariable")]
     public string? ApiKeyEnvironmentVariable { get; init; }

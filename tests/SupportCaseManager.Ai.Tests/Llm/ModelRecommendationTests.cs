@@ -39,10 +39,14 @@ public sealed class ModelRecommendationTests
         var text = ModelRecommendationHelper.BuildQwen314BSettings();
 
         Assert.Contains("最大根拠件数: 2", text);
+        Assert.Contains("自動選択最小スコア: 0.30", text);
         Assert.Contains("最大プロンプト文字数: 6000", text);
-        Assert.Contains("最大出力トークン: 600", text);
+        Assert.Contains("最大出力トークン: 800", text);
+        Assert.Contains("num_ctx: 8192", text);
         Assert.Contains("タイムアウト秒数: 600", text);
         Assert.Contains("Thinkingを無効化: ON", text);
+        Assert.Contains("根拠0件時は生成しない: ON", text);
+        Assert.Contains("TopN fallback: ON", text);
     }
 
     [Fact]
@@ -50,10 +54,14 @@ public sealed class ModelRecommendationTests
     {
         var text = ModelRecommendationHelper.BuildQwen38BSettings();
 
-        Assert.Contains("最大根拠件数: 2〜3", text);
-        Assert.Contains("最大プロンプト文字数: 6000〜8000", text);
-        Assert.Contains("最大出力トークン: 600〜800", text);
+        Assert.Contains("最大根拠件数: 2", text);
+        Assert.Contains("自動選択最小スコア: 0.30", text);
+        Assert.Contains("最大プロンプト文字数: 6000", text);
+        Assert.Contains("最大出力トークン: 800", text);
+        Assert.Contains("num_ctx: 8192", text);
         Assert.Contains("Thinkingを無効化: ON", text);
+        Assert.Contains("根拠0件時は生成しない: ON", text);
+        Assert.Contains("TopN fallback: ON", text);
     }
 
     [Theory]

@@ -38,9 +38,13 @@
     <sys:String x:Key="MaxPromptCharsLabel">最大プロンプト文字数</sys:String>
     <sys:String x:Key="TemperatureLabel">Temperature</sys:String>
     <sys:String x:Key="MaxOutputTokensLabel">最大出力トークン</sys:String>
+    <sys:String x:Key="ContextWindowTokensLabel">コンテキスト長(num_ctx)</sys:String>
     <sys:String x:Key="TimeoutSecondsLabel">タイムアウト秒数</sys:String>
     <sys:String x:Key="EnableCloudLlmLabel">クラウドLLMを有効化</sys:String>
     <sys:String x:Key="MaskSensitiveDataForCloudLabel">クラウド送信時にマスキング</sys:String>
+    <sys:String x:Key="DisableThinkingLabel">Thinkingを無効化</sys:String>
+    <sys:String x:Key="SkipGenerationWhenNoEvidenceLabel">根拠0件時は生成しない</sys:String>
+    <sys:String x:Key="EnableTopNFallbackLabel">TopN fallback</sys:String>
     <sys:String x:Key="LoadSettingsButton">設定読み込み</sys:String>
     <sys:String x:Key="SaveSettingsButton">設定保存</sys:String>
     <sys:String x:Key="CheckOllamaConnectionButton">Ollama接続確認</sys:String>

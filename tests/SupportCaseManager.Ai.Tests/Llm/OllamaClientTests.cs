@@ -59,7 +59,7 @@ public class OllamaClientTests
     }
 
     [Fact]
-    public async Task GenerateAsync_SendsTemperatureAndNumPredictOptions()
+    public async Task GenerateAsync_SendsTemperatureNumPredictAndNumCtxOptions()
     {
         string? requestJson = null;
         var client = new OllamaClient(new StubHttpMessageHandler(async request =>
@@ -75,13 +75,14 @@ public class OllamaClientTests
 
         _ = await client.GenerateAsync(
             CreateMessages(),
-            CreateSettings(temperature: 0.35, maxOutputTokens: 4096));
+            CreateSettings(temperature: 0.35, maxOutputTokens: 4096, contextWindowTokens: 8192));
 
         Assert.NotNull(requestJson);
         using var document = JsonDocument.Parse(requestJson);
         var options = document.RootElement.GetProperty("options");
         Assert.Equal(0.35, options.GetProperty("temperature").GetDouble());
         Assert.Equal(4096, options.GetProperty("num_predict").GetInt32());
+        Assert.Equal(8192, options.GetProperty("num_ctx").GetInt32());
     }
 
     [Theory]
@@ -167,7 +168,7 @@ public class OllamaClientTests
     }
 
     [Fact]
-    public async Task GenerateAsync_ReturnsEmptyStringWhenMessageContentIsEmpty()
+    public async Task GenerateAsync_ThrowsClearExceptionWhenMessageContentIsEmpty()
     {
         var client = new OllamaClient(new StubHttpMessageHandler(_ => JsonResponse("""
             {
@@ -176,9 +177,10 @@ public class OllamaClientTests
             }
             """)));
 
-        var result = await client.GenerateAsync(CreateMessages(), CreateSettings());
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            client.GenerateAsync(CreateMessages(), CreateSettings()));
 
-        Assert.Equal(string.Empty, result.Content);
+        Assert.Contains("message.content is empty", exception.Message);
     }
 
     [Fact]
@@ -205,6 +207,8 @@ public class OllamaClientTests
         _ = await client.GenerateAsync(CreateMessages(), settings);
 
         Assert.NotNull(requestMessage);
+        Assert.Equal("application/json", requestMessage.Content?.Headers.ContentType?.MediaType);
+        Assert.Equal("utf-8", requestMessage.Content?.Headers.ContentType?.CharSet);
         Assert.Null(requestMessage.Headers.Authorization);
         Assert.DoesNotContain("SUPPORT_AI_API_KEY", requestMessage.RequestUri?.ToString() ?? string.Empty);
         Assert.DoesNotContain("SUPPORT_AI_API_KEY", requestJson);
@@ -229,6 +233,7 @@ public class OllamaClientTests
         string chatModel = "llama3.1",
         double temperature = 0.2,
         int maxOutputTokens = 2048,
+        int contextWindowTokens = 8192,
         int timeoutSeconds = 120)
     {
         return new LlmProviderSettings
@@ -237,6 +242,7 @@ public class OllamaClientTests
             ChatModel = chatModel,
             Temperature = temperature,
             MaxOutputTokens = maxOutputTokens,
+            ContextWindowTokens = contextWindowTokens,
             TimeoutSeconds = timeoutSeconds,
         };
     }

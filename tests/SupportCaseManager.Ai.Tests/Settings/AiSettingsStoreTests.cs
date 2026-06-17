@@ -17,13 +17,15 @@ public class AiSettingsStoreTests
         var settings = await store.LoadAsync(aiDataFolder);
 
         Assert.Equal(aiDataFolder, settings.AiDataFolder);
-        Assert.Equal(8, settings.MaxEvidenceItems);
-        Assert.Equal(0.65, settings.AutoSelectMinimumScore);
+        Assert.Equal(2, settings.MaxEvidenceItems);
+        Assert.Equal(0.30, settings.AutoSelectMinimumScore);
         Assert.Equal(0, settings.MinimumDisplayScore);
-        Assert.Equal(24000, settings.MaxPromptChars);
+        Assert.Equal(6000, settings.MaxPromptChars);
         Assert.False(settings.EnableCloudLlm);
         Assert.True(settings.MaskSensitiveDataForCloud);
         Assert.True(settings.DisableThinking);
+        Assert.True(settings.SkipGenerationWhenNoEvidence);
+        Assert.True(settings.EnableTopNFallback);
         Assert.Equal("Ollama", settings.LlmProvider.Provider);
         Assert.False(File.Exists(System.IO.Path.Combine(aiDataFolder, "settings.json")));
     }
@@ -45,12 +47,15 @@ public class AiSettingsStoreTests
             AutoSelectMinimumScore = 0.7,
             MinimumDisplayScore = 0.25,
             MaxPromptChars = 12000,
+            SkipGenerationWhenNoEvidence = false,
+            EnableTopNFallback = false,
             LlmProvider = new LlmProviderSettings
             {
                 Provider = "Ollama",
                 Endpoint = "http://localhost:11434",
                 ChatModel = "llama3.2",
                 EmbeddingModel = "nomic-embed-text",
+                ContextWindowTokens = 16384,
                 ApiKeyEnvironmentVariable = "SUPPORT_AI_API_KEY",
             },
         };
@@ -67,8 +72,11 @@ public class AiSettingsStoreTests
         Assert.Equal(settings.AutoSelectMinimumScore, restored.AutoSelectMinimumScore);
         Assert.Equal(settings.MinimumDisplayScore, restored.MinimumDisplayScore);
         Assert.Equal(settings.MaxPromptChars, restored.MaxPromptChars);
+        Assert.Equal(settings.SkipGenerationWhenNoEvidence, restored.SkipGenerationWhenNoEvidence);
+        Assert.Equal(settings.EnableTopNFallback, restored.EnableTopNFallback);
         Assert.Equal("llama3.2", restored.LlmProvider.ChatModel);
         Assert.Equal("nomic-embed-text", restored.LlmProvider.EmbeddingModel);
+        Assert.Equal(16384, restored.LlmProvider.ContextWindowTokens);
         Assert.Equal("SUPPORT_AI_API_KEY", restored.LlmProvider.ApiKeyEnvironmentVariable);
     }
 

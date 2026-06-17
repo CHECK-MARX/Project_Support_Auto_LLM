@@ -74,6 +74,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="{DynamicResource AiDataFolderLabel}" />
@@ -341,15 +342,20 @@
                                 <TextBlock Grid.Row="7" Text="{DynamicResource MaxOutputTokensLabel}" />
                                 <TextBox Grid.Row="7" Grid.Column="1" Text="{Binding MaxOutputTokens, UpdateSourceTrigger=PropertyChanged}" />
 
-                                <TextBlock Grid.Row="8" Text="{DynamicResource TimeoutSecondsLabel}" />
-                                <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding TimeoutSeconds, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="8" Text="{DynamicResource ContextWindowTokensLabel}" />
+                                <TextBox Grid.Row="8" Grid.Column="1" Text="{Binding ContextWindowTokens, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="9" Text="{DynamicResource TimeoutSecondsLabel}" />
+                                <TextBox Grid.Row="9" Grid.Column="1" Text="{Binding TimeoutSeconds, UpdateSourceTrigger=PropertyChanged}" />
                             </Grid>
                         </GroupBox>
 
                         <StackPanel Orientation="Horizontal">
                             <CheckBox Content="{DynamicResource EnableCloudLlmLabel}" IsChecked="{Binding EnableCloudLlm}" />
                             <CheckBox Content="{DynamicResource MaskSensitiveDataForCloudLabel}" IsChecked="{Binding MaskSensitiveDataForCloud}" />
-                            <CheckBox Content="Thinkingを無効化" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource DisableThinkingLabel}" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource SkipGenerationWhenNoEvidenceLabel}" IsChecked="{Binding SkipGenerationWhenNoEvidence}" Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource EnableTopNFallbackLabel}" IsChecked="{Binding EnableTopNFallback}" Margin="12,0,0,0" />
                         </StackPanel>
 
                         <GroupBox Header="モデル比較 / 推奨設定">

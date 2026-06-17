@@ -4,6 +4,13 @@ namespace SupportCaseManager.Ai.Core.Llm;
 
 public static class OllamaRequestBuilder
 {
+    private static int EffectiveContextWindowTokens(LlmProviderSettings settings)
+    {
+        return settings.ContextWindowTokens > 0
+            ? settings.ContextWindowTokens
+            : LlmProviderSettings.DefaultContextWindowTokens;
+    }
+
     public static object BuildChatRequestBody(
         LlmProviderSettings settings,
         string systemPrompt,
@@ -26,6 +33,7 @@ public static class OllamaRequestBuilder
                 {
                     temperature = settings.Temperature,
                     num_predict = settings.MaxOutputTokens,
+                    num_ctx = EffectiveContextWindowTokens(settings),
                 },
             };
         }
@@ -45,6 +53,7 @@ public static class OllamaRequestBuilder
             {
                 temperature = settings.Temperature,
                 num_predict = settings.MaxOutputTokens,
+                num_ctx = EffectiveContextWindowTokens(settings),
             },
         };
     }

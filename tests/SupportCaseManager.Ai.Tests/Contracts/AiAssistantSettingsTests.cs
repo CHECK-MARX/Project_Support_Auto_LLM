@@ -10,5 +10,7 @@ public sealed class AiAssistantSettingsTests
         var settings = new AiAssistantSettings();
 
         Assert.True(settings.DisableThinking);
+        Assert.True(settings.SkipGenerationWhenNoEvidence);
+        Assert.True(settings.EnableTopNFallback);
     }
 }

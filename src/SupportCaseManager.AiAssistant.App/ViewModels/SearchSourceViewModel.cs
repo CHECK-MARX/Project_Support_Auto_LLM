@@ -163,7 +163,11 @@ public sealed class SearchSourceViewModel : ObservableObject
         {
             if (WillBeSentToLlm)
             {
-                return IsManuallySelected ? "Manually selected; will send" : "Score is above auto-select threshold; will send";
+                return IsManuallySelected
+                    ? "Manually selected; will send"
+                    : IsSelected
+                        ? "Score is above auto-select threshold; will send"
+                        : "TopN fallback selected this source; will send";
             }
 
             if (IsExcludedByLimit)
@@ -189,14 +193,14 @@ public sealed class SearchSourceViewModel : ObservableObject
     {
         get
         {
+            if (WillBeSentToLlm)
+            {
+                return IsSelected ? "Will send" : "Will send by fallback";
+            }
+
             if (!IsSelected)
             {
                 return IsManuallyExcluded ? "Manually excluded" : IsExcludedByScore ? "Excluded by score" : "Not selected";
-            }
-
-            if (WillBeSentToLlm)
-            {
-                return "Will send";
             }
 
             if (IsExcludedByLimit)

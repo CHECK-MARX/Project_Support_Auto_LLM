@@ -69,13 +69,16 @@ public sealed class MainViewModel : ObservableObject
     private string chatModel = "llama3.1";
     private string embeddingModel = "nomic-embed-text";
     private double temperature = 0.2;
-    private int maxOutputTokens = 2048;
+    private int maxOutputTokens = 800;
+    private int contextWindowTokens = LlmProviderSettings.DefaultContextWindowTokens;
     private int timeoutSeconds = 120;
-    private int maxEvidenceItems = 8;
-    private int maxPromptChars = 24000;
+    private int maxEvidenceItems = 2;
+    private int maxPromptChars = 6000;
     private bool enableCloudLlm;
     private bool maskSensitiveDataForCloud = true;
     private bool disableThinking = true;
+    private bool skipGenerationWhenNoEvidence = true;
+    private bool enableTopNFallback = true;
     private string caseFolderPath = string.Empty;
     private string productName = "製品A";
     private string companyName = "株式会社サンプル";
@@ -414,6 +417,12 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref maxOutputTokens, value);
     }
 
+    public int ContextWindowTokens
+    {
+        get => contextWindowTokens;
+        set => SetProperty(ref contextWindowTokens, value);
+    }
+
     public int TimeoutSeconds
     {
         get => timeoutSeconds;
@@ -426,6 +435,24 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetProperty(ref maxEvidenceItems, value))
+            {
+                UpdatePromptSummary();
+            }
+        }
+    }
+
+    public bool SkipGenerationWhenNoEvidence
+    {
+        get => skipGenerationWhenNoEvidence;
+        set => SetProperty(ref skipGenerationWhenNoEvidence, value);
+    }
+
+    public bool EnableTopNFallback
+    {
+        get => enableTopNFallback;
+        set
+        {
+            if (SetProperty(ref enableTopNFallback, value))
             {
                 UpdatePromptSummary();
             }
@@ -1402,7 +1429,8 @@ public sealed class MainViewModel : ObservableObject
                 MaxEvidenceItems,
                 HighScoreThreshold,
                 MinimumDisplayScore,
-                lastInquiryFocus.IsFreshnessSensitive);
+                lastInquiryFocus.IsFreshnessSensitive,
+                EnableTopNFallback);
             UpdateOfficialDocDiagnostics(summary);
             await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
                 $"Keyword search completed. Operation={operationName}; Product={selectedProduct?.ProductName ?? "(root)"}; PastCaseResults={lastSearchSources.Count}; ManualResults={lastManualSearchSources.Count}; OfficialDocResults={lastOfficialDocumentSearchSources.Count}; FreshnessSensitive={lastInquiryFocus.IsFreshnessSensitive}; CombinedResults={SearchResults.Count}; VisibleResults={summary.FilteredCount}; HiddenBySourceTypeFilter={summary.HiddenBySourceTypeFilterCount}; HiddenByMinimumScore={summary.HiddenByMinimumScoreCount}; BelowAutoSelectScore={summary.BelowAutoSelectScoreCount}; IndexFolder={GetCurrentSearchIndexFolder()}");
@@ -1465,6 +1493,20 @@ public sealed class MainViewModel : ObservableObject
             MarkUsedSources(lastUsedSources);
             UsedSourcesText = FormatUsedSources(lastUsedSources);
             UsedEvidenceCount = lastUsedSources.Count;
+
+            if (lastRequest.Settings.SkipGenerationWhenNoEvidence && lastUsedSources.Count == 0)
+            {
+                lastResult = BuildNoEvidenceSkippedResult();
+                ApplyDraftResult(lastResult);
+                GenerationDiagnosticsText = FormatGenerationNoEvidenceSkippedDiagnostics(lastRequest);
+                DraftProviderStatusText = FormatDraftProviderStatus(provider, model, usedRealLlm: false, usedEvidenceCount: 0, isSuccess: true);
+                WarningsText = PrependWarning(WarningsText, "根拠0件のためLLM呼び出しをスキップしました。検索結果から根拠を選択してください。");
+                StatusMessage = "根拠0件のため回答生成をスキップしました。";
+                LastOperationResult = $"Draft generation skipped. Reason=NoEvidence; Provider={provider}; Model={model}; Evidence=0";
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                    $"Draft generation skipped. Reason=NoEvidence; Provider={provider}; Model={model}; Evidence=0");
+                return;
+            }
 
             if (ShouldSkipFreshnessWithoutOfficialDoc(lastRequest))
             {
@@ -1620,12 +1662,15 @@ public sealed class MainViewModel : ObservableObject
         EnableCloudLlm = settings.EnableCloudLlm;
         MaskSensitiveDataForCloud = settings.MaskSensitiveDataForCloud;
         DisableThinking = settings.DisableThinking;
+        SkipGenerationWhenNoEvidence = settings.SkipGenerationWhenNoEvidence;
+        EnableTopNFallback = settings.EnableTopNFallback;
         LlmProvider = string.IsNullOrWhiteSpace(settings.LlmProvider.Provider) ? "Fake" : settings.LlmProvider.Provider;
         OllamaEndpoint = settings.LlmProvider.Endpoint;
         ChatModel = settings.LlmProvider.ChatModel;
         EmbeddingModel = settings.LlmProvider.EmbeddingModel ?? string.Empty;
         Temperature = settings.LlmProvider.Temperature;
         MaxOutputTokens = settings.LlmProvider.MaxOutputTokens;
+        ContextWindowTokens = settings.LlmProvider.ContextWindowTokens;
         TimeoutSeconds = settings.LlmProvider.TimeoutSeconds;
         RefreshProductContextComputedProperties();
     }
@@ -1653,6 +1698,8 @@ public sealed class MainViewModel : ObservableObject
             EnableCloudLlm = EnableCloudLlm,
             MaskSensitiveDataForCloud = MaskSensitiveDataForCloud,
             DisableThinking = DisableThinking,
+            SkipGenerationWhenNoEvidence = SkipGenerationWhenNoEvidence,
+            EnableTopNFallback = EnableTopNFallback,
             LlmProvider = new LlmProviderSettings
             {
                 Provider = string.IsNullOrWhiteSpace(this.LlmProvider) ? "Fake" : this.LlmProvider,
@@ -1661,6 +1708,7 @@ public sealed class MainViewModel : ObservableObject
                 EmbeddingModel = string.IsNullOrWhiteSpace(EmbeddingModel) ? null : EmbeddingModel,
                 Temperature = Temperature,
                 MaxOutputTokens = MaxOutputTokens,
+                ContextWindowTokens = ContextWindowTokens,
                 TimeoutSeconds = TimeoutSeconds,
             },
         };
@@ -2096,7 +2144,8 @@ public sealed class MainViewModel : ObservableObject
             MaxEvidenceItems,
             HighScoreThreshold,
             MinimumDisplayScore,
-            lastInquiryFocus?.IsFreshnessSensitive == true);
+            lastInquiryFocus?.IsFreshnessSensitive == true,
+            EnableTopNFallback);
         ApplySelectionSummary(summary);
         return summary.Selection.Sources;
     }
@@ -2137,7 +2186,8 @@ public sealed class MainViewModel : ObservableObject
                 MaxEvidenceItems,
                 HighScoreThreshold,
                 MinimumDisplayScore,
-                lastInquiryFocus?.IsFreshnessSensitive == true);
+                lastInquiryFocus?.IsFreshnessSensitive == true,
+                EnableTopNFallback);
             ApplySelectionSummary(summary);
             UpdateOfficialDocDiagnostics(summary);
             EvidenceCount = summary.Selection.Sources.Count;
@@ -2238,6 +2288,7 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"configured timeout seconds: {settings.TimeoutSeconds}");
         builder.AppendLine($"elapsed seconds: {elapsed.TotalSeconds:0.0}");
         builder.AppendLine($"max output tokens: {settings.MaxOutputTokens}");
+        builder.AppendLine($"context window tokens: {settings.ContextWindowTokens}");
         builder.AppendLine($"Configured max prompt chars: {diagnostics.ConfiguredMaxPromptChars}");
         builder.AppendLine($"Final prompt chars: {diagnostics.FinalPromptChars}");
         builder.AppendLine($"System chars: {diagnostics.SystemChars}");
@@ -2280,6 +2331,31 @@ public sealed class MainViewModel : ObservableObject
     {
         return request.InquiryFocus?.IsFreshnessSensitive == true &&
             request.Sources.All(static source => !string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static AnswerDraftResult BuildNoEvidenceSkippedResult()
+    {
+        return new AnswerDraftResult
+        {
+            CustomerReplyDraft = """
+                選択された根拠が0件のため、現時点では回答案を生成していません。
+                検索結果から回答に使用する根拠を選択したうえで、再度生成してください。
+                """,
+            InternalMemo = "根拠0件時は生成しない設定がONのため、LLM呼び出しをスキップしました。",
+            NeedConfirmations =
+            [
+                new NeedConfirmationItem
+                {
+                    Question = "回答に使用する根拠を選択してください。",
+                    Reason = "根拠0件では安全に回答できないため。",
+                    Priority = "High",
+                },
+            ],
+            Evidence = [],
+            Confidence = 0,
+            Warnings = ["根拠0件のためLLM呼び出しをスキップしました。"],
+            GeneratedAt = DateTimeOffset.Now,
+        };
     }
 
     private static AnswerDraftResult BuildFreshnessNoOfficialDocResult(AnswerDraftRequest request)
@@ -2328,6 +2404,7 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
+        builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
         AppendPromptDiagnostics(builder, request);
         builder.AppendLine($"evidence count: {request.Sources.Count}");
         builder.AppendLine($"think:false を送ったか: {(request.Settings.DisableThinking ? "yes" : "no")}");
@@ -2338,6 +2415,23 @@ public sealed class MainViewModel : ObservableObject
         return builder.ToString();
     }
 
+    private static string FormatGenerationNoEvidenceSkippedDiagnostics(AnswerDraftRequest request)
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("回答生成診断");
+        builder.AppendLine("結果: LLM呼び出しスキップ");
+        builder.AppendLine("理由: 根拠0件時は生成しない設定がON、かつ LLM送信予定の根拠 = 0");
+        builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
+        builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
+        builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
+        builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
+        AppendPromptDiagnostics(builder, request);
+        builder.AppendLine($"evidence count: {request.Sources.Count}");
+        builder.AppendLine($"skip generation when no evidence: {(request.Settings.SkipGenerationWhenNoEvidence ? "on" : "off")}");
+        builder.AppendLine($"TopN fallback: {(request.Settings.EnableTopNFallback ? "on" : "off")}");
+        return builder.ToString();
+    }
+
     private static string FormatGenerationSuccessDiagnostics(AnswerDraftRequest request, AnswerDraftResult result)
     {
         var builder = new StringBuilder();
@@ -2345,6 +2439,7 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
+        builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
         AppendPromptDiagnostics(builder, request);
         builder.AppendLine($"evidence count: {request.Sources.Count}");
         builder.AppendLine($"think:false を送ったか: {(request.Settings.DisableThinking ? "yes" : "no")}");
@@ -2370,6 +2465,7 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
+        builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
         AppendPromptDiagnostics(builder, request);
         builder.AppendLine($"evidence count: {request.Sources.Count}");
         builder.AppendLine($"OfficialDoc will send: {request.Sources.Count(static source => string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase))}");

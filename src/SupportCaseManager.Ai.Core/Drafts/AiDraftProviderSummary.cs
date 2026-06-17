@@ -25,6 +25,9 @@ public sealed record class AiDraftProviderSummary
     [JsonPropertyName("maxOutputTokens")]
     public int MaxOutputTokens { get; init; }
 
+    [JsonPropertyName("contextWindowTokens")]
+    public int ContextWindowTokens { get; init; }
+
     [JsonPropertyName("apiKeyEnvironmentVariable")]
     public string? ApiKeyEnvironmentVariable { get; init; }
 }
