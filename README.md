@@ -101,6 +101,37 @@ dotnet publish src\SupportCaseManager.App\SupportCaseManager.App.csproj -p:Publi
 - 保存: AIドラフトを `ai-data/drafts` に保存
 - 診断: AI専用ログを `ai-data/logs/AiAssistant.log` に保存
 
+AI / RAG 構成:
+
+- AI回答支援は local-first のローカルOllamaを利用可能
+- 既定の local LLM model は `qwen3:14b`
+- Ollama AI client は `http://localhost:11434/api/chat` を呼び出し、`message.content` を回答本文として取り出す
+- Thinking は既定で無効化し、対応モデルには `think: false` を送信
+- RAGにより `PastCaseNote` / `Manual` / `OfficialDoc` / `CuratedFactCatalog` から根拠を検索
+- 画面で選択した根拠のみをLLMへ渡す
+- `ai-index/products/<製品名>/` は製品別のRAG検索用AI index
+- プロンプトは `src/SupportCaseManager.Ai.Core/Prompts/` のMarkdownファイルで管理
+- 生成物は `ai-data/drafts/` の generated draft として保存し、人間が確認してから利用
+
+AI-BOM / AI Supply Chain 観点のAI関連資産:
+
+- local LLM model: `qwen3:14b`
+- Ollama AI client: `src/SupportCaseManager.Ai.Core/Llm/OllamaClient.cs`
+- RAG index: `ai-index/products/<製品名>/`
+- prompts: `src/SupportCaseManager.Ai.Core/Prompts/support-answer-*.md`
+- evidence data sources: `PastCaseNote`, `Manual`, `OfficialDoc`, `CuratedFactCatalog`
+- generated drafts: `ai-data/drafts/`
+- AI利用台帳: `config/ai-inventory.json`
+- AI利用説明: `docs/AI_USAGE.md`
+
+プライバシー方針:
+
+- local-first
+- cloud LLM disabled by default
+- human review required
+- no automatic customer send
+- no automatic note write-back
+
 AI用データ:
 
 | パス | 説明 |

@@ -193,7 +193,7 @@ public class DtoJsonTests
         Assert.True(settings.EnableTopNFallback);
         Assert.Equal("Ollama", settings.LlmProvider.Provider);
         Assert.Equal("http://localhost:11434", settings.LlmProvider.Endpoint);
-        Assert.Equal("llama3.1", settings.LlmProvider.ChatModel);
+        Assert.Equal("qwen3:14b", settings.LlmProvider.ChatModel);
         Assert.Null(settings.LlmProvider.EmbeddingModel);
         Assert.Equal(120, settings.LlmProvider.TimeoutSeconds);
         Assert.Equal(0.2, settings.LlmProvider.Temperature);

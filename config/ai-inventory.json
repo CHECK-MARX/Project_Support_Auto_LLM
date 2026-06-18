@@ -1,0 +1,101 @@
+{
+  "applicationName": "SupportCaseManager AI Assistant",
+  "applicationType": ".NET WPF desktop application",
+  "aiFeatures": [
+    "support answer generation",
+    "RAG evidence retrieval",
+    "draft generation",
+    "evidence-based response assistance"
+  ],
+  "aiProvider": {
+    "name": "Ollama",
+    "type": "local LLM runtime",
+    "endpoint": "http://localhost:11434/api/chat",
+    "cloudTransmissionDefault": false
+  },
+  "endpoint": "http://localhost:11434/api/chat",
+  "models": [
+    {
+      "name": "qwen3:14b",
+      "provider": "Ollama",
+      "deployment": "local",
+      "usage": "support answer generation",
+      "thinkingDefault": false
+    }
+  ],
+  "rag": {
+    "enabled": true,
+    "description": "Retrieves evidence from local support cases, manuals, official documents, and curated facts, then passes selected evidence to the local Ollama model.",
+    "dataSources": [
+      "PastCaseNote",
+      "Manual",
+      "OfficialDoc",
+      "CuratedFactCatalog"
+    ],
+    "indexPathPattern": "ai-index/products/<productName>/",
+    "sourcePriority": [
+      "CuratedFactCatalog",
+      "OfficialDoc",
+      "Manual",
+      "PastCaseNote"
+    ]
+  },
+  "ragDataSources": [
+    "PastCaseNote",
+    "Manual",
+    "OfficialDoc",
+    "CuratedFactCatalog"
+  ],
+  "indexes": [
+    {
+      "type": "AI index",
+      "pathPattern": "ai-index/products/<productName>/",
+      "description": "Product-scoped keyword/RAG search index for evidence retrieval. It is not a vector database."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "support answer system prompt",
+      "path": "src/SupportCaseManager.Ai.Core/Prompts/support-answer-system-prompt.md",
+      "usage": "system instructions for evidence-based support answer generation"
+    },
+    {
+      "name": "support answer output prompt",
+      "path": "src/SupportCaseManager.Ai.Core/Prompts/support-answer-output-prompt.md",
+      "usage": "output format instructions for customer reply, internal memo, required checks, confidence, and warnings"
+    }
+  ],
+  "generatedArtifacts": [
+    {
+      "type": "AI draft",
+      "path": "ai-data/drafts/",
+      "description": "Generated support answer drafts saved for human review"
+    }
+  ],
+  "logs": [
+    {
+      "type": "AI assistant log",
+      "path": "ai-data/logs/AiAssistant.log",
+      "piiHandling": "mask sensitive values before logging"
+    }
+  ],
+  "privacy": {
+    "localOnlyDefault": true,
+    "cloudLlmDefault": false,
+    "externalTransmissionDefault": false,
+    "piiMaskingRequiredForCloud": true
+  },
+  "safetyControls": {
+    "noAutomaticCustomerEmail": true,
+    "noAutomaticReply": true,
+    "noAutomaticCaseClose": true,
+    "noAutomaticWriteBackToExistingNotes": true,
+    "humanReviewRequired": true
+  },
+  "humanReview": {
+    "required": true,
+    "description": "Generated drafts are assistance outputs and must be reviewed by a support engineer before use."
+  },
+  "cloudLlmDefault": false,
+  "localOnlyDefault": true
+}

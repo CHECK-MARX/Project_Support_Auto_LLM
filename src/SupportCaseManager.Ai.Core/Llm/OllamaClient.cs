@@ -6,6 +6,10 @@ using SupportCaseManager.Ai.Core.Prompts;
 
 namespace SupportCaseManager.Ai.Core.Llm;
 
+/// <summary>
+/// Calls the local Ollama LLM API for RAG-based support answer generation.
+/// The selected evidence is included in the prompt before this AI client sends it to the local model.
+/// </summary>
 public sealed class OllamaClient : ILlmClient
 {
     private const int DefaultTimeoutSeconds = 120;
@@ -69,6 +73,7 @@ public sealed class OllamaClient : ILlmClient
 
         try
         {
+            // Use explicit UTF-8 JSON for Japanese support prompts sent to the local Ollama /api/chat endpoint.
             var json = JsonSerializer.Serialize(requestBody, JsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             using var response = await httpClient.PostAsync(uri, content, timeoutCts.Token);
@@ -116,6 +121,8 @@ public sealed class OllamaClient : ILlmClient
             JsonOptions,
             cancellationToken);
 
+        // Ollama /api/chat wraps the model output in message.content.
+        // The outer Ollama response is not the support answer DTO.
         var content = chatResponse?.Message?.Content ?? string.Empty;
         var thinking = chatResponse?.Message?.Thinking;
         var doneReason = chatResponse?.DoneReason;

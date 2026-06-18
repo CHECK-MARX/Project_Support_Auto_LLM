@@ -137,7 +137,7 @@ public class OllamaClientTests
 
         Assert.Contains("timed out", exception.Message);
         Assert.Contains("configured timeout seconds: 1", exception.Message);
-        Assert.Contains("model: llama3.1", exception.Message);
+        Assert.Contains("model: qwen3:14b", exception.Message);
         Assert.Contains("prompt chars:", exception.Message);
         Assert.Contains("evidence count:", exception.Message);
         Assert.Contains("think:false sent: yes", exception.Message);
@@ -230,7 +230,7 @@ public class OllamaClientTests
 
     private static LlmProviderSettings CreateSettings(
         string endpoint = "http://localhost:11434",
-        string chatModel = "llama3.1",
+        string chatModel = "qwen3:14b",
         double temperature = 0.2,
         int maxOutputTokens = 2048,
         int contextWindowTokens = 8192,

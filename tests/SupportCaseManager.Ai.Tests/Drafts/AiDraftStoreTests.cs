@@ -57,7 +57,7 @@ public class AiDraftStoreTests
         Assert.Equal(0.74, document.Confidence);
         Assert.Single(document.Warnings);
         Assert.Equal("Ollama", document.Provider.Provider);
-        Assert.Equal("llama3.1", document.Provider.ChatModel);
+        Assert.Equal("qwen3:14b", document.Provider.ChatModel);
         Assert.Equal(8192, document.Provider.ContextWindowTokens);
     }
 
@@ -188,7 +188,7 @@ public class AiDraftStoreTests
                 {
                     Provider = "Ollama",
                     Endpoint = "http://localhost:11434",
-                    ChatModel = "llama3.1",
+                    ChatModel = "qwen3:14b",
                 },
             },
         };

@@ -66,7 +66,7 @@ public sealed class MainViewModel : ObservableObject
     private bool useDarkMode;
     private string llmProvider = "Fake";
     private string ollamaEndpoint = "http://localhost:11434";
-    private string chatModel = "llama3.1";
+    private string chatModel = "qwen3:14b";
     private string embeddingModel = "nomic-embed-text";
     private double temperature = 0.2;
     private int maxOutputTokens = 800;

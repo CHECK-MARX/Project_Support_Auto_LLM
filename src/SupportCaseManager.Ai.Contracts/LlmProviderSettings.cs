@@ -13,7 +13,7 @@ public sealed record class LlmProviderSettings
     public string Endpoint { get; init; } = "http://localhost:11434";
 
     [JsonPropertyName("chatModel")]
-    public string ChatModel { get; init; } = "llama3.1";
+    public string ChatModel { get; init; } = "qwen3:14b";
 
     [JsonPropertyName("embeddingModel")]
     public string? EmbeddingModel { get; init; }

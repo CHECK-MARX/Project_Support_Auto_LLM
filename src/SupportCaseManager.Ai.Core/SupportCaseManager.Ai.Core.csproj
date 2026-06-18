@@ -5,6 +5,11 @@
     <ProjectReference Include="..\SupportCaseManager.Core\SupportCaseManager.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Prompts\support-answer-system-prompt.md" />
+    <EmbeddedResource Include="Prompts\support-answer-output-prompt.md" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
