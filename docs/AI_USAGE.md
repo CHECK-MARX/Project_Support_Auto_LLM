@@ -91,7 +91,9 @@ Generated drafts are assistance outputs. A support engineer must review the cust
 
 For AI-BOM and AI Supply Chain review, use:
 
+- `config/aibom.cdx.json`
 - `config/ai-inventory.json`
+- `docs/AI_BOM.md`
 - `docs/AI_USAGE.md`
 - prompt files under `src/SupportCaseManager.Ai.Core/Prompts/`
 - Ollama AI client implementation under `src/SupportCaseManager.Ai.Core/Llm/`

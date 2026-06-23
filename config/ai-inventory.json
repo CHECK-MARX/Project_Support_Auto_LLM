@@ -21,8 +21,23 @@
       "deployment": "local",
       "usage": "support answer generation",
       "thinkingDefault": false
+    },
+    {
+      "name": "gpt-oss:20b",
+      "provider": "Ollama",
+      "deployment": "local",
+      "usage": "optional support answer generation model",
+      "thinkingDefault": false,
+      "thinkingOnlyRetry": true,
+      "minimumRetryOutputTokens": 800
     }
   ],
+  "aibom": {
+    "cycloneDxPath": "config/aibom.cdx.json",
+    "humanReadablePath": "docs/AI_BOM.md",
+    "usageDocumentationPath": "docs/AI_USAGE.md",
+    "description": "Manual AI-BOM evidence for AI Supply Chain review. Automatic Global Inventory ingestion is not guaranteed."
+  },
   "rag": {
     "enabled": true,
     "description": "Retrieves evidence from local support cases, manuals, official documents, and curated facts, then passes selected evidence to the local Ollama model.",

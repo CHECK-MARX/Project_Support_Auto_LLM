@@ -1,0 +1,389 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:fc97c871-5f21-4323-8bd1-0e6aa66a7478",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-06-24T00:00:00+09:00",
+    "component": {
+      "type": "application",
+      "bom-ref": "application:support-case-manager-ai-assistant",
+      "name": "SupportCaseManager AI Assistant",
+      "description": "Independent WPF AI answer assistance application for evidence-based support response drafting.",
+      "properties": [
+        {
+          "name": "application.language",
+          "value": "C#"
+        },
+        {
+          "name": "application.framework",
+          "value": ".NET 10 / WPF"
+        },
+        {
+          "name": "application.entryProject",
+          "value": "src/SupportCaseManager.AiAssistant.App/SupportCaseManager.AiAssistant.App.csproj"
+        },
+        {
+          "name": "ai.humanReviewRequired",
+          "value": "true"
+        },
+        {
+          "name": "ai.automaticSending",
+          "value": "false"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "platform",
+      "bom-ref": "ai-runtime:ollama-local",
+      "name": "Ollama",
+      "description": "Local LLM runtime used through the Ollama /api/chat HTTP API.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Runtime"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "local"
+        },
+        {
+          "name": "ai.externalTransmissionDefault",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "bom-ref": "ai-model:qwen3-14b",
+      "name": "qwen3:14b",
+      "description": "Default local chat model used for support answer draft generation.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Model"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "local"
+        },
+        {
+          "name": "ai.defaultModel",
+          "value": "true"
+        },
+        {
+          "name": "ai.usage",
+          "value": "support answer generation"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "bom-ref": "ai-model:gpt-oss-20b",
+      "name": "gpt-oss:20b",
+      "description": "Optional local Ollama chat model selectable by the user. The client retries once with stronger no-think instructions if the first response contains only message.thinking.",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Model"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "local"
+        },
+        {
+          "name": "ai.defaultModel",
+          "value": "false"
+        },
+        {
+          "name": "ai.usage",
+          "value": "support answer generation"
+        },
+        {
+          "name": "ai.thinkingOnlyRetry",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "ai-prompt:support-answer-system",
+      "name": "support-answer-system-prompt.md",
+      "description": "System prompt for evidence-grounded support answer generation.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "Prompt"
+        },
+        {
+          "name": "path",
+          "value": "src/SupportCaseManager.Ai.Core/Prompts/support-answer-system-prompt.md"
+        },
+        {
+          "name": "ai.ragEvidenceOnly",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "ai-prompt:support-answer-output",
+      "name": "support-answer-output-prompt.md",
+      "description": "Output-format prompt requiring customer reply, internal memo, checks, evidence, confidence, and warnings.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "Prompt"
+        },
+        {
+          "name": "path",
+          "value": "src/SupportCaseManager.Ai.Core/Prompts/support-answer-output-prompt.md"
+        },
+        {
+          "name": "ai.outputFormat",
+          "value": "JSON object"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-index:product-scoped-rag",
+      "name": "Product-scoped AI index",
+      "description": "Local keyword/RAG evidence index for product-scoped support cases, manuals, official documents, and curated facts.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Index"
+        },
+        {
+          "name": "pathPattern",
+          "value": "ai-index/products/<productName>/"
+        },
+        {
+          "name": "vectorDatabase",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-data-source:curated-fact-catalog",
+      "name": "CuratedFactCatalog",
+      "description": "Support-owned canonical product facts such as latest versions, prioritized over crawler candidates.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "RAG Data Source"
+        },
+        {
+          "name": "sourcePriority",
+          "value": "1"
+        },
+        {
+          "name": "pathPattern",
+          "value": "ai-index/products/<productName>/curated-facts.json"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-data-source:official-doc",
+      "name": "OfficialDoc",
+      "description": "Official-document evidence used for freshness-sensitive answers.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "RAG Data Source"
+        },
+        {
+          "name": "sourcePriority",
+          "value": "2"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-data-source:manual",
+      "name": "Manual",
+      "description": "Local TXT/MD manual evidence indexed for answer generation.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "RAG Data Source"
+        },
+        {
+          "name": "sourcePriority",
+          "value": "3"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-data-source:past-case-note",
+      "name": "PastCaseNote",
+      "description": "Historical support case notes. Not customer-visible evidence and not sufficient alone for current specifications or latest-version assertions.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "RAG Data Source"
+        },
+        {
+          "name": "sourcePriority",
+          "value": "4"
+        },
+        {
+          "name": "containsPotentialPii",
+          "value": "true"
+        },
+        {
+          "name": "customerVisible",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "ai-artifact:generated-drafts",
+      "name": "AI generated draft storage",
+      "description": "Generated answer drafts saved for human review under the AI-only data area.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "Generated AI Artifact"
+        },
+        {
+          "name": "path",
+          "value": "ai-data/drafts/"
+        },
+        {
+          "name": "humanReviewRequired",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "type": "file",
+      "bom-ref": "ai-log:diagnostics",
+      "name": "AiAssistant.log",
+      "description": "AI assistant diagnostic log. Sensitive values are masked before logging where diagnostic logging is used.",
+      "scope": "required",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Diagnostic Log"
+        },
+        {
+          "name": "path",
+          "value": "ai-data/logs/AiAssistant.log"
+        }
+      ]
+    }
+  ],
+  "services": [
+    {
+      "bom-ref": "ai-service:ollama-chat-api",
+      "name": "Ollama /api/chat",
+      "provider": {
+        "name": "Ollama"
+      },
+      "endpoints": [
+        "http://localhost:11434/api/chat"
+      ],
+      "authenticated": false,
+      "x-trust-boundary": false,
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI API Endpoint"
+        },
+        {
+          "name": "ai.localOnlyDefault",
+          "value": "true"
+        },
+        {
+          "name": "ai.cloudTransmissionDefault",
+          "value": "false"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "application:support-case-manager-ai-assistant",
+      "dependsOn": [
+        "ai-runtime:ollama-local",
+        "ai-service:ollama-chat-api",
+        "ai-model:qwen3-14b",
+        "ai-model:gpt-oss-20b",
+        "ai-prompt:support-answer-system",
+        "ai-prompt:support-answer-output",
+        "ai-index:product-scoped-rag",
+        "ai-data-source:curated-fact-catalog",
+        "ai-data-source:official-doc",
+        "ai-data-source:manual",
+        "ai-data-source:past-case-note",
+        "ai-artifact:generated-drafts",
+        "ai-log:diagnostics"
+      ]
+    }
+  ],
+  "properties": [
+    {
+      "name": "ai.localOnlyDefault",
+      "value": "true"
+    },
+    {
+      "name": "ai.cloudLlmDefault",
+      "value": "false"
+    },
+    {
+      "name": "ai.externalTransmissionDefault",
+      "value": "false"
+    },
+    {
+      "name": "ai.noAutomaticCustomerEmail",
+      "value": "true"
+    },
+    {
+      "name": "ai.noAutomaticReply",
+      "value": "true"
+    },
+    {
+      "name": "ai.noAutomaticCaseClose",
+      "value": "true"
+    },
+    {
+      "name": "ai.noAutomaticWriteBackToExistingNotes",
+      "value": "true"
+    },
+    {
+      "name": "ai.humanReviewRequired",
+      "value": "true"
+    }
+  ]
+}
