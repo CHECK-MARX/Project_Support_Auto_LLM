@@ -165,6 +165,9 @@ public sealed class SearchSourceSummaryBuilderTests
 
         Assert.True(summary.Selection.TopNFallbackApplied);
         Assert.Equal(["low-1", "low-2"], summary.Selection.Sources.Select(static source => source.SourceId));
+        Assert.Equal(0, summary.Selection.SelectedCount);
+        Assert.Equal(1, summary.Selection.ManualSendCount);
+        Assert.Equal(1, summary.Selection.PastCaseNoteSendCount);
         Assert.True(items[0].WillBeSentToLlm);
         Assert.True(items[1].WillBeSentToLlm);
         Assert.False(items[2].WillBeSentToLlm);

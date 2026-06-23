@@ -73,7 +73,7 @@
     <sys:String x:Key="LastUsedEvidenceLabel">前回使用根拠</sys:String>
     <sys:String x:Key="PromptCharsLabel">プロンプト概算文字数</sys:String>
     <sys:String x:Key="WarningLabel">警告</sys:String>
-    <sys:String x:Key="TypeCountsLabel">種別別選択数</sys:String>
+    <sys:String x:Key="TypeCountsLabel">種別別送信予定数</sys:String>
     <sys:String x:Key="PastCaseNoteCountLabel">過去案件:</sys:String>
     <sys:String x:Key="ManualCountLabel">マニュアル:</sys:String>
     <sys:String x:Key="ExcludedByLimitCountLabel">上限超過:</sys:String>

@@ -27,6 +27,19 @@ public static class OllamaThinkingHelper
         return baseName.StartsWith("qwen3", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsGptOssModel(string? modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName))
+        {
+            return false;
+        }
+
+        var normalized = modelName.Trim();
+        var tagSeparatorIndex = normalized.IndexOf(':', StringComparison.Ordinal);
+        var baseName = tagSeparatorIndex > 0 ? normalized[..tagSeparatorIndex] : normalized;
+        return baseName.StartsWith("gpt-oss", StringComparison.OrdinalIgnoreCase);
+    }
+
     public static string ApplyNoThinkPrefix(string prompt, string? modelName, bool disableThinkingSetting)
     {
         if (!ShouldDisableThinking(modelName, disableThinkingSetting) || !IsQwen3Model(modelName))

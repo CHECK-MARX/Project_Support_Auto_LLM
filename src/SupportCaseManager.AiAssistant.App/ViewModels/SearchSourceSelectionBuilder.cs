@@ -111,6 +111,9 @@ public static class SearchSourceSelectionBuilder
             PastCaseNoteSelectedCount = selectedItems.Count(static item => IsSourceType(item, "PastCaseNote")),
             ManualSelectedCount = selectedItems.Count(static item => IsSourceType(item, "Manual")),
             OfficialDocSelectedCount = selectedItems.Count(static item => IsSourceType(item, "OfficialDoc")),
+            PastCaseNoteSendCount = sources.Count(static source => IsSourceType(source, "PastCaseNote")),
+            ManualSendCount = sources.Count(static source => IsSourceType(source, "Manual")),
+            OfficialDocSendCount = sources.Count(static source => IsSourceType(source, "OfficialDoc")),
             MaxEvidenceItems = maxItems,
             AutoSelectMinimumScore = threshold,
             WasLimited = wasLimited,
@@ -153,7 +156,7 @@ public static class SearchSourceSelectionBuilder
 
         if (topNFallbackApplied)
         {
-            return $"TopN fallback applied. Sending top {usedCount} source(s) by score because normal selection was empty.";
+            return $"通常選択の根拠が0件のため、TopN fallbackでスコア上位{usedCount}件をLLMへ送信します。";
         }
 
         if (freshnessNoOfficialDocLimitApplied)
@@ -178,6 +181,11 @@ public static class SearchSourceSelectionBuilder
     {
         return string.Equals(item.SourceType, sourceType, StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsSourceType(SearchSource source, string sourceType)
+    {
+        return string.Equals(source.SourceType, sourceType, StringComparison.OrdinalIgnoreCase);
+    }
 }
 
 public sealed record class SearchSourceSelectionResult
@@ -197,6 +205,12 @@ public sealed record class SearchSourceSelectionResult
     public int ManualSelectedCount { get; init; }
 
     public int OfficialDocSelectedCount { get; init; }
+
+    public int PastCaseNoteSendCount { get; init; }
+
+    public int ManualSendCount { get; init; }
+
+    public int OfficialDocSendCount { get; init; }
 
     public int ExcludedSelectedCount => ExcludedSelectedSources.Count;
 

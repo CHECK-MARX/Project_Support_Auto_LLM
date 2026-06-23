@@ -98,6 +98,52 @@ public sealed class OllamaClientThinkingTests
     }
 
     [Fact]
+    public async Task GenerateAsync_WithThinkingOnlyFirstResponse_RetriesOnceWithStrongNoThinkInstruction()
+    {
+        var requestJsons = new List<string>();
+        var client = new OllamaClient(new StubHttpMessageHandler(async request =>
+        {
+            requestJsons.Add(await request.Content!.ReadAsStringAsync());
+            return requestJsons.Count == 1
+                ? JsonResponse("""
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "thinking": "internal reasoning"
+                      },
+                      "done_reason": "stop"
+                    }
+                    """)
+                : JsonResponse("""
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": "{\"customerReplyDraft\":\"回答\"}"
+                      },
+                      "done_reason": "stop"
+                    }
+                    """);
+        }));
+
+        var result = await client.GenerateAsync(
+            CreateMessages(),
+            CreateSettings(chatModel: "gpt-oss:20b"),
+            disableThinking: true);
+
+        Assert.Equal("{\"customerReplyDraft\":\"回答\"}", result.Content);
+        Assert.Equal(2, requestJsons.Count);
+        Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Contains("リトライ", StringComparison.Ordinal));
+
+        using var retryDocument = JsonDocument.Parse(requestJsons[1]);
+        var retryMessages = retryDocument.RootElement.GetProperty("messages").EnumerateArray().ToList();
+        Assert.Contains("message.content", retryMessages[0].GetProperty("content").GetString());
+        Assert.Contains("message.content", retryMessages[1].GetProperty("content").GetString());
+        Assert.False(retryDocument.RootElement.GetProperty("think").GetBoolean());
+        Assert.Equal(800, retryDocument.RootElement.GetProperty("options").GetProperty("num_predict").GetInt32());
+    }
+
+    [Fact]
     public async Task GenerateAsync_WithDoneReasonLength_AddsWarningDiagnostic()
     {
         var client = new OllamaClient(new StubHttpMessageHandler(_ => JsonResponse("""

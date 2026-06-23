@@ -182,6 +182,9 @@ public class SearchSourceSelectionTests
 
         Assert.Equal(["low-1", "low-2"], result.Sources.Select(static source => source.SourceId));
         Assert.True(result.TopNFallbackApplied);
+        Assert.Equal(0, result.SelectedCount);
+        Assert.Equal(1, result.ManualSendCount);
+        Assert.Equal(1, result.PastCaseNoteSendCount);
         Assert.Contains("TopN fallback", result.Warning);
     }
 

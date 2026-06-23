@@ -73,7 +73,7 @@
     <sys:String x:Key="LastUsedEvidenceLabel">Last used evidence</sys:String>
     <sys:String x:Key="PromptCharsLabel">Prompt chars</sys:String>
     <sys:String x:Key="WarningLabel">Warning</sys:String>
-    <sys:String x:Key="TypeCountsLabel">Type counts</sys:String>
+    <sys:String x:Key="TypeCountsLabel">Type counts to send</sys:String>
     <sys:String x:Key="PastCaseNoteCountLabel">PastCaseNote:</sys:String>
     <sys:String x:Key="ManualCountLabel">Manual:</sys:String>
     <sys:String x:Key="ExcludedByLimitCountLabel">Excluded by limit:</sys:String>

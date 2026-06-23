@@ -13,6 +13,15 @@ namespace SupportCaseManager.Ai.Core.Llm;
 public sealed class OllamaClient : ILlmClient
 {
     private const int DefaultTimeoutSeconds = 120;
+    private const int ThinkingRetryMinimumOutputTokens = 800;
+    private const string ThinkingRetrySystemInstruction = """
+        重要: thinking、reasoning、推論過程は出力しないでください。
+        Ollamaの message.thinking ではなく、必ず message.content に最終回答だけを出力してください。
+        message.content を空にしてはいけません。
+        """;
+    private const string ThinkingRetryUserInstruction = """
+        上記指示を厳守してください。thinkingを出力せず、message.content に最終回答JSONだけを返してください。
+        """;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -73,19 +82,35 @@ public sealed class OllamaClient : ILlmClient
 
         try
         {
-            // Use explicit UTF-8 JSON for Japanese support prompts sent to the local Ollama /api/chat endpoint.
-            var json = JsonSerializer.Serialize(requestBody, JsonOptions);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-            using var response = await httpClient.PostAsync(uri, content, timeoutCts.Token);
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                var responseText = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                throw new InvalidOperationException(
-                    $"Ollama /api/chat returned HTTP {(int)response.StatusCode}. {Truncate(responseText)}");
+                return await SendChatRequestAsync(uri, requestBody, thinkDisabled, timeoutCts.Token);
             }
+            catch (OllamaThinkingOnlyException) when (thinkDisabled)
+            {
+                var retrySettings = BuildThinkingRetrySettings(settings);
+                var retryRequestBody = OllamaRequestBuilder.BuildChatRequestBody(
+                    retrySettings,
+                    BuildThinkingRetrySystemPrompt(systemPrompt),
+                    BuildThinkingRetryUserPrompt(userPrompt),
+                    thinkDisabled);
 
-            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
-            return await ParseChatResponseAsync(stream, thinkDisabled, timeoutCts.Token);
+                var retryResult = await SendChatRequestAsync(uri, retryRequestBody, thinkDisabled, timeoutCts.Token);
+                return retryResult with
+                {
+                    Diagnostics = new[]
+                    {
+                        "Ollamaがthinking出力のみを返したため、強いno-think指示で1回リトライしました。",
+                    }
+                    .Concat(retryResult.Diagnostics)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToList(),
+                };
+            }
+        }
+        catch (OllamaThinkingOnlyException ex)
+        {
+            throw new InvalidOperationException(ex.Message, ex);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -111,6 +136,27 @@ public sealed class OllamaClient : ILlmClient
         }
     }
 
+    private async Task<LlmGenerationResult> SendChatRequestAsync(
+        Uri uri,
+        object requestBody,
+        bool thinkDisabled,
+        CancellationToken cancellationToken)
+    {
+        // Use explicit UTF-8 JSON for Japanese support prompts sent to the local Ollama /api/chat endpoint.
+        var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+        using var response = await httpClient.PostAsync(uri, content, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+            throw new InvalidOperationException(
+                $"Ollama /api/chat returned HTTP {(int)response.StatusCode}. {Truncate(responseText)}");
+        }
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        return await ParseChatResponseAsync(stream, thinkDisabled, cancellationToken);
+    }
+
     internal static async Task<LlmGenerationResult> ParseChatResponseAsync(
         Stream stream,
         bool thinkDisabledSent,
@@ -134,7 +180,7 @@ public sealed class OllamaClient : ILlmClient
         if (string.IsNullOrWhiteSpace(content) && !string.IsNullOrWhiteSpace(thinking))
         {
             diagnostics.Add("モデルがthinking出力のみを返しました。No-think設定または think:false が有効か確認してください。");
-            throw new InvalidOperationException(diagnostics[0]);
+            throw new OllamaThinkingOnlyException(diagnostics[0]);
         }
 
         if (string.IsNullOrWhiteSpace(content))
@@ -172,6 +218,30 @@ public sealed class OllamaClient : ILlmClient
         return uri.Scheme is "http" or "https";
     }
 
+    private static string BuildThinkingRetrySystemPrompt(string systemPrompt)
+    {
+        return $"{ThinkingRetrySystemInstruction}{Environment.NewLine}{systemPrompt}";
+    }
+
+    private static string BuildThinkingRetryUserPrompt(string userPrompt)
+    {
+        return $"{ThinkingRetryUserInstruction}{Environment.NewLine}{userPrompt}";
+    }
+
+    private static LlmProviderSettings BuildThinkingRetrySettings(LlmProviderSettings settings)
+    {
+        if (!OllamaThinkingHelper.IsGptOssModel(settings.ChatModel) ||
+            settings.MaxOutputTokens >= ThinkingRetryMinimumOutputTokens)
+        {
+            return settings;
+        }
+
+        return settings with
+        {
+            MaxOutputTokens = ThinkingRetryMinimumOutputTokens,
+        };
+    }
+
     private static string Truncate(string value)
     {
         const int maxLength = 300;
@@ -204,5 +274,13 @@ public sealed class OllamaClient : ILlmClient
             $"evidence count: {messages.Diagnostics.EvidenceCount}",
             $"think:false sent: {(thinkDisabled ? "yes" : "no")}",
         ]);
+    }
+}
+
+internal sealed class OllamaThinkingOnlyException : InvalidOperationException
+{
+    public OllamaThinkingOnlyException(string message)
+        : base(message)
+    {
     }
 }

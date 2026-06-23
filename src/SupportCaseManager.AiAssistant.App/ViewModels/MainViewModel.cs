@@ -121,6 +121,9 @@ public sealed class MainViewModel : ObservableObject
     private int pastCaseNoteSelectedCount;
     private int manualSelectedCount;
     private int officialDocSelectedCount;
+    private int pastCaseNoteSendCount;
+    private int manualSendCount;
+    private int officialDocSendCount;
     private int evidenceToSendCount;
     private int excludedByLimitCount;
     private int usedEvidenceCount;
@@ -779,6 +782,24 @@ public sealed class MainViewModel : ObservableObject
         private set => SetProperty(ref officialDocSelectedCount, value);
     }
 
+    public int PastCaseNoteSendCount
+    {
+        get => pastCaseNoteSendCount;
+        private set => SetProperty(ref pastCaseNoteSendCount, value);
+    }
+
+    public int ManualSendCount
+    {
+        get => manualSendCount;
+        private set => SetProperty(ref manualSendCount, value);
+    }
+
+    public int OfficialDocSendCount
+    {
+        get => officialDocSendCount;
+        private set => SetProperty(ref officialDocSendCount, value);
+    }
+
     public int EvidenceToSendCount
     {
         get => evidenceToSendCount;
@@ -1148,7 +1169,7 @@ public sealed class MainViewModel : ObservableObject
             var providerSettings = settings.LlmProvider with
             {
                 Provider = "Ollama",
-                MaxOutputTokens = 100,
+                MaxOutputTokens = Math.Max(settings.LlmProvider.MaxOutputTokens, 800),
             };
             var testSettings = settings with
             {
@@ -1548,7 +1569,7 @@ public sealed class MainViewModel : ObservableObject
             GenerationDiagnosticsText = FormatGenerationSuccessDiagnostics(lastRequest, lastResult);
             if (lastUsedSources.Count == 0)
             {
-                WarningsText = PrependWarning(WarningsText, "No selected evidence was passed to the LLM.");
+                WarningsText = PrependWarning(WarningsText, "LLMへ送信された根拠がありません。");
             }
 
             DraftProviderStatusText = FormatDraftProviderStatus(provider, model, provider == "Ollama", lastUsedSources.Count, isSuccess: true);
@@ -2211,6 +2232,9 @@ public sealed class MainViewModel : ObservableObject
         PastCaseNoteSelectedCount = selection.PastCaseNoteSelectedCount;
         ManualSelectedCount = selection.ManualSelectedCount;
         OfficialDocSelectedCount = selection.OfficialDocSelectedCount;
+        PastCaseNoteSendCount = selection.PastCaseNoteSendCount;
+        ManualSendCount = selection.ManualSendCount;
+        OfficialDocSendCount = selection.OfficialDocSendCount;
         EvidenceToSendCount = selection.Sources.Count;
         ExcludedByLimitCount = selection.ExcludedSelectedCount;
         EvidenceLimitWarningText = selection.Warning;
@@ -2926,6 +2950,9 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"PastCaseNote選択: {selection.PastCaseNoteSelectedCount}件");
         builder.AppendLine($"Manual選択: {selection.ManualSelectedCount}件");
         builder.AppendLine($"OfficialDoc選択: {selection.OfficialDocSelectedCount}件");
+        builder.AppendLine($"PastCaseNote送信予定: {selection.PastCaseNoteSendCount}件");
+        builder.AppendLine($"Manual送信予定: {selection.ManualSendCount}件");
+        builder.AppendLine($"OfficialDoc送信予定: {selection.OfficialDocSendCount}件");
         builder.AppendLine($"最大根拠件数: {selection.MaxEvidenceItems}件");
         if (lastInquiryFocus?.IsFreshnessSensitive == true)
         {
@@ -2943,7 +2970,9 @@ public sealed class MainViewModel : ObservableObject
             builder.AppendLine("鮮度重要質問: いいえ");
         }
 
-        builder.AppendLine(selection.WasLimited
+        builder.AppendLine(selection.TopNFallbackApplied
+            ? $"通常選択0件のため、TopN fallbackで{selection.Sources.Count}件を送信予定です。"
+            : selection.WasLimited
             ? $"スコア上位{selection.Sources.Count}件のみ送信します。"
             : "選択中の根拠はすべて送信予定です。");
         if (!string.IsNullOrWhiteSpace(selection.Warning))
@@ -2958,7 +2987,7 @@ public sealed class MainViewModel : ObservableObject
     {
         if (sources.Count == 0)
         {
-            return "No selected evidence was passed to the LLM.";
+            return "LLMへ送信された根拠はありません。";
         }
 
         var builder = new StringBuilder();

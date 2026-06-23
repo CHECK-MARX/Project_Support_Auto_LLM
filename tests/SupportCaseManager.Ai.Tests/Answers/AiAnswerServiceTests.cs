@@ -182,6 +182,117 @@ public class AiAnswerServiceTests
         Assert.Contains("Curated", result.InternalMemo);
     }
 
+    [Fact]
+    public async Task GenerateDraftAsync_BuildsEvidenceBackedReplyWhenLlmRefusesDespiteSources()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "現時点の選択根拠からは、断定できる回答内容を確認できませんでした。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.2,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "qac-windows",
+                    SourceType = "OfficialDoc",
+                    Title = "Windows 11-64bit Revision 22H2 がサポートOSとして記載",
+                    Text = "QACの対応OSとして Windows 11-64bit Revision 22H2 が記載されています。",
+                    Score = 0.9,
+                },
+                new SearchSource
+                {
+                    SourceId = "qac-linux",
+                    SourceType = "OfficialDoc",
+                    Title = "Linux 用インストーラ (.sh/.run) が提供されています",
+                    Text = "QACでは Linux 用インストーラ (.sh/.run) が提供されています。",
+                    Score = 0.8,
+                },
+            ]) with
+            {
+                InquiryText = "QACの対応OSを教えてください",
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("対応OS", result.CustomerReplyDraft);
+        Assert.Contains("Windows 11-64bit", result.CustomerReplyDraft);
+        Assert.Contains("Linux", result.CustomerReplyDraft);
+        Assert.DoesNotContain("断定できる回答内容を確認できません", result.CustomerReplyDraft);
+        Assert.Equal(2, result.Evidence.Count);
+        Assert.True(result.Confidence >= 0.45);
+        Assert.Contains(result.Warnings, warning => warning.Contains("送信済み根拠から回答案を補完", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_RedactsPastCaseCustomerLeakFromCustomerReply()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "お問い合わせいただいた対応OSについて、以下を確認できます。\n・00014623 東海理化 お客様ご相談内容 追記部 いつもお世話になっております。東陽テクニカ 技術サポート担当です。\n上記以外は追加確認が必要です。",
+              "internalMemo": "source-1 referenced.",
+              "needConfirmations": [],
+              "evidence": [
+                { "sourceId": "source-1", "sourceType": "PastCaseNote", "title": "過去案件", "excerpt": "抜粋", "relevance": 0.8 }
+              ],
+              "confidence": 0.7,
+              "warnings": []
+            }
+            """);
+
+        var result = await service.GenerateDraftAsync(CreateRequest());
+
+        Assert.DoesNotContain("00014623", result.CustomerReplyDraft);
+        Assert.DoesNotContain("東海理化", result.CustomerReplyDraft);
+        Assert.DoesNotContain("東陽テクニカ", result.CustomerReplyDraft);
+        Assert.DoesNotContain("追記部", result.CustomerReplyDraft);
+        Assert.DoesNotContain("技術サポート担当", result.CustomerReplyDraft);
+        Assert.Contains("お客様向け回答案から過去案件由来", string.Join(Environment.NewLine, result.Warnings));
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_DoesNotExposePastCaseDetailsInEvidenceBackedFallback()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "現時点の選択根拠からは、断定できる回答内容を確認できませんでした。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.2,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "case-qac-os",
+                    SourceType = "PastCaseNote",
+                    Title = "00014623 東海理化 お客様ご相談内容",
+                    Text = "東海理化 七尾様。Perforce QACのサポートOSについて質問があります。Windows 11-64bit Revision 22H2 がサポートOSとして記載されています。",
+                    Score = 0.9,
+                },
+            ]) with
+            {
+                InquiryText = "QACの対応OSを教えてください",
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("過去案件情報が中心", result.CustomerReplyDraft);
+        Assert.Contains("転記できません", result.CustomerReplyDraft);
+        Assert.DoesNotContain("00014623", result.CustomerReplyDraft);
+        Assert.DoesNotContain("東海理化", result.CustomerReplyDraft);
+        Assert.DoesNotContain("七尾", result.CustomerReplyDraft);
+        Assert.DoesNotContain("Windows 11-64bit", result.CustomerReplyDraft);
+    }
+
     private static AiAnswerService CreateService(string llmResponse)
     {
         return new AiAnswerService(
