@@ -153,7 +153,7 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         {
             var normalizedKnown = NormalizeTerm(known);
             if (!string.IsNullOrWhiteSpace(normalizedKnown) &&
-                normalizedFocus.Contains(normalizedKnown, StringComparison.Ordinal))
+                ContainsKnownTerm(normalizedFocus, normalizedKnown))
             {
                 terms[known] = Math.Max(terms.GetValueOrDefault(known), 100 + known.Length);
             }
@@ -205,9 +205,30 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
     private static IReadOnlyList<string> FindExcludedTerms(string normalizedFocus)
     {
         return StopWords
-            .Where(term => normalizedFocus.Contains(NormalizeTerm(term), StringComparison.Ordinal))
+            .Where(term => ContainsKnownTerm(normalizedFocus, NormalizeTerm(term)))
             .Distinct(StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static bool ContainsKnownTerm(string normalizedFocus, string normalizedTerm)
+    {
+        if (string.IsNullOrWhiteSpace(normalizedFocus) || string.IsNullOrWhiteSpace(normalizedTerm))
+        {
+            return false;
+        }
+
+        if (string.Equals(normalizedTerm, "ポート", StringComparison.Ordinal))
+        {
+            return normalizedFocus.Contains("ポート番号", StringComparison.Ordinal) ||
+                normalizedFocus.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("ポート", StringComparer.Ordinal);
+        }
+
+        if (string.Equals(normalizedTerm, "port", StringComparison.Ordinal))
+        {
+            return normalizedFocus.Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains("port", StringComparer.Ordinal);
+        }
+
+        return normalizedFocus.Contains(normalizedTerm, StringComparison.Ordinal);
     }
 
     private static IReadOnlyList<string> ExtractTargetVersions(string focusText)
@@ -299,6 +320,11 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
 
     private static bool LooksLikeGreetingOrSignature(string line)
     {
+        if (LooksLikeMeaningfulRequestLine(line))
+        {
+            return false;
+        }
+
         var normalized = NormalizeTerm(line);
         if (normalized.Length <= 2)
         {
@@ -307,6 +333,17 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
 
         return StopWordSet.Any(stopWord => normalized.Contains(stopWord, StringComparison.Ordinal))
             && !ImportantKnownTerms.Any(term => normalized.Contains(NormalizeTerm(term), StringComparison.Ordinal));
+    }
+
+    private static bool LooksLikeMeaningfulRequestLine(string line)
+    {
+        return AsciiProductOrVersionRegex().IsMatch(line) ||
+            line.Contains("手順書", StringComparison.Ordinal) ||
+            line.Contains("利用方法", StringComparison.Ordinal) ||
+            line.Contains("設定手順", StringComparison.Ordinal) ||
+            line.Contains("トラブルシューティング", StringComparison.Ordinal) ||
+            line.Contains("マニュアル", StringComparison.Ordinal) ||
+            line.Contains("ドキュメント", StringComparison.Ordinal);
     }
 
     private static string NormalizeText(string value)

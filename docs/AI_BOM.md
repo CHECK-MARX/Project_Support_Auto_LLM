@@ -75,7 +75,7 @@ Prompt rules include:
 | --- | ---: | --- | --- |
 | `CuratedFactCatalog` | 1 | Yes, when confirmed | Support-owned canonical facts, such as latest versions |
 | `OfficialDoc` | 2 | Yes | Preferred for freshness-sensitive answers |
-| `Manual` | 3 | Yes | Local TXT/MD manual evidence |
+| `Manual` | 3 | Yes | Local TXT/MD/PDF/DOCX/XLSX/PPTX/HTML/CSV/TSV manual evidence |
 | `PastCaseNote` | 4 | No | Historical support evidence only; can contain customer or case-specific content |
 
 Index path:

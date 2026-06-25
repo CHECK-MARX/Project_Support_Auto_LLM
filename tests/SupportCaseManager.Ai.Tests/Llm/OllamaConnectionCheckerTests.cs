@@ -147,6 +147,16 @@ public class OllamaConnectionCheckerTests
         Assert.Equal(HttpMethod.Get, requestMessage.Method);
     }
 
+    [Fact]
+    public void Constructor_DisablesHttpClientFixedTimeout()
+    {
+        using var httpClient = new HttpClient(new StubHttpMessageHandler((request, _) => Task.FromResult(CreateDefaultResponse(request))));
+
+        _ = new OllamaConnectionChecker(httpClient);
+
+        Assert.Equal(Timeout.InfiniteTimeSpan, httpClient.Timeout);
+    }
+
     private static LlmProviderSettings CreateSettings(
         string endpoint = "http://localhost:11434",
         string chatModel = "llama3.1",

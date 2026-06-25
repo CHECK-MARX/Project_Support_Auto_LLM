@@ -93,7 +93,7 @@ dotnet publish src\SupportCaseManager.App\SupportCaseManager.App.csproj -p:Publi
 主な機能:
 
 - 設定: `ai-data` / `ai-index`、Ollama、モデル、プロンプト上限、根拠件数
-- インデックス: 過去案件、TXT/MDマニュアル、公式ドキュメント
+- インデックス: 過去案件、TXT/MD/PDF/DOCX/XLSX/PPTX/HTML/CSV/TSVマニュアル、公式ドキュメント
 - 検索: 過去案件、Manual、OfficialDocの統合検索
 - 根拠制御: SourceTypeフィルタ、選択/除外、最大根拠件数制御
 - 回答生成: Fake / Ollama切り替え、Ollama `/api/chat`

@@ -35,24 +35,39 @@ public sealed class SearchSourceReadOnlyBindingTests
         Assert.Contains("Binding=\"{Binding SendStatusText, Mode=OneWay}\"", xaml);
     }
 
-    private static string ReadMainWindowXaml()
+    private static string ReadMainWindowXaml(
+        [System.Runtime.CompilerServices.CallerFilePath] string testFilePath = "")
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
+        foreach (var startDirectory in CandidateStartDirectories(testFilePath))
         {
-            var candidate = Path.Combine(
-                directory.FullName,
-                "src",
-                "SupportCaseManager.AiAssistant.App",
-                "MainWindow.xaml");
-            if (File.Exists(candidate))
+            var directory = new DirectoryInfo(startDirectory);
+            while (directory is not null)
             {
-                return File.ReadAllText(candidate);
-            }
+                var candidate = Path.Combine(
+                    directory.FullName,
+                    "src",
+                    "SupportCaseManager.AiAssistant.App",
+                    "MainWindow.xaml");
+                if (File.Exists(candidate))
+                {
+                    return File.ReadAllText(candidate);
+                }
 
-            directory = directory.Parent;
+                directory = directory.Parent;
+            }
         }
 
-        throw new FileNotFoundException("MainWindow.xaml was not found from the test output directory.");
+        throw new FileNotFoundException("MainWindow.xaml was not found from the test output directory or source tree.");
+    }
+
+    private static IEnumerable<string> CandidateStartDirectories(string testFilePath)
+    {
+        yield return AppContext.BaseDirectory;
+
+        var sourceDirectory = Path.GetDirectoryName(testFilePath);
+        if (!string.IsNullOrWhiteSpace(sourceDirectory))
+        {
+            yield return sourceDirectory;
+        }
     }
 }

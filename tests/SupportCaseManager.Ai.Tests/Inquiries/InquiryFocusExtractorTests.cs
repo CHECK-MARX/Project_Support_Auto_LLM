@@ -71,4 +71,20 @@ public sealed class InquiryFocusExtractorTests
         Assert.DoesNotContain("株式会社サンプル", focus.ImportantTerms);
         Assert.Contains("ライセンス認証エラー", focus.ImportantTerms);
     }
+
+    [Fact]
+    public void Extract_DoesNotTreatSupportSignatureAsPortQuestion()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            東陽テクニカ テクニカルサポートご担当者様
+            Dashboard利用手順書を提供していただけないかお願いしたく、ご連絡いたしました。
+            具体的な利用方法や設定手順、トラブルシューティングの情報などが含まれている手順書をご提供いただけますと幸いです。
+            Yuto Yoshihara
+            """);
+
+        Assert.DoesNotContain("ポート", focus.ImportantTerms);
+        Assert.DoesNotContain("port", focus.ImportantTerms, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains(focus.ImportantTerms, term => term.Contains("Dashboard", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(focus.ImportantTerms, term => term.Contains("手順書", StringComparison.Ordinal));
+    }
 }

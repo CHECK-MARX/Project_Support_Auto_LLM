@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Llm;
 
@@ -107,6 +108,33 @@ public sealed class OllamaConnectionCheckerChatTestTests
         Assert.False(result.ChatTestSuccess);
     }
 
+    [Fact]
+    public async Task CheckAsync_ChatTestUsesSmallFastGenerationOptions()
+    {
+        var handler = new SequenceHttpMessageHandler(
+            JsonResponse("""{ "models": [{ "name": "qwen3-coder:30b" }] }"""),
+            JsonResponse("""
+                {
+                  "message": { "role": "assistant", "content": "OK" },
+                  "done_reason": "stop"
+                }
+                """));
+        var checker = new OllamaConnectionChecker(handler);
+
+        _ = await checker.CheckAsync(CreateSettings("qwen3-coder:30b") with { TimeoutSeconds = 600 }, disableThinking: true);
+
+        var chatRequestJson = Assert.Single(
+            handler.RequestBodies,
+            static body => body.Contains("\"messages\"", StringComparison.Ordinal));
+        using var document = JsonDocument.Parse(chatRequestJson);
+        var root = document.RootElement;
+        Assert.False(root.GetProperty("think").GetBoolean());
+        var options = root.GetProperty("options");
+        Assert.Equal(0.0, options.GetProperty("temperature").GetDouble());
+        Assert.Equal(8, options.GetProperty("num_predict").GetInt32());
+        Assert.Equal(512, options.GetProperty("num_ctx").GetInt32());
+    }
+
     private static LlmProviderSettings CreateSettings(string chatModel)
     {
         return new LlmProviderSettings
@@ -130,6 +158,8 @@ public sealed class OllamaConnectionCheckerChatTestTests
         private readonly Queue<HttpResponseMessage> responses = new();
         public int RequestCount { get; private set; }
 
+        public List<string> RequestBodies { get; } = [];
+
         public SequenceHttpMessageHandler(params HttpResponseMessage[] responses)
         {
             foreach (var response in responses)
@@ -146,7 +176,19 @@ public sealed class OllamaConnectionCheckerChatTestTests
                 throw new InvalidOperationException("No more queued responses.");
             }
 
-            return Task.FromResult(responses.Dequeue());
+            return SendAndCaptureAsync(request, cancellationToken);
+        }
+
+        private async Task<HttpResponseMessage> SendAndCaptureAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.Content is not null)
+            {
+                RequestBodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
+            }
+
+            return responses.Dequeue();
         }
     }
 }

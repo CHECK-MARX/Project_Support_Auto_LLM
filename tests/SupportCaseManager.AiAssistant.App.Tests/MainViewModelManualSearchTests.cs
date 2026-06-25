@@ -10,9 +10,11 @@ using SupportCaseManager.Ai.Core.Inquiries;
 using SupportCaseManager.Ai.Core.Launch;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Notes;
+using SupportCaseManager.Ai.Core.Prompts;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.Ai.Core.Settings;
 using SupportCaseManager.AiAssistant.App.Appearance;
+using SupportCaseManager.AiAssistant.App.Llm;
 using SupportCaseManager.AiAssistant.App.ViewModels;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
@@ -183,10 +185,50 @@ public sealed class MainViewModelManualSearchTests
         Assert.Equal(1, services.Logger.ErrorCount);
     }
 
+    [Fact]
+    public async Task RunOllamaProductionMiniTest_UsesDirectMicroPromptAndBoundedProviderSettings()
+    {
+        var llmClientFactory = new CapturingLlmClientFactory();
+        var services = CreateViewModel([], llmClientFactory: llmClientFactory);
+        services.ViewModel.ChatModel = "qwen3-coder:30b";
+        services.ViewModel.TimeoutSeconds = 600;
+        services.ViewModel.MaxOutputTokens = 800;
+        services.ViewModel.ContextWindowTokens = 8192;
+        services.ViewModel.MaxPromptChars = 6000;
+        services.ViewModel.Notes.Clear();
+        services.ViewModel.Notes.Add(new NoteSnapshot
+        {
+            NoteKind = "現在ノート",
+            Text = new string('あ', 10000),
+            IsCurrent = true,
+        });
+
+        await InvokePrivateTaskAsync(services.ViewModel, "RunOllamaProductionMiniTestAsync");
+
+        Assert.NotNull(llmClientFactory.LastSettings);
+        Assert.NotNull(llmClientFactory.LastMessages);
+        Assert.Equal("Ollama", llmClientFactory.LastSettings.Provider);
+        Assert.Equal("qwen3-coder:30b", llmClientFactory.LastSettings.ChatModel);
+        Assert.Equal(60, llmClientFactory.LastSettings.TimeoutSeconds);
+        Assert.Equal(8, llmClientFactory.LastSettings.MaxOutputTokens);
+        Assert.Equal(512, llmClientFactory.LastSettings.ContextWindowTokens);
+        Assert.True(llmClientFactory.LastMessages.Diagnostics.FinalPromptChars <= 80);
+        Assert.Equal(llmClientFactory.LastMessages.Diagnostics.FinalPromptChars, llmClientFactory.LastMessages.Diagnostics.ConfiguredMaxPromptChars);
+        Assert.Equal(0, llmClientFactory.LastMessages.Diagnostics.EvidenceCount);
+        Assert.True(llmClientFactory.LastMessages.Diagnostics.InquiryChars < 50);
+        Assert.Contains("OKだけ", llmClientFactory.LastMessages.UserPrompt);
+        Assert.DoesNotContain("現在ノート", llmClientFactory.LastMessages.UserPrompt);
+        Assert.Contains("result: success", services.ViewModel.OllamaProductionMiniTestResultText);
+        Assert.Contains("test mode: direct chat micro prompt", services.ViewModel.OllamaProductionMiniTestResultText);
+        Assert.Contains("configured timeout seconds: 60", services.ViewModel.OllamaProductionMiniTestResultText);
+        Assert.Contains("max output tokens: 8", services.ViewModel.OllamaProductionMiniTestResultText);
+    }
+
     private static TestServices CreateViewModel(
         IReadOnlyList<SearchSource> manualResults,
         Exception? manualSearchException = null,
-        IAiAnswerService? answerService = null)
+        IAiAnswerService? answerService = null,
+        ILlmClientFactory? llmClientFactory = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var viewModel = new MainViewModel(
@@ -207,7 +249,8 @@ public sealed class MainViewModelManualSearchTests
             _ => answerService ?? new FakeAnswerService(),
             new FakeDraftStore(),
             _ => logger,
-            new NoopAppearanceService())
+            new NoopAppearanceService(),
+            llmClientFactory)
         {
             InquiryText = """
                 ライセンス認証エラーで製品が起動できません。
@@ -499,6 +542,45 @@ public sealed class MainViewModelManualSearchTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new OllamaConnectionCheckResult { IsSuccess = true });
+        }
+    }
+
+    private sealed class CapturingLlmClientFactory : ILlmClientFactory
+    {
+        public LlmProviderSettings? LastSettings { get; private set; }
+
+        public PromptMessages? LastMessages { get; private set; }
+
+        public ILlmClient Create(LlmProviderSettings settings)
+        {
+            LastSettings = settings;
+            return new CapturingLlmClient(this);
+        }
+
+        private sealed class CapturingLlmClient : ILlmClient
+        {
+            private readonly CapturingLlmClientFactory factory;
+
+            public CapturingLlmClient(CapturingLlmClientFactory factory)
+            {
+                this.factory = factory;
+            }
+
+            public Task<LlmGenerationResult> GenerateAsync(
+                PromptMessages messages,
+                LlmProviderSettings settings,
+                bool disableThinking = true,
+                CancellationToken cancellationToken = default)
+            {
+                factory.LastSettings = settings;
+                factory.LastMessages = messages;
+                return Task.FromResult(new LlmGenerationResult
+                {
+                    Content = "{}",
+                    DoneReason = "stop",
+                    ThinkDisabledSent = disableThinking,
+                });
+            }
         }
     }
 

@@ -27,6 +27,13 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
+    private const int ProductionMiniTestMinTimeoutSeconds = 60;
+    private const int ProductionMiniTestMaxTimeoutSeconds = 60;
+    private const int ProductionMiniTestMinOutputTokens = 8;
+    private const int ProductionMiniTestMaxOutputTokens = 8;
+    private const int ProductionMiniTestMinContextWindowTokens = 512;
+    private const int ProductionMiniTestMaxContextWindowTokens = 512;
+
     private readonly IAiSettingsStore settingsStore;
     private readonly ICaseContextBuilder caseContextBuilder;
     private readonly INoteSnapshotReader noteSnapshotReader;
@@ -45,6 +52,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IAiDraftStore draftStore;
     private readonly Func<string, IAiDiagnosticLogger> loggerFactory;
     private readonly IAppAppearanceService appearanceService;
+    private readonly ILlmClientFactory llmClientFactory;
 
     private CaseContext? currentCaseContext;
     private AnswerDraftRequest? lastRequest;
@@ -82,6 +90,7 @@ public sealed class MainViewModel : ObservableObject
     private string caseFolderPath = string.Empty;
     private string productName = "製品A";
     private string companyName = "株式会社サンプル";
+    private string customerName = string.Empty;
     private string supportNumber = "00001234";
     private string status = "対応中";
     private string receptionDate = "2026-06-02";
@@ -156,7 +165,8 @@ public sealed class MainViewModel : ObservableObject
         Func<LlmProviderSettings, IAiAnswerService> answerServiceFactory,
         IAiDraftStore draftStore,
         Func<string, IAiDiagnosticLogger> loggerFactory,
-        IAppAppearanceService appearanceService)
+        IAppAppearanceService appearanceService,
+        ILlmClientFactory? llmClientFactory = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -176,6 +186,7 @@ public sealed class MainViewModel : ObservableObject
         this.draftStore = draftStore;
         this.loggerFactory = loggerFactory;
         this.appearanceService = appearanceService;
+        this.llmClientFactory = llmClientFactory ?? new LlmClientFactory();
 
         LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
@@ -532,6 +543,12 @@ public sealed class MainViewModel : ObservableObject
     {
         get => companyName;
         set => SetProperty(ref companyName, value);
+    }
+
+    public string CustomerName
+    {
+        get => customerName;
+        set => SetProperty(ref customerName, value);
     }
 
     public string SupportNumber
@@ -948,6 +965,7 @@ public sealed class MainViewModel : ObservableObject
 
         CaseFolderPath = context.CaseFolderPath;
         CompanyName = context.CompanyName;
+        CustomerName = context.CustomerName;
         SupportNumber = context.SupportNumber;
         Status = context.Status;
         ReceptionDate = context.ReceptionDate?.ToString("yyyy-MM-dd") ?? string.Empty;
@@ -1166,35 +1184,13 @@ public sealed class MainViewModel : ObservableObject
         await RunBusyAsync(async () =>
         {
             var settings = BuildSettings();
-            var providerSettings = settings.LlmProvider with
-            {
-                Provider = "Ollama",
-                MaxOutputTokens = Math.Max(settings.LlmProvider.MaxOutputTokens, 800),
-            };
-            var testSettings = settings with
-            {
-                LlmProvider = providerSettings,
-                DisableThinking = true,
-                MaxEvidenceItems = 0,
-            };
-            const string inquiryText = "テストです。動作確認をお願いします。";
-            const string instruction = "以下の問い合わせに対するお客様向け返信を、日本語で2文だけ作成してください。";
-            var request = new AnswerDraftRequest
-            {
-                Case = BuildCurrentCaseContext(),
-                InquiryText = inquiryText,
-                UserInstruction = instruction,
-                InquiryFocus = inquiryFocusExtractor.Extract(inquiryText, BuildCurrentCaseContext()),
-                Sources = [],
-                Settings = testSettings,
-                RequestedAt = DateTimeOffset.Now,
-            };
-            var promptMessages = new PromptBuilder().Build(request);
+            var providerSettings = BuildOllamaProductionMiniTestProviderSettings(settings.LlmProvider);
+            var promptMessages = BuildOllamaProductionMiniTestPromptMessages();
             var stopwatch = Stopwatch.StartNew();
 
             try
             {
-                var generation = await new LlmClientFactory()
+                var generation = await llmClientFactory
                     .Create(providerSettings)
                     .GenerateAsync(promptMessages, providerSettings, disableThinking: true);
                 stopwatch.Stop();
@@ -1231,6 +1227,58 @@ public sealed class MainViewModel : ObservableObject
                     ex);
             }
         });
+    }
+
+    private static PromptMessages BuildOllamaProductionMiniTestPromptMessages()
+    {
+        const string systemPrompt = "日本語で短く回答してください。";
+        const string userPrompt = "疎通確認です。OKだけ返してください。";
+        return new PromptMessages
+        {
+            SystemPrompt = systemPrompt,
+            UserPrompt = userPrompt,
+            Diagnostics = new PromptDiagnostics
+            {
+                ConfiguredMaxPromptChars = systemPrompt.Length + userPrompt.Length,
+                FinalPromptChars = systemPrompt.Length + userPrompt.Length,
+                SystemChars = systemPrompt.Length,
+                UserPromptChars = userPrompt.Length,
+                InquiryChars = userPrompt.Length,
+                EvidenceChars = 0,
+                EvidenceCount = 0,
+            },
+        };
+    }
+
+    private static LlmProviderSettings BuildOllamaProductionMiniTestProviderSettings(LlmProviderSettings settings)
+    {
+        var outputTokens = settings.MaxOutputTokens > 0
+            ? settings.MaxOutputTokens
+            : ProductionMiniTestMaxOutputTokens;
+        var timeoutSeconds = settings.TimeoutSeconds > 0
+            ? settings.TimeoutSeconds
+            : ProductionMiniTestMaxTimeoutSeconds;
+        var contextWindowTokens = settings.ContextWindowTokens > 0
+            ? settings.ContextWindowTokens
+            : ProductionMiniTestMaxContextWindowTokens;
+
+        return settings with
+        {
+            Provider = "Ollama",
+            Temperature = Math.Clamp(settings.Temperature, 0, 0.1),
+            MaxOutputTokens = Math.Clamp(
+                outputTokens,
+                ProductionMiniTestMinOutputTokens,
+                ProductionMiniTestMaxOutputTokens),
+            TimeoutSeconds = Math.Clamp(
+                timeoutSeconds,
+                ProductionMiniTestMinTimeoutSeconds,
+                ProductionMiniTestMaxTimeoutSeconds),
+            ContextWindowTokens = Math.Clamp(
+                contextWindowTokens,
+                ProductionMiniTestMinContextWindowTokens,
+                ProductionMiniTestMaxContextWindowTokens),
+        };
     }
 
     private async Task LoadCaseAsync()
@@ -1742,6 +1790,7 @@ public sealed class MainViewModel : ObservableObject
         BaseFolder = context.BaseFolder ?? BaseFolder;
         CloseFolder = context.CloseFolder ?? CloseFolder;
         CompanyName = context.CompanyName ?? string.Empty;
+        CustomerName = context.CustomerName ?? string.Empty;
         SupportNumber = context.SupportNumber ?? string.Empty;
         Status = context.Status ?? string.Empty;
         ReceptionDate = context.ReceptionDate?.ToString("yyyy-MM-dd") ?? string.Empty;
@@ -2119,6 +2168,7 @@ public sealed class MainViewModel : ObservableObject
             CloseFolder = CloseFolder,
             CaseFolderPath = CaseFolderPath,
             CompanyName = CompanyName,
+            CustomerName = CustomerName,
             SupportNumber = SupportNumber,
             Status = Status,
             ReceptionDate = DateOnly.TryParse(ReceptionDate, out var parsedDate) ? parsedDate : null,
@@ -2308,6 +2358,7 @@ public sealed class MainViewModel : ObservableObject
         var builder = new StringBuilder();
         builder.AppendLine("Ollama本番生成ミニテスト");
         builder.AppendLine($"result: {(isSuccess ? "success" : "failed")}");
+        builder.AppendLine("test mode: direct chat micro prompt");
         builder.AppendLine($"model: {settings.ChatModel}");
         builder.AppendLine($"configured timeout seconds: {settings.TimeoutSeconds}");
         builder.AppendLine($"elapsed seconds: {elapsed.TotalSeconds:0.0}");
@@ -2661,7 +2712,7 @@ public sealed class MainViewModel : ObservableObject
             builder.AppendLine($"- {folder}");
         }
         builder.AppendLine($"走査ファイル総数: {result.ScannedFileCount}");
-        builder.AppendLine($"取り込み対象候補(.txt/.md): {result.SupportedFileCount}");
+        builder.AppendLine($"取り込み対象候補(.txt/.md/.pdf/.docx/.xlsx/.pptx/.html/.csv/.tsv等): {result.SupportedFileCount}");
         builder.AppendLine($"取り込み済み: {result.IndexedFileCount}");
         builder.AppendLine($"内容判定で除外: {result.ContentExcludedFileCount}");
         builder.AppendLine($"空ファイルスキップ: {result.EmptyFileSkippedCount}");
@@ -2671,7 +2722,8 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"未対応ファイル総数: {result.UnsupportedFileCount}");
         builder.AppendLine($"読み取り失敗: {result.ReadFailureCount}");
         builder.AppendLine($"重複ファイルスキップ: {result.DuplicateFileSkippedCount}");
-        builder.AppendLine("PDF/DOCX/XLSX/PNGは現在未対応です。将来の文書抽出対応で取り込み予定です。");
+        builder.AppendLine("PDF/DOCX/XLSX/PPTX/HTML/CSV/TSVはテキスト抽出して取り込みます。");
+        builder.AppendLine("PNG/JPG等の画像OCR、旧Office形式(.doc/.xls/.ppt)は現在未対応です。");
         builder.AppendLine("ZIPの中身は現在確認しません。");
         builder.AppendLine("EXE/RUN/DB/PDB/BAK/ZIPは検索対象外です。");
 

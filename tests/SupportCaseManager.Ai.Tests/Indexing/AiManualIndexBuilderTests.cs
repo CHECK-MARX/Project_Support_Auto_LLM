@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.IO.Compression;
 using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Tests.Helpers;
 
@@ -135,28 +136,39 @@ public class AiManualIndexBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_IgnoresUnsupportedExtensions()
+    public async Task BuildAsync_IndexesPdfDocxHtmlAndCsvFiles()
     {
         using var temp = new TempDirectory();
         var manualFolder = Path.Combine(temp.Path, "manuals");
         var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
         Directory.CreateDirectory(manualFolder);
-        await File.WriteAllTextAsync(Path.Combine(manualFolder, "manual.pdf"), "対象外", Encoding.UTF8);
-        await File.WriteAllTextAsync(Path.Combine(manualFolder, "manual.html"), "対象外", Encoding.UTF8);
+        await WriteSimplePdfAsync(Path.Combine(manualFolder, "manual.pdf"), "License PDF Manual");
+        WriteSingleEntryZip(
+            Path.Combine(manualFolder, "manual.docx"),
+            "word/document.xml",
+            """
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body><w:p><w:r><w:t>Word manual text</w:t></w:r></w:p></w:body>
+            </w:document>
+            """);
+        await File.WriteAllTextAsync(
+            Path.Combine(manualFolder, "guide.html"),
+            "<html><body><h1>HTML manual</h1><p>Browser setup guide</p></body></html>",
+            Encoding.UTF8);
+        await File.WriteAllTextAsync(Path.Combine(manualFolder, "table.csv"), "title,body\r\nCSV manual,Port setting", Encoding.UTF8);
         var builder = CreateBuilder();
 
         var result = await builder.BuildAsync(manualFolder, aiIndexFolder);
 
-        Assert.Equal(0, result.IndexedFileCount);
-        Assert.Equal(0, result.IndexedChunkCount);
-        Assert.Equal(2, result.ScannedFileCount);
-        Assert.Equal(0, result.SupportedFileCount);
-        Assert.Equal(2, result.UnsupportedFileCount);
-        Assert.Equal(1, result.UnsupportedDocumentFileCount);
-        Assert.Equal(1, result.OtherUnsupportedFileCount);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".pdf"]);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".html"]);
-        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".pdf"]);
+        Assert.Equal(4, result.ScannedFileCount);
+        Assert.Equal(4, result.SupportedFileCount);
+        Assert.Equal(4, result.IndexedFileCount);
+        Assert.Equal(0, result.UnsupportedFileCount);
+        var document = await ReadIndexAsync(result.IndexFilePath);
+        Assert.Contains(document.Manuals, manual => manual.DocumentType == "Pdf" && manual.Text.Contains("License PDF Manual", StringComparison.Ordinal));
+        Assert.Contains(document.Manuals, manual => manual.DocumentType == "Word" && manual.Text.Contains("Word manual text", StringComparison.Ordinal));
+        Assert.Contains(document.Manuals, manual => manual.DocumentType == "Html" && manual.Text.Contains("Browser setup guide", StringComparison.Ordinal));
+        Assert.Contains(document.Manuals, manual => manual.DocumentType == "Csv" && manual.Text.Contains("Port setting", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -185,13 +197,13 @@ public class AiManualIndexBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_CountsUnsupportedOfficeImageAndArchiveFilesWithoutIndexing()
+    public async Task BuildAsync_CountsLegacyOfficeImageAndArchiveFilesWithoutIndexing()
     {
         using var temp = new TempDirectory();
         var manualFolder = Path.Combine(temp.Path, "manuals");
         var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
         Directory.CreateDirectory(manualFolder);
-        foreach (var extension in new[] { ".pdf", ".docx", ".xlsx", ".png", ".zip" })
+        foreach (var extension in new[] { ".doc", ".xls", ".ppt", ".png", ".zip" })
         {
             await File.WriteAllTextAsync(Path.Combine(manualFolder, $"unsupported{extension}"), "unsupported", Encoding.UTF8);
         }
@@ -203,14 +215,14 @@ public class AiManualIndexBuilderTests
         Assert.Equal(4, result.UnsupportedDocumentFileCount);
         Assert.Equal(1, result.OutOfScopeFileCount);
         Assert.Equal(0, result.IndexedFileCount);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".pdf"]);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".docx"]);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".xlsx"]);
+        Assert.Equal(1, result.UnsupportedExtensionCounts[".doc"]);
+        Assert.Equal(1, result.UnsupportedExtensionCounts[".xls"]);
+        Assert.Equal(1, result.UnsupportedExtensionCounts[".ppt"]);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".png"]);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".zip"]);
-        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".pdf"]);
-        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".docx"]);
-        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".xlsx"]);
+        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".doc"]);
+        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".xls"]);
+        Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".ppt"]);
         Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".png"]);
         Assert.Equal(1, result.OutOfScopeExtensionCounts[".zip"]);
     }
@@ -275,5 +287,65 @@ public class AiManualIndexBuilderTests
         await using var stream = File.OpenRead(indexFilePath);
         return await JsonSerializer.DeserializeAsync<AiManualIndexDocument>(stream)
             ?? throw new InvalidOperationException("Manual index JSON could not be deserialized.");
+    }
+
+    private static void WriteSingleEntryZip(string filePath, string entryName, string content)
+    {
+        using var archive = ZipFile.Open(filePath, ZipArchiveMode.Create);
+        var entry = archive.CreateEntry(entryName);
+        using var stream = entry.Open();
+        using var writer = new StreamWriter(stream, Encoding.UTF8);
+        writer.Write(content);
+    }
+
+    private static async Task WriteSimplePdfAsync(string filePath, string text)
+    {
+        var escapedText = text
+            .Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("(", "\\(", StringComparison.Ordinal)
+            .Replace(")", "\\)", StringComparison.Ordinal);
+        var content = $"BT /F1 12 Tf 72 720 Td ({escapedText}) Tj ET";
+        var objects = new[]
+        {
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+            $"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        };
+
+        var builder = new StringBuilder();
+        var offsets = new List<int>();
+        builder.Append("%PDF-1.4\n");
+        for (var index = 0; index < objects.Length; index++)
+        {
+            offsets.Add(Encoding.ASCII.GetByteCount(builder.ToString()));
+            builder.Append(index + 1);
+            builder.Append(" 0 obj\n");
+            builder.Append(objects[index]);
+            builder.Append("\nendobj\n");
+        }
+
+        var xrefOffset = Encoding.ASCII.GetByteCount(builder.ToString());
+        builder.Append("xref\n");
+        builder.Append("0 ");
+        builder.Append(objects.Length + 1);
+        builder.Append("\n");
+        builder.Append("0000000000 65535 f \n");
+        foreach (var offset in offsets)
+        {
+            builder.Append(offset.ToString("0000000000"));
+            builder.Append(" 00000 n \n");
+        }
+
+        builder.Append("trailer\n");
+        builder.Append("<< /Size ");
+        builder.Append(objects.Length + 1);
+        builder.Append(" /Root 1 0 R >>\n");
+        builder.Append("startxref\n");
+        builder.Append(xrefOffset);
+        builder.Append("\n%%EOF\n");
+
+        await File.WriteAllTextAsync(filePath, builder.ToString(), Encoding.ASCII);
     }
 }

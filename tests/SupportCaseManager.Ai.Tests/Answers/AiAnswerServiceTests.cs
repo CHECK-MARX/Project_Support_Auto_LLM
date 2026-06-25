@@ -2,6 +2,7 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
+using SupportCaseManager.Ai.Core.Inquiries;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
 using SupportCaseManager.Ai.Core.Safety;
@@ -227,6 +228,177 @@ public class AiAnswerServiceTests
         Assert.Equal(2, result.Evidence.Count);
         Assert.True(result.Confidence >= 0.45);
         Assert.Contains(result.Warnings, warning => warning.Contains("送信済み根拠から回答案を補完", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_UsesSelectedPastCaseTechnicalContentWhenOfficialDocExistsAndLlmRefuses()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "現時点の参照根拠からは、断定できる回答内容を確認できませんでした。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [
+                { "sourceId": "official-qac-12", "sourceType": "OfficialDoc", "title": "QAC 12.0 Release Notes", "excerpt": "QAC 12.0ではcxcast engine hotfix packの変更があります。", "relevance": 0.33 }
+              ],
+              "confidence": 0.2,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "official-qac-12",
+                    SourceType = "OfficialDoc",
+                    Title = "QAC 12.0 Release Notes",
+                    Text = "QAC 12.0ではcxcast engine hotfix packの変更があります。",
+                    Score = 0.33,
+                },
+                new SearchSource
+                {
+                    SourceId = "case-00015391",
+                    SourceType = "PastCaseNote",
+                    Title = "00015391 東洋電装株式会社 お客様ご相談",
+                    Text = "*****追記部_2026/01/06 16:48:46(受付)***** 00015391 東洋電装株式会社 山田様 E-Mail : sample@example.test QAC 12.0ではcxcast engineのhotfix packを適用し、Validateの設定を更新することでコンパイラ認識を確認できました。",
+                    SupportNumber = "00015391",
+                    Score = 1.0,
+                },
+            ]) with
+            {
+                InquiryText = "QAC 12.0への変更に伴うコンパイラ認識について教えてください。",
+                Settings = new AiAssistantSettings { MaxEvidenceItems = 8 },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("確認できた内容", result.CustomerReplyDraft);
+        Assert.Contains("QAC 12.0", result.CustomerReplyDraft);
+        Assert.Contains("Validate", result.CustomerReplyDraft);
+        Assert.Contains("hotfix pack", result.CustomerReplyDraft);
+        Assert.DoesNotContain("断定できる回答内容を確認できません", result.CustomerReplyDraft);
+        Assert.DoesNotContain("00015391", result.CustomerReplyDraft);
+        Assert.DoesNotContain("東洋電装", result.CustomerReplyDraft);
+        Assert.DoesNotContain("山田", result.CustomerReplyDraft);
+        Assert.DoesNotContain("sample@example.test", result.CustomerReplyDraft);
+        Assert.DoesNotContain("追記部", result.CustomerReplyDraft);
+        Assert.Contains(result.Evidence, item => item.SourceId == "official-qac-12");
+        Assert.Contains(result.Evidence, item => item.SourceId == "case-00015391");
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_UsesClosedPastCaseActionContentAndAddsCurrentRecipientHeader()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "別件としてライセンス設定を確認してください。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.4,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "closed-case-installer",
+                    SourceType = "PastCaseNote",
+                    Title = "00018456 東陽ユーティリティ株式会社 お客様への返信案",
+                    Text = "クローズ済み。お客様への返信案: 00018456 東陽ユーティリティ株式会社 鈴木様 E-Mail: old@example.test 確認結果として、TOYO_UTIL_PY3.zip をアップロードし、Validate利用手順書.pdf と RepriseSettingGuide_Linux.pdf を送付対象として案内しました。",
+                    SupportNumber = "00018456",
+                    Score = 1.0,
+                },
+            ]) with
+            {
+                Case = new CaseContext
+                {
+                    CompanyName = "Corp",
+                    CustomerName = "佐藤 太郎",
+                    SupportNumber = "SUP-100",
+                },
+                InquiryText = "QAC 2025.4向けに送付するファイルを確認したいです。",
+                Settings = new AiAssistantSettings { MaxEvidenceItems = 8 },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.StartsWith($"Corp{Environment.NewLine}佐藤 太郎 様", result.CustomerReplyDraft);
+        Assert.Contains("確認できた対応内容", result.CustomerReplyDraft);
+        Assert.Contains("TOYO_UTIL_PY3.zip", result.CustomerReplyDraft);
+        Assert.Contains("Validate利用手順書.pdf", result.CustomerReplyDraft);
+        Assert.Contains("RepriseSettingGuide_Linux.pdf", result.CustomerReplyDraft);
+        Assert.DoesNotContain("別件としてライセンス設定", result.CustomerReplyDraft);
+        Assert.DoesNotContain("00018456", result.CustomerReplyDraft);
+        Assert.DoesNotContain("東陽ユーティリティ", result.CustomerReplyDraft);
+        Assert.DoesNotContain("鈴木", result.CustomerReplyDraft);
+        Assert.DoesNotContain("old@example.test", result.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_DoesNotUseIrrelevantManualsForDashboardInquiryWithYoshiharaSignature()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "現時点の参照根拠からは、断定できる回答内容を確認できませんでした。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.2,
+              "warnings": []
+            }
+            """);
+        var inquiry = """
+            東陽テクニカ　テクニカルサポートご担当者様
+
+            Astemo株式会社の吉原です。
+
+            今回は、Dashboard利用手順書を提供していただけないかお願いしたく、ご連絡いたしました。
+            具体的な利用方法や設定手順、トラブルシューティングの情報などが含まれている手順書をご提供いただけますと幸いです。
+
+            吉原　裕人 | Yuto Yoshihara
+            """;
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "mc25cm",
+                    SourceType = "Manual",
+                    Title = "MC25CM Component Manual",
+                    Text = "MC25CMコンポーネントマニュアル 重要な注意事項 会社の所有権の変更について Programming Research Ltd. は Perforce Software Inc. の完全子会社となりました。",
+                    Score = 0.9,
+                },
+                new SearchSource
+                {
+                    SourceId = "ascm",
+                    SourceType = "Manual",
+                    Title = "ASCM Component Manual",
+                    Text = "ASCMコンポーネントマニュアル 重要な注意事項 会社の所有権の変更について Programming Research Ltd. は Perforce Software Inc. の完全子会社となりました。",
+                    Score = 0.86,
+                },
+            ]) with
+            {
+                Case = new CaseContext
+                {
+                    CompanyName = "Astemo株式会社",
+                    CustomerName = "吉原 裕人",
+                    SupportNumber = "SUP-200",
+                },
+                InquiryText = inquiry,
+                InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+                Settings = new AiAssistantSettings { MaxEvidenceItems = 8 },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.StartsWith($"Astemo株式会社{Environment.NewLine}吉原 裕人 様", result.CustomerReplyDraft);
+        Assert.Contains("Dashboard", result.CustomerReplyDraft);
+        Assert.Contains("直接該当する回答根拠を確認できません", result.CustomerReplyDraft);
+        Assert.DoesNotContain("対応OS", result.CustomerReplyDraft);
+        Assert.DoesNotContain("MC25CM", result.CustomerReplyDraft);
+        Assert.DoesNotContain("ASCM", result.CustomerReplyDraft);
+        Assert.DoesNotContain("Programming Research", result.CustomerReplyDraft);
     }
 
     [Fact]

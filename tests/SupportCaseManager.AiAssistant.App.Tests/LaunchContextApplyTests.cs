@@ -114,6 +114,7 @@ public sealed class LaunchContextApplyTests
 
         Assert.Equal(context.CaseFolderPath, services.ViewModel.CaseFolderPath);
         Assert.Equal(context.CompanyName, services.ViewModel.CompanyName);
+        Assert.Equal(context.CustomerName, services.ViewModel.CustomerName);
         Assert.Equal(context.SupportNumber, services.ViewModel.SupportNumber);
         Assert.Equal(context.Status, services.ViewModel.Status);
         Assert.Equal("2026-06-02", services.ViewModel.ReceptionDate);
@@ -251,6 +252,7 @@ public sealed class LaunchContextApplyTests
             CloseFolder = @"D:\Support\Klocwork\Closed",
             CaseFolderPath = @"D:\Support\Klocwork\Open\20260602(company_00017581)",
             CompanyName = "日本語株式会社",
+            CustomerName = "山田 太郎",
             SupportNumber = "00017581",
             Status = "お客様へ返信中",
             ReceptionDate = new DateOnly(2026, 6, 2),

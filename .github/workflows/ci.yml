@@ -2,22 +2,17 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
-    branches: [ main ]
-  release:
-    types: [ published ]
-  workflow_dispatch:
-
-permissions:
-  contents: write
+    branches:
+      - main
 
 jobs:
-  build-test-publish:
+  build-test:
+    name: Build and test
     runs-on: windows-latest
-    env:
-      DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-      DOTNET_NOLOGO: 'true'
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,35 +20,16 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
-          dotnet-quality: preview
+          dotnet-version: 10.0.x
+
+      - name: .NET info
+        run: dotnet --info
 
       - name: Restore
         run: dotnet restore SupportCaseManager.slnx
 
       - name: Build
-        run: dotnet build SupportCaseManager.slnx -c Release --no-restore
+        run: dotnet build SupportCaseManager.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test SupportCaseManager.slnx -c Release --no-build --logger "trx;LogFileName=test-results.trx"
-
-      - name: Publish
-        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: dotnet publish src/SupportCaseManager.App/SupportCaseManager.App.csproj -c Release -p:PublishProfile=WinX64SingleFile -o artifacts/SupportCaseManager
-
-      - name: Package release
-        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        run: Compress-Archive -Path artifacts/SupportCaseManager/* -DestinationPath artifacts/SupportCaseManager-win-x64.zip -Force
-
-      - name: Upload release asset
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/SupportCaseManager-win-x64.zip
-
-      - name: Upload artifact
-        if: github.event_name == 'release' || github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: SupportCaseManager-win-x64
-          path: artifacts/SupportCaseManager-win-x64.zip
+        run: dotnet test SupportCaseManager.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"

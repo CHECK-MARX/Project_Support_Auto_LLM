@@ -69,19 +69,34 @@ public sealed class AiUsageDocumentationTests
         Assert.Contains("AI-BOM", text);
     }
 
-    private static string FindRepositoryRoot()
+    private static string FindRepositoryRoot(
+        [System.Runtime.CompilerServices.CallerFilePath] string testFilePath = "")
     {
-        var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null)
+        foreach (var startDirectory in CandidateStartDirectories(testFilePath))
         {
-            if (File.Exists(Path.Combine(directory.FullName, "SupportCaseManager.slnx")))
+            var directory = new DirectoryInfo(startDirectory);
+            while (directory is not null)
             {
-                return directory.FullName;
-            }
+                if (File.Exists(Path.Combine(directory.FullName, "SupportCaseManager.slnx")))
+                {
+                    return directory.FullName;
+                }
 
-            directory = directory.Parent;
+                directory = directory.Parent;
+            }
         }
 
         throw new InvalidOperationException("Could not find repository root.");
+    }
+
+    private static IEnumerable<string> CandidateStartDirectories(string testFilePath)
+    {
+        yield return AppContext.BaseDirectory;
+
+        var sourceDirectory = Path.GetDirectoryName(testFilePath);
+        if (!string.IsNullOrWhiteSpace(sourceDirectory))
+        {
+            yield return sourceDirectory;
+        }
     }
 }

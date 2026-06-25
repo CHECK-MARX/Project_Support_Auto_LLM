@@ -8,7 +8,10 @@ namespace SupportCaseManager.Ai.Core.Llm;
 public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
 {
     private const int DefaultTimeoutSeconds = 10;
-    private const int ChatTestNumPredict = 50;
+    private const int MaxTagsTimeoutSeconds = 10;
+    private const int MaxChatTestTimeoutSeconds = 15;
+    private const int ChatTestNumPredict = 8;
+    private const int ChatTestContextWindowTokens = 512;
     private const string ChatTestPrompt = "Reply with exactly this text: OK";
 
     private readonly HttpClient httpClient;
@@ -26,6 +29,7 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
     public OllamaConnectionChecker(HttpClient httpClient)
     {
         this.httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
+        this.httpClient.Timeout = Timeout.InfiniteTimeSpan;
     }
 
     public async Task<OllamaConnectionCheckResult> CheckAsync(
@@ -44,28 +48,26 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
             return Failure(endpoint, settings.ChatModel, "Endpointの形式が正しくありません。", "InvalidEndpoint");
         }
 
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCts.CancelAfter(TimeSpan.FromSeconds(settings.TimeoutSeconds > 0
-            ? settings.TimeoutSeconds
-            : DefaultTimeoutSeconds));
+        using var tagsTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        tagsTimeoutCts.CancelAfter(TimeSpan.FromSeconds(EffectiveTagsTimeoutSeconds(settings)));
 
         try
         {
-            using var response = await httpClient.GetAsync(tagsUri, timeoutCts.Token);
+            using var response = await httpClient.GetAsync(tagsUri, tagsTimeoutCts.Token);
             if (response.StatusCode != HttpStatusCode.OK)
             {
                 return Failure(endpoint, settings.ChatModel, $"OllamaがHTTP {(int)response.StatusCode}を返しました。", "HttpError");
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
-            var availableModels = await ParseModelNamesAsync(stream, timeoutCts.Token);
+            await using var stream = await response.Content.ReadAsStreamAsync(tagsTimeoutCts.Token);
+            var availableModels = await ParseModelNamesAsync(stream, tagsTimeoutCts.Token);
             var selectedModelExists = ModelExists(availableModels, settings.ChatModel);
 
             var message = selectedModelExists
                 ? $"接続成功。利用可能モデル数: {availableModels.Count}。選択モデルは存在します。"
                 : $"接続成功。利用可能モデル数: {availableModels.Count}。選択モデルが見つかりません。モデルをpull済みか確認してください。";
 
-            var chatTest = await RunChatTestAsync(settings, disableThinking, endpoint, timeoutCts.Token);
+            var chatTest = await RunChatTestAsync(settings, disableThinking, endpoint, cancellationToken);
 
             return new OllamaConnectionCheckResult
             {
@@ -136,19 +138,33 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
                 stream = false,
                 think = false,
                 messages = new[] { new { role = "user", content = userPrompt } },
-                options = new { temperature = 0.2, num_predict = ChatTestNumPredict },
+                options = new
+                {
+                    temperature = 0.0,
+                    num_predict = ChatTestNumPredict,
+                    num_ctx = ChatTestContextWindowTokens,
+                },
             }
             : (object)new
             {
                 model = settings.ChatModel,
                 stream = false,
                 messages = new[] { new { role = "user", content = userPrompt } },
-                options = new { temperature = 0.2, num_predict = ChatTestNumPredict },
+                options = new
+                {
+                    temperature = 0.0,
+                    num_predict = ChatTestNumPredict,
+                    num_ctx = ChatTestContextWindowTokens,
+                },
             };
+
+        var chatTestTimeoutSeconds = EffectiveChatTestTimeoutSeconds(settings);
+        using var chatTestTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        chatTestTimeoutCts.CancelAfter(TimeSpan.FromSeconds(chatTestTimeoutSeconds));
 
         try
         {
-            using var response = await httpClient.PostAsJsonAsync(chatUri, requestBody, cancellationToken);
+            using var response = await httpClient.PostAsJsonAsync(chatUri, requestBody, chatTestTimeoutCts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 return new ChatTestOutcome
@@ -159,8 +175,8 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
                 };
             }
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var generation = await OllamaClient.ParseChatResponseAsync(stream, thinkDisabled, cancellationToken);
+            await using var stream = await response.Content.ReadAsStreamAsync(chatTestTimeoutCts.Token);
+            var generation = await OllamaClient.ParseChatResponseAsync(stream, thinkDisabled, chatTestTimeoutCts.Token);
             var warnings = new List<string>(generation.Diagnostics);
             var success = generation.ContentReturned && string.Equals(generation.Content.Trim(), "OK", StringComparison.Ordinal);
 
@@ -200,6 +216,16 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
                 ThinkingReturned = true,
                 Message = "Chat test: failure",
                 Warnings = [ex.Message],
+            };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new ChatTestOutcome
+            {
+                Attempted = true,
+                Success = false,
+                Message = "Chat test: failure (timeout)",
+                Warnings = [$"Chat test timed out after {chatTestTimeoutSeconds} seconds."],
             };
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or OperationCanceledException)
@@ -316,6 +342,22 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
     private static string Truncate(string value)
     {
         return value.Length <= 40 ? value : value[..40] + "...";
+    }
+
+    private static int EffectiveTagsTimeoutSeconds(LlmProviderSettings settings)
+    {
+        return Math.Clamp(
+            settings.TimeoutSeconds > 0 ? settings.TimeoutSeconds : DefaultTimeoutSeconds,
+            1,
+            MaxTagsTimeoutSeconds);
+    }
+
+    private static int EffectiveChatTestTimeoutSeconds(LlmProviderSettings settings)
+    {
+        return Math.Clamp(
+            settings.TimeoutSeconds > 0 ? settings.TimeoutSeconds : DefaultTimeoutSeconds,
+            1,
+            MaxChatTestTimeoutSeconds);
     }
 
     private static OllamaConnectionCheckResult Failure(

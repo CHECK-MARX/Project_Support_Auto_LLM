@@ -4,18 +4,37 @@ namespace SupportCaseManager.Ai.Core.Indexing;
 
 public static class ManualDocumentFilter
 {
-    private static readonly HashSet<string> SupportedTextExtensions = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> SupportedDocumentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".txt",
+        ".text",
         ".md",
+        ".markdown",
+        ".csv",
+        ".tsv",
+        ".html",
+        ".htm",
+        ".rst",
+        ".adoc",
+        ".asciidoc",
+        ".pdf",
+        ".docx",
+        ".xlsx",
+        ".pptx",
     };
 
     private static readonly HashSet<string> UnsupportedDocumentExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".pdf",
-        ".docx",
-        ".xlsx",
         ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".gif",
+        ".tif",
+        ".tiff",
+        ".doc",
+        ".xls",
+        ".ppt",
     };
 
     private static readonly HashSet<string> OutOfScopeExtensions = new(StringComparer.OrdinalIgnoreCase)
@@ -52,7 +71,7 @@ public static class ManualDocumentFilter
     public static ManualDocumentFilterResult ClassifyFile(string filePath)
     {
         var extension = NormalizeExtension(Path.GetExtension(filePath));
-        if (SupportedTextExtensions.Contains(extension))
+        if (SupportedDocumentExtensions.Contains(extension))
         {
             return new ManualDocumentFilterResult(ManualDocumentCategory.ImportCandidate, extension, string.Empty);
         }
@@ -62,7 +81,7 @@ public static class ManualDocumentFilter
             return new ManualDocumentFilterResult(
                 ManualDocumentCategory.UnsupportedDocumentFormat,
                 extension,
-                "PDF/DOCX/XLSX/PNG are not imported in the current MVP.");
+                "Legacy Office formats and image-only documents are not imported. Use PDF/DOCX/XLSX/PPTX/HTML/TXT/MD/CSV/TSV.");
         }
 
         if (OutOfScopeExtensions.Contains(extension))

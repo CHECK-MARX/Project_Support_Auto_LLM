@@ -96,6 +96,58 @@ public sealed class FreshnessAnswerGuardTests
         Assert.True(result.Confidence > 0.35);
     }
 
+    [Fact]
+    public async Task GenerateDraftAsync_UsesOfficialDocEvidenceFallbackForFreshnessQuestionWhenLlmRefuses()
+    {
+        var request = new AnswerDraftRequest
+        {
+            InquiryText = "QACの最新リリースと関連する過去対応を確認したいです。",
+            InquiryFocus = new InquiryFocus
+            {
+                FocusText = "QACの最新リリースと関連する過去対応を確認したいです。",
+                IsFreshnessSensitive = true,
+                FreshnessReason = "最新リリースを含むため",
+            },
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "official-1",
+                    SourceType = "OfficialDoc",
+                    Title = "QAC 2026.1 Release Notes",
+                    Text = "公式情報ではQAC 2026.1がリリースされています。",
+                    Score = 0.7,
+                },
+                new SearchSource
+                {
+                    SourceId = "case-1",
+                    SourceType = "PastCaseNote",
+                    Title = "00015391 株式会社サンプル お客様ご相談",
+                    Text = "00015391 株式会社サンプル 佐藤様。QAC 2026.1への更新時はhotfix packを適用し、Validate設定を確認する対応を行いました。",
+                    Score = 0.95,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 8 },
+        };
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "現時点の参照根拠からは、断定できる回答内容を確認できませんでした。",
+              "internalMemo": "",
+              "evidence": [],
+              "confidence": 0.2,
+              "warnings": []
+            }
+            """);
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("QAC 2026.1", result.CustomerReplyDraft);
+        Assert.Contains("Validate", result.CustomerReplyDraft);
+        Assert.Contains("メーカー公式情報で最終確認", result.CustomerReplyDraft);
+        Assert.DoesNotContain("断定できる回答内容を確認できません", result.CustomerReplyDraft);
+        Assert.DoesNotContain(result.Warnings, warning => warning.Contains("OfficialDocなし", StringComparison.Ordinal));
+    }
+
     private static AiAnswerService CreateService(string llmResponse)
     {
         return new AiAnswerService(

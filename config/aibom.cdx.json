@@ -227,7 +227,7 @@
       "type": "data",
       "bom-ref": "ai-data-source:manual",
       "name": "Manual",
-      "description": "Local TXT/MD manual evidence indexed for answer generation.",
+      "description": "Local TXT/MD/PDF/DOCX/XLSX/PPTX/HTML/CSV/TSV manual evidence indexed for answer generation.",
       "scope": "required",
       "properties": [
         {

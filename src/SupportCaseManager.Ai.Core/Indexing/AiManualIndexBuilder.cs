@@ -134,8 +134,8 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
                 try
                 {
-                    var text = await ReadUtf8StrictAsync(filePath, cancellationToken);
-                    var contentClassification = ManualDocumentFilter.ClassifyTextFileContent(filePath, text);
+                    var content = await ManualDocumentTextExtractor.ReadAsync(filePath, cancellationToken);
+                    var contentClassification = ManualDocumentFilter.ClassifyTextFileContent(filePath, content.Text);
                     if (contentClassification.Category == ManualDocumentCategory.ContentExcludedText)
                     {
                         contentExcludedFileCount += 1;
@@ -144,7 +144,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     }
 
                     var fileInfo = new FileInfo(filePath);
-                    var chunks = CreateManualChunks(fileInfo, text).ToList();
+                    var chunks = CreateManualChunks(fileInfo, content).ToList();
                     if (chunks.Count == 0)
                     {
                         emptyFileSkippedCount += 1;
@@ -155,13 +155,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     indexedFileCount += 1;
                     indexedManuals.AddRange(chunks);
                 }
-                catch (DecoderFallbackException)
-                {
-                    readFailureCount += 1;
-                    errorCount += 1;
-                    warnings.Add($"Skipped manual file because it is not valid UTF-8: {filePath}");
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     readFailureCount += 1;
                     errorCount += 1;
@@ -266,23 +260,18 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             : 1;
     }
 
-    private static async Task<string> ReadUtf8StrictAsync(string filePath, CancellationToken cancellationToken)
+    private static IEnumerable<AiIndexedManual> CreateManualChunks(
+        FileInfo fileInfo,
+        ManualDocumentContent content)
     {
-        var bytes = await File.ReadAllBytesAsync(filePath, cancellationToken);
-        var text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true).GetString(bytes);
-        return text.Length > 0 && text[0] == '\uFEFF'
-            ? text[1..]
-            : text;
-    }
-
-    private static IEnumerable<AiIndexedManual> CreateManualChunks(FileInfo fileInfo, string text)
-    {
+        var text = content.Text;
         if (string.IsNullOrWhiteSpace(text))
         {
             yield break;
         }
 
-        var sections = IsMarkdown(fileInfo)
+        var isMarkdown = IsMarkdown(fileInfo, content.DocumentType);
+        var sections = isMarkdown
             ? SplitMarkdownSections(text).ToList()
             : [new ManualSection(string.Empty, text)];
 
@@ -302,7 +291,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     FilePath = fileInfo.FullName,
                     FileName = fileInfo.Name,
                     Title = BuildTitle(fileInfo, section.SectionTitle),
-                    DocumentType = IsMarkdown(fileInfo) ? "Markdown" : "Text",
+                    DocumentType = content.DocumentType,
                     SectionTitle = section.SectionTitle,
                     Text = chunk,
                     LastModifiedAt = fileInfo.LastWriteTime,
@@ -312,9 +301,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
     }
 
-    private static bool IsMarkdown(FileInfo fileInfo)
+    private static bool IsMarkdown(FileInfo fileInfo, string documentType)
     {
-        return string.Equals(fileInfo.Extension, ".md", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(documentType, "Markdown", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileInfo.Extension, ".md", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fileInfo.Extension, ".markdown", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<ManualSection> SplitMarkdownSections(string text)

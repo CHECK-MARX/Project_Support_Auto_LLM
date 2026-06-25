@@ -70,7 +70,22 @@ public sealed class ManualDocumentFilterTests
     [InlineData(".pdf")]
     [InlineData(".docx")]
     [InlineData(".xlsx")]
+    [InlineData(".pptx")]
+    [InlineData(".html")]
+    [InlineData(".csv")]
+    public void ClassifyFile_ImportsExtractableDocumentFormats(string extension)
+    {
+        var result = ManualDocumentFilter.ClassifyFile($@"D:\Manuals\manual{extension}");
+
+        Assert.Equal(ManualDocumentCategory.ImportCandidate, result.Category);
+    }
+
+    [Theory]
     [InlineData(".png")]
+    [InlineData(".jpg")]
+    [InlineData(".doc")]
+    [InlineData(".xls")]
+    [InlineData(".ppt")]
     public void ClassifyFile_CountsUnsupportedDocumentFormats(string extension)
     {
         var result = ManualDocumentFilter.ClassifyFile($@"D:\Manuals\manual{extension}");

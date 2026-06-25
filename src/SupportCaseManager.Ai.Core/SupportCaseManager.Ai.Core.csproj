@@ -10,6 +10,10 @@
     <EmbeddedResource Include="Prompts\support-answer-output-prompt.md" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="PdfPig" Version="0.1.14" />
+  </ItemGroup>
+
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
