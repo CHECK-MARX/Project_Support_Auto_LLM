@@ -162,6 +162,7 @@
 
                             <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
                                 <Button x:Name="NoteOpenButton" Content="ノートを開く" Click="OnNoteOpen" />
+                                <Button x:Name="NotePreviewAllButton" Content="ノートをプレビュー" Margin="8,0,0,0" Click="OnNotePreviewAll" />
                                 <Button x:Name="NotePreviewButton" Content="プレビュー" Margin="8,0,0,0" Click="OnNotePreviewLatest" />
                                 <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
                                 <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
@@ -447,6 +448,13 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="開く" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="開く" Padding="6,2" Click="OnClosedCaseOpen" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>
@@ -468,6 +476,13 @@
                                     <DataGridTemplateColumn.CellTemplate>
                                         <DataTemplate>
                                             <Button Content="戻す" Padding="6,2" Click="OnClosedFolderRestore" Tag="{Binding}" />
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="開く" Width="80">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <Button Content="開く" Padding="6,2" Click="OnClosedCaseOpen" Tag="{Binding}" />
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
