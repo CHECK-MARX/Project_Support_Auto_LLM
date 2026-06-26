@@ -3451,6 +3451,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnClosedCaseOpen(object sender, RoutedEventArgs e)
+    {
+        if (sender is System.Windows.Controls.Button button && button.Tag is ClosedCaseEntry entry)
+        {
+            NavigateToClosedCase(entry);
+        }
+    }
+
     private void OnStaleCaseRowDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (StaleCaseGrid.SelectedItem is StaleCaseEntry entry)
@@ -3475,6 +3483,44 @@ public partial class MainWindow : Window
     private void NavigateToCase(OpenCaseEntry entry, bool focusStatus)
     {
         NavigateToCase(entry.ProductName, entry.FolderPath, entry.SupportNumber, focusStatus);
+    }
+
+    private void NavigateToClosedCase(ClosedCaseEntry entry)
+    {
+        var targetTab = MainTabControl.Items
+            .OfType<TabItem>()
+            .FirstOrDefault(item => item.Tag is ProductProfile profile &&
+                                    string.Equals(profile.Name, entry.ProductName, StringComparison.Ordinal));
+
+        if (targetTab == null)
+        {
+            MessageBox.Show(this, $"対象プロダクトが見つかりません: {entry.ProductName}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(entry.FolderPath) || !Directory.Exists(entry.FolderPath))
+        {
+            MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        MainTabControl.SelectedItem = targetTab;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            var record = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(entry.FolderPath));
+            if (record == null)
+            {
+                MessageBox.Show(this, "案件情報の解析に失敗しました。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            SetCurrentCase(record);
+            NoteEditorTextBox.Clear();
+            _isNotePreviewActive = false;
+            _notePreviewBody = string.Empty;
+            _viewModel.StatusMessage = "クローズ案件を開きました。";
+        }), DispatcherPriority.Background);
     }
 
     private void NavigateToCase(string productName, string folderPath, string supportNumber, bool focusStatus)
@@ -4000,11 +4046,22 @@ public partial class MainWindow : Window
             return;
         }
 
+        OpenCaseFolder(_currentCase.FolderPath);
+    }
+
+    private void OpenCaseFolder(string folderPath)
+    {
+        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        {
+            MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
         try
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = _currentCase.FolderPath,
+                FileName = folderPath,
                 UseShellExecute = true,
             });
         }
@@ -4559,8 +4616,11 @@ public partial class MainWindow : Window
             return;
         }
 
-        NoteEditorTextBox.Text = BuildPreviewAll(text);
-        _viewModel.StatusMessage = "プレビューを表示しました。";
+        var preview = BuildPreviewAll(text);
+        _notePreviewBody = preview;
+        _isNotePreviewActive = true;
+        NoteEditorTextBox.Text = preview;
+        _viewModel.StatusMessage = "ノート全体のプレビューを表示しました。";
     }
 
     private void OnNotePreviewLatest(object sender, RoutedEventArgs e)

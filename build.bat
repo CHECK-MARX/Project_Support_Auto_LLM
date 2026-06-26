@@ -4,7 +4,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "SOLUTION=SupportCaseManager.slnx"
-set "CONFIG=Debug"
+set "CONFIG=Release"
 set "STOP_RUNNING=1"
 
 :parse_args
@@ -61,6 +61,8 @@ if errorlevel 1 goto :failed
 
 echo.
 echo Build succeeded. Configuration: %CONFIG%
+echo Main app:
+echo   %CD%\src\SupportCaseManager.App\bin\%CONFIG%\net10.0-windows\SupportCaseManager.App.exe
 exit /b 0
 
 :check_running_apps
@@ -74,6 +76,7 @@ exit /b 0
 
 :usage
 echo Usage: build.bat [Debug^|Release] [--no-stop-running]
+echo Default configuration: Release
 echo.
 echo Examples:
 echo   build.bat

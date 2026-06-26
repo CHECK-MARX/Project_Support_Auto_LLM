@@ -9,9 +9,14 @@ public sealed class NotePreviewDialog : Window
         Title = "本文プレビュー";
         Width = 560;
         Height = 420;
+        MinWidth = 360;
+        MinHeight = 260;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        var root = new System.Windows.Controls.StackPanel { Margin = new Thickness(16) };
+        var root = new System.Windows.Controls.Grid { Margin = new Thickness(16) };
+        root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new System.Windows.Controls.RowDefinition { Height = GridLength.Auto });
+
         var textBox = new System.Windows.Controls.TextBox
         {
             Text = body,
@@ -20,8 +25,10 @@ public sealed class NotePreviewDialog : Window
             TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto,
-            Height = 300
+            HorizontalAlignment = System.Windows.HorizontalAlignment.Stretch,
+            VerticalAlignment = System.Windows.VerticalAlignment.Stretch
         };
+        System.Windows.Controls.Grid.SetRow(textBox, 0);
         root.Children.Add(textBox);
 
         var buttonRow = new System.Windows.Controls.StackPanel
@@ -30,6 +37,7 @@ public sealed class NotePreviewDialog : Window
             HorizontalAlignment = System.Windows.HorizontalAlignment.Right,
             Margin = new Thickness(0, 12, 0, 0)
         };
+        System.Windows.Controls.Grid.SetRow(buttonRow, 1);
 
         var copyButton = new System.Windows.Controls.Button { Content = "コピー", Width = 80 };
         var closeButton = new System.Windows.Controls.Button { Content = "閉じる", Width = 80, Margin = new Thickness(8, 0, 0, 0) };
