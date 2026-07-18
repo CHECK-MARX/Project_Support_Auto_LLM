@@ -127,7 +127,7 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
         }
 
         return !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase)
-            || !string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase);
+            || !IsPastSource(source.SourceType);
     }
 
     private static int SourcePriority(string? sourceType, IReadOnlyList<string> questionTypes)
@@ -137,15 +137,29 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             return 0;
         }
 
-        if (questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) ||
-            questionTypes.Contains(QuestionTypes.TroubleshootingQuestion, StringComparer.OrdinalIgnoreCase))
+        if (questionTypes.Contains(QuestionTypes.TroubleshootingQuestion, StringComparer.OrdinalIgnoreCase))
+        {
+            return sourceType switch
+            {
+                "ExactPastAnswer" => 1,
+                "Manual" => 2,
+                "OfficialDoc" => 3,
+                "PastAnswer" => 4,
+                "PastCaseNote" => 5,
+                _ => 6,
+            };
+        }
+
+        if (questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase))
         {
             return sourceType switch
             {
                 "Manual" => 1,
                 "OfficialDoc" => 2,
-                "PastCaseNote" => 3,
-                _ => 4,
+                "ExactPastAnswer" => 3,
+                "PastAnswer" => 4,
+                "PastCaseNote" => 5,
+                _ => 6,
             };
         }
 
@@ -153,9 +167,16 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
         {
             "OfficialDoc" => 1,
             "Manual" => 2,
-            "PastCaseNote" => 3,
-            _ => 4,
+            "ExactPastAnswer" => 3,
+            "PastAnswer" => 4,
+            "PastCaseNote" => 5,
+            _ => 6,
         };
+    }
+
+    private static bool IsPastSource(string? sourceType)
+    {
+        return sourceType is "ExactPastAnswer" or "PastAnswer" or "PastCaseNote";
     }
 
     private static string NormalizeUrl(string value) => value.Trim().TrimEnd('/');

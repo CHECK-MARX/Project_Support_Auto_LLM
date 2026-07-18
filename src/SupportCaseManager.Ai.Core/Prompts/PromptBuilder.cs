@@ -142,6 +142,12 @@ public sealed class PromptBuilder : IPromptBuilder
 
         builder.AppendLine("# 参照根拠");
         var maxEvidenceItems = Math.Max(0, request.Settings.MaxEvidenceItems);
+        if (request.Sources.Any(static source => string.Equals(source.SourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase)))
+        {
+            builder.AppendLine("以下のExactPastAnswerは、同一またはほぼ同一の問い合わせに対して過去に実際に使用した回答です。");
+            builder.AppendLine("技術的内容を変更せず、今回のお客様向けに必要な範囲だけ整えてください。");
+        }
+
         foreach (var source in request.Sources.Take(maxEvidenceItems))
         {
             builder.AppendLine($"## sourceId: {source.SourceId}");

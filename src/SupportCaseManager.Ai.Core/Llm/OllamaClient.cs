@@ -61,6 +61,12 @@ public sealed class OllamaClient : ILlmClient
             throw new ArgumentNullException(nameof(settings));
         }
 
+        if (string.IsNullOrWhiteSpace(settings.ChatModel))
+        {
+            throw new InvalidOperationException(
+                "Ollama回答モデルが未設定です。利用可能モデルを取得してから回答モデルを選択してください。");
+        }
+
         var endpoint = settings.Endpoint?.Trim() ?? string.Empty;
         if (!TryBuildChatUri(endpoint, out var uri))
         {

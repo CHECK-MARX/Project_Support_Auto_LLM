@@ -7,6 +7,15 @@ public interface IAiCaseIndexBuilder
         string aiIndexFolder,
         CancellationToken cancellationToken = default);
 
+    Task<AiCaseIndexBuildResult> BuildForProductAsync(
+        string sourceFolder,
+        string aiIndexFolder,
+        string productName,
+        CancellationToken cancellationToken = default)
+    {
+        return BuildAsync(sourceFolder, aiIndexFolder, cancellationToken);
+    }
+
     Task<AiCaseIndexBuildResult> BuildIncrementalAsync(
         string sourceFolder,
         string aiIndexFolder,
@@ -14,5 +23,15 @@ public interface IAiCaseIndexBuilder
         CancellationToken cancellationToken = default)
     {
         return BuildAsync(sourceFolder, aiIndexFolder, cancellationToken);
+    }
+
+    Task<AiCaseIndexBuildResult> BuildIncrementalForProductAsync(
+        string sourceFolder,
+        string aiIndexFolder,
+        string productName,
+        bool forceRebuild = false,
+        CancellationToken cancellationToken = default)
+    {
+        return BuildIncrementalAsync(sourceFolder, aiIndexFolder, forceRebuild, cancellationToken);
     }
 }

@@ -167,9 +167,16 @@ public sealed class EmbeddingIndexUpdater
         var cases = await ReadJsonAsync<AiIndexDocument>(Path.Combine(productIndexFolder, AiCaseIndexBuilder.IndexFileName), cancellationToken);
         var manuals = await ReadJsonAsync<AiManualIndexDocument>(Path.Combine(productIndexFolder, AiManualIndexBuilder.IndexFileName), cancellationToken);
         var official = await ReadJsonAsync<AiOfficialDocumentIndexDocument>(Path.Combine(productIndexFolder, AiOfficialDocumentIndexBuilder.IndexFileName), cancellationToken);
+        var answerPairs = await ReadJsonAsync<CaseAnswerPairIndexDocument>(Path.Combine(productIndexFolder, CaseAnswerPairIndexDocument.FileName), cancellationToken);
         sources.AddRange(cases?.Notes.Select(note => CreateSource(note.Id, "PastCaseNote", productName, note.Title, note.Text)) ?? []);
         sources.AddRange(manuals?.Manuals.Select(manual => CreateSource(manual.Id, "Manual", productName, manual.Title, manual.Text)) ?? []);
         sources.AddRange(official?.Documents.Select(document => CreateSource(document.Id, "OfficialDoc", productName, document.Title, document.Text)) ?? []);
+        sources.AddRange(answerPairs?.Pairs.Select(pair => CreateSource(
+            pair.Id,
+            "ExactPastAnswer",
+            string.IsNullOrWhiteSpace(pair.ProductName) ? productName : pair.ProductName,
+            pair.QuestionText,
+            pair.CustomerReplyText)) ?? []);
         return sources
             .GroupBy(SourceKey, StringComparer.Ordinal)
             .Select(static group => group.First())

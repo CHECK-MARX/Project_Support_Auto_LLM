@@ -139,6 +139,7 @@ public sealed class MainViewModelManualSearchTests
         var services = CreateViewModel([CreateManualSource()]);
         services.ViewModel.LlmProvider = "Fake";
         services.ViewModel.ChatModel = "fake-model";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -155,6 +156,7 @@ public sealed class MainViewModelManualSearchTests
         var services = CreateViewModel([CreateManualSource()]);
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen2.5:3b";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -173,6 +175,7 @@ public sealed class MainViewModelManualSearchTests
             answerService: new FailingAnswerService(new InvalidOperationException("ollama failed")));
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen2.5:3b";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -183,6 +186,32 @@ public sealed class MainViewModelManualSearchTests
         Assert.Contains("failed", services.ViewModel.LastOperationResult);
         Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
         Assert.Equal(1, services.Logger.ErrorCount);
+    }
+
+    [Fact]
+    public async Task PastAnswerFromAnotherProduct_IsShownButCannotBeAppliedAutomatically()
+    {
+        var crossProductAnswer = new SearchSource
+        {
+            SourceId = "checkmarx-answer",
+            SourceType = "ExactPastAnswer",
+            ProductName = "Checkmarx",
+            SupportNumber = "00009999",
+            Title = "過去回答",
+            Text = "別製品の過去回答です。",
+            Score = 1,
+            MatchKind = PastAnswerMatchKinds.Exact,
+        };
+        var services = CreateViewModel([], crossProductAnswers: [crossProductAnswer]);
+        var replyBeforeApply = services.ViewModel.CustomerReplyDraft;
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchPastCasesAsync");
+        services.ViewModel.ApplyPastAnswerCommand.Execute(null);
+
+        Assert.Contains("Checkmarx", services.ViewModel.PastAnswerCandidateText, StringComparison.Ordinal);
+        Assert.Contains("自動採用しません", services.ViewModel.PastAnswerCandidateText, StringComparison.Ordinal);
+        Assert.Equal(replyBeforeApply, services.ViewModel.CustomerReplyDraft);
+        Assert.Equal("NeedsConfiguration", services.ViewModel.GenerationState);
     }
 
     [Fact]
@@ -228,7 +257,8 @@ public sealed class MainViewModelManualSearchTests
         IReadOnlyList<SearchSource> manualResults,
         Exception? manualSearchException = null,
         IAiAnswerService? answerService = null,
-        ILlmClientFactory? llmClientFactory = null)
+        ILlmClientFactory? llmClientFactory = null,
+        IReadOnlyList<SearchSource>? crossProductAnswers = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var viewModel = new MainViewModel(
@@ -240,7 +270,7 @@ public sealed class MainViewModelManualSearchTests
             new FakeProductScopedIndexService(),
             new FakeCaseKeywordSearcher(),
             new FakeManualKeywordSearcher(manualResults, manualSearchException),
-            new FakeProductScopedSearchService(manualResults, manualSearchException),
+            new FakeProductScopedSearchService(manualResults, manualSearchException, crossProductAnswers),
             new InquiryFocusExtractor(),
             new FakeOllamaConnectionChecker(),
             new FakeSupportToolSettingsReader(),
@@ -274,6 +304,16 @@ public sealed class MainViewModelManualSearchTests
             FilePath = @"D:\Manuals\license_error_manual.md",
             Score = 1.0,
         };
+    }
+
+    private static void ConfigureProduct(MainViewModel viewModel, string productName)
+    {
+        viewModel.Products.Add(new ProductKnowledgeViewModel
+        {
+            ProductName = productName,
+            IsEnabled = true,
+        });
+        viewModel.ProductName = productName;
     }
 
     private static SearchSource CreateOfficialSource()
@@ -451,11 +491,16 @@ public sealed class MainViewModelManualSearchTests
     {
         private readonly IReadOnlyList<SearchSource> manualResults;
         private readonly Exception? manualSearchException;
+        private readonly IReadOnlyList<SearchSource> crossProductAnswers;
 
-        public FakeProductScopedSearchService(IReadOnlyList<SearchSource> manualResults, Exception? manualSearchException)
+        public FakeProductScopedSearchService(
+            IReadOnlyList<SearchSource> manualResults,
+            Exception? manualSearchException,
+            IReadOnlyList<SearchSource>? crossProductAnswers)
         {
             this.manualResults = manualResults;
             this.manualSearchException = manualSearchException;
+            this.crossProductAnswers = crossProductAnswers ?? [];
         }
 
         public Task<IReadOnlyList<SearchSource>> SearchPastCasesAsync(
@@ -491,6 +536,16 @@ public sealed class MainViewModelManualSearchTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SearchSource>>([]);
+        }
+
+        public Task<IReadOnlyList<SearchSource>> SearchPastAnswersAcrossProductsAsync(
+            IReadOnlyList<ProductKnowledgeSettings> products,
+            string aiIndexFolder,
+            string query,
+            int maxResults = 8,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(crossProductAnswers);
         }
 
         public Task<IReadOnlyList<SearchSource>> SearchAllAsync(

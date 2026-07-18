@@ -30,6 +30,10 @@ public sealed record class AiCaseIndexBuildResult
 
     public int UnchangedCaseCount { get; init; }
 
+    public int IndexedAnswerPairCount { get; init; }
+
+    public string AnswerPairIndexFilePath { get; init; } = string.Empty;
+
     public string IndexFilePath { get; init; } = string.Empty;
 
     public IReadOnlyList<string> Warnings { get; init; } = [];

@@ -45,4 +45,13 @@ public sealed record class SearchSource
 
     [JsonPropertyName("exclusionReason")]
     public string ExclusionReason { get; init; } = string.Empty;
+
+    [JsonPropertyName("questionText")]
+    public string? QuestionText { get; init; }
+
+    [JsonPropertyName("internalMemo")]
+    public string? InternalMemo { get; init; }
+
+    [JsonPropertyName("matchKind")]
+    public string? MatchKind { get; init; }
 }

@@ -38,7 +38,11 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
     {
         ArgumentNullException.ThrowIfNull(product);
         var productIndexFolder = GetProductIndexFolder(aiIndexFolder, product.ProductName);
-        return await caseIndexBuilder.BuildAsync(product.CloseFolder, productIndexFolder, cancellationToken);
+        return await caseIndexBuilder.BuildForProductAsync(
+            product.CloseFolder,
+            productIndexFolder,
+            product.ProductName,
+            cancellationToken);
     }
 
     public async Task<AiManualIndexBuildResult> BuildManualIndexAsync(
@@ -213,9 +217,10 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
 
             if (scope.HasFlag(KnowledgeUpdateScope.PastCases) && !string.IsNullOrWhiteSpace(product.CloseFolder))
             {
-                caseResult = await caseIndexBuilder.BuildIncrementalAsync(
+                caseResult = await caseIndexBuilder.BuildIncrementalForProductAsync(
                     product.CloseFolder,
                     productIndexFolder,
+                    product.ProductName,
                     requiresFullRebuild,
                     cancellationToken);
             }

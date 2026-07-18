@@ -23,7 +23,7 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
                 <TextBlock Grid.Column="1"
-                           Text="{DynamicResource BusyLabel}"
+                           Text="{Binding GenerationState}"
                            Foreground="{DynamicResource AppMutedForegroundBrush}" />
                 <TextBlock Grid.Column="2"
                            Text="{Binding IsBusy}"
@@ -713,6 +713,22 @@
                             </DockPanel>
                         </GroupBox>
 
+                        <GroupBox Header="過去回答候補">
+                            <StackPanel>
+                                <TextBox Text="{Binding PastAnswerCandidateText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="110" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="この回答を使用" Command="{Binding UsePastAnswerCommand}" />
+                                    <Button Content="回答案へ反映" Command="{Binding ApplyPastAnswerCommand}" />
+                                    <Button Content="LLMで文章を整える" Command="{Binding PolishPastAnswerCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
                         <GroupBox Header="{DynamicResource SelectedEvidencePreviewHeader}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -939,6 +955,15 @@
                                 <TextBlock Grid.Row="3" Text="{DynamicResource ErrorLabel}" />
                                 <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ErrorText}" Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" />
                             </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="RAG / 生成診断">
+                            <TextBox Text="{Binding RagDiagnosticsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="180" />
                         </GroupBox>
 
                         <StackPanel Orientation="Horizontal">

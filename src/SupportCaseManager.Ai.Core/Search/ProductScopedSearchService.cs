@@ -12,19 +12,22 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
     private readonly IAiOfficialDocumentKeywordSearcher officialDocumentKeywordSearcher;
     private readonly IQuestionClassifier questionClassifier;
     private readonly IOllamaEmbeddingClient embeddingClient;
+    private readonly ICaseAnswerPairSearcher answerPairSearcher;
 
     public ProductScopedSearchService(
         IAiCaseKeywordSearcher caseKeywordSearcher,
         IAiManualKeywordSearcher manualKeywordSearcher,
         IAiOfficialDocumentKeywordSearcher? officialDocumentKeywordSearcher = null,
         IQuestionClassifier? questionClassifier = null,
-        IOllamaEmbeddingClient? embeddingClient = null)
+        IOllamaEmbeddingClient? embeddingClient = null,
+        ICaseAnswerPairSearcher? answerPairSearcher = null)
     {
         this.caseKeywordSearcher = caseKeywordSearcher ?? throw new ArgumentNullException(nameof(caseKeywordSearcher));
         this.manualKeywordSearcher = manualKeywordSearcher ?? throw new ArgumentNullException(nameof(manualKeywordSearcher));
         this.officialDocumentKeywordSearcher = officialDocumentKeywordSearcher ?? new AiOfficialDocumentKeywordSearcher();
         this.questionClassifier = questionClassifier ?? new QuestionClassifier();
         this.embeddingClient = embeddingClient ?? new OllamaEmbeddingClient();
+        this.answerPairSearcher = answerPairSearcher ?? new CaseAnswerPairSearcher();
     }
 
     public async Task<IReadOnlyList<SearchSource>> SearchPastCasesAsync(
@@ -68,6 +71,47 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             maxResults,
             cancellationToken);
         return AttachProductName(results, product.ProductName);
+    }
+
+    public async Task<IReadOnlyList<SearchSource>> SearchPastAnswersAsync(
+        ProductKnowledgeSettings product,
+        string aiIndexFolder,
+        string query,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        var results = await answerPairSearcher.SearchAsync(productIndexFolder, query, maxResults, cancellationToken);
+        return AttachProductName(results, product.ProductName);
+    }
+
+    public async Task<IReadOnlyList<SearchSource>> SearchPastAnswersAcrossProductsAsync(
+        IReadOnlyList<ProductKnowledgeSettings> products,
+        string aiIndexFolder,
+        string query,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        var tasks = products
+            .Where(static product => product.IsEnabled && !string.IsNullOrWhiteSpace(product.ProductName))
+            .Select(product => SearchPastAnswersAsync(product, aiIndexFolder, query, maxResults, cancellationToken))
+            .ToList();
+        if (tasks.Count == 0)
+        {
+            return [];
+        }
+
+        await Task.WhenAll(tasks);
+        return tasks.SelectMany(static task => task.Result)
+            .Where(static source => string.Equals(
+                source.SourceType,
+                "ExactPastAnswer",
+                StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(static source => source.Score ?? 0)
+            .ThenByDescending(static source => source.RetrievedAt)
+            .Take(maxResults)
+            .ToList();
     }
 
     public Task<IReadOnlyList<SearchSource>> SearchAllAsync(
@@ -125,10 +169,14 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var pastCasesTask = includePastCases
             ? SearchPastCasesAsync(product, aiIndexFolder, query, perTypeLimit, cancellationToken)
             : Task.FromResult<IReadOnlyList<SearchSource>>([]);
-        await Task.WhenAll(officialTask, manualsTask, pastCasesTask);
+        var pastAnswersTask = includePastCases
+            ? SearchPastAnswersAsync(product, aiIndexFolder, query, perTypeLimit, cancellationToken)
+            : Task.FromResult<IReadOnlyList<SearchSource>>([]);
+        await Task.WhenAll(officialTask, manualsTask, pastCasesTask, pastAnswersTask);
 
         var combined = officialTask.Result
             .Concat(manualsTask.Result)
+            .Concat(pastAnswersTask.Result)
             .Concat(pastCasesTask.Result)
             .Where(source => string.IsNullOrWhiteSpace(source.ProductName) ||
                 string.Equals(source.ProductName, product.ProductName, StringComparison.OrdinalIgnoreCase))
@@ -176,7 +224,9 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             {
                 "OfficialDoc" => 0,
                 "Manual" => 1,
-                "PastCaseNote" => 2,
+                "ExactPastAnswer" => 3,
+                "PastAnswer" => 4,
+                "PastCaseNote" => 5,
                 _ => 3,
             };
         }
@@ -187,7 +237,9 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             {
                 "OfficialDoc" => 0,
                 "Manual" => 1,
-                "PastCaseNote" => 2,
+                "ExactPastAnswer" => 2,
+                "PastAnswer" => 3,
+                "PastCaseNote" => 4,
                 _ => 3,
             };
         }
@@ -198,8 +250,24 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             {
                 "OfficialDoc" => 0,
                 "Manual" => 1,
-                "PastCaseNote" => 3,
+                "ExactPastAnswer" => 2,
+                "PastAnswer" => 3,
+                "PastCaseNote" => 4,
                 _ => 4,
+            };
+        }
+
+        var troubleshooting = questionTypes.Contains(QuestionTypes.TroubleshootingQuestion, StringComparer.OrdinalIgnoreCase);
+        if (troubleshooting)
+        {
+            return sourceType switch
+            {
+                "ExactPastAnswer" => 0,
+                "Manual" => 1,
+                "OfficialDoc" => 2,
+                "PastAnswer" => 3,
+                "PastCaseNote" => 4,
+                _ => 5,
             };
         }
 
@@ -207,8 +275,10 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         {
             "Manual" => 0,
             "OfficialDoc" => 1,
-            "PastCaseNote" => 2,
-            _ => 3,
+            "ExactPastAnswer" => 2,
+            "PastAnswer" => 3,
+            "PastCaseNote" => 4,
+            _ => 5,
         };
     }
 }
