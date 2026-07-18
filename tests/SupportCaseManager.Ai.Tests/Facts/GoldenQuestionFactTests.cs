@@ -47,6 +47,17 @@ public sealed class GoldenQuestionFactTests
         Assert.Equal("SAST 9.7.4 HF2", classification.CurrentInstalledVersion);
     }
 
+    [Theory]
+    [InlineData("How to configure the license server?", QuestionTypes.HowToQuestion)]
+    [InlineData("Is this feature supported?", QuestionTypes.FeatureAvailabilityQuestion)]
+    [InlineData("The application throws an exception and timeout.", QuestionTypes.TroubleshootingQuestion)]
+    public void QuestionClassifier_ClassifiesOperationalQuestions(string inquiry, string expectedType)
+    {
+        var classification = new QuestionClassifier().Classify(inquiry);
+
+        Assert.Contains(expectedType, classification.QuestionTypes);
+    }
+
     [Fact]
     public void OfficialDocumentFactExtractor_ExtractsVersionFacts()
     {
@@ -320,6 +331,36 @@ public sealed class GoldenQuestionFactTests
         Assert.Contains("CxSAST: 9.7.0", messages.UserPrompt);
         Assert.Contains("Engine Pack: 9.7.6", messages.UserPrompt);
         Assert.Contains("Hotfix: HF10", messages.UserPrompt);
+        Assert.Contains("LatestSastVersion: 9.7.0", messages.UserPrompt);
+        Assert.Contains("LatestEnginePackVersion: 9.7.6", messages.UserPrompt);
+        Assert.Contains("LatestHotfixVersion: HF10", messages.UserPrompt);
+    }
+
+    [Theory]
+    [InlineData("qwen3:8b")]
+    [InlineData("gemma4:26b")]
+    [InlineData("gemma4:31b")]
+    public async Task GoldenLatestVersionFacts_DoNotDependOnAnswerModel(string modelName)
+    {
+        using var temp = new TempDirectory();
+        await WriteOfficialIndexAsync(temp.Path, "Checkmarx");
+        var factResolution = new FactResolver().Resolve(
+            "Checkmarx",
+            temp.Path,
+            "現在のCxSAST最新バージョンは何でしょうか？EP、HFの最新バージョンも教えてください。");
+        var request = CreateRequest(factResolution) with
+        {
+            Settings = new AiAssistantSettings
+            {
+                LlmProvider = new LlmProviderSettings { ChatModel = modelName },
+            },
+        };
+
+        var messages = new PromptBuilder().Build(request);
+
+        AssertFact(factResolution, FactKeys.LatestSastVersion, "9.7.0");
+        AssertFact(factResolution, FactKeys.LatestEnginePackVersion, "9.7.6");
+        AssertFact(factResolution, FactKeys.LatestHotfixVersion, "HF10");
         Assert.Contains("LatestSastVersion: 9.7.0", messages.UserPrompt);
         Assert.Contains("LatestEnginePackVersion: 9.7.6", messages.UserPrompt);
         Assert.Contains("LatestHotfixVersion: HF10", messages.UserPrompt);

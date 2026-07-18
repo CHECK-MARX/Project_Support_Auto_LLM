@@ -28,6 +28,14 @@ public sealed record class AiManualIndexBuildResult
 
     public int ErrorCount { get; init; }
 
+    public int AddedFileCount { get; init; }
+
+    public int ChangedFileCount { get; init; }
+
+    public int DeletedFileCount { get; init; }
+
+    public int UnchangedFileCount { get; init; }
+
     public string IndexFilePath { get; init; } = string.Empty;
 
     public IReadOnlyDictionary<string, int> UnsupportedExtensionCounts { get; init; } =

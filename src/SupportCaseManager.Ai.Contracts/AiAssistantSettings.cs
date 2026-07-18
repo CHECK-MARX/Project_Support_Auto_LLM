@@ -66,4 +66,10 @@ public sealed record class AiAssistantSettings
 
     [JsonPropertyName("selectedProductName")]
     public string? SelectedProductName { get; init; }
+
+    [JsonPropertyName("answerQualityMode")]
+    public string AnswerQualityMode { get; init; } = AnswerQualityModes.Custom;
+
+    [JsonPropertyName("modelCapabilityProfiles")]
+    public IReadOnlyList<ModelCapabilityProfile> ModelCapabilityProfiles { get; init; } = [];
 }

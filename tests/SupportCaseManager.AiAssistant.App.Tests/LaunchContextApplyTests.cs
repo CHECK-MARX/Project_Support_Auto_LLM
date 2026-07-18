@@ -201,14 +201,75 @@ public sealed class LaunchContextApplyTests
     }
 
     [Fact]
-    public async Task InitializeFromCommandLineAsync_NoContextKeepsNormalStartup()
+    public async Task InitializeFromCommandLineAsync_NoContextLoadsSavedSettings()
     {
         var services = CreateViewModel(context: CreateContext(), settings: CreateSettings());
 
         await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
 
         Assert.Equal(0, services.LaunchReader.ReadCount);
-        Assert.Equal(0, services.SettingsStore.LoadCount);
+        Assert.Equal(1, services.SettingsStore.LoadCount);
+    }
+
+    [Fact]
+    public async Task SettingsChange_IsSavedAutomaticallyAfterDebounce()
+    {
+        var services = CreateViewModel(context: null, settings: CreateSettings());
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        services.ViewModel.UseDarkMode = !services.ViewModel.UseDarkMode;
+        await Task.Delay(650);
+
+        Assert.True(services.SettingsStore.SaveCount >= 1);
+        Assert.NotNull(services.SettingsStore.SavedSettings);
+        Assert.Equal(services.ViewModel.UseDarkMode, services.SettingsStore.SavedSettings.UseDarkMode);
+    }
+
+    [Fact]
+    public async Task ProductSettingChange_IsSavedAutomaticallyAfterDebounce()
+    {
+        var services = CreateViewModel(context: null, settings: CreateSettings());
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+        var product = Assert.IsType<ProductKnowledgeViewModel>(services.ViewModel.SelectedProductKnowledge);
+
+        product.IsEnabled = false;
+        await Task.Delay(650);
+
+        Assert.True(services.SettingsStore.SaveCount >= 1);
+        Assert.False(Assert.Single(services.SettingsStore.SavedSettings!.Products).IsEnabled);
+    }
+
+    [Fact]
+    public async Task StandardQualityMode_AppliesGemmaProfileBeforeOllamaModelListLoads()
+    {
+        var services = CreateViewModel(context: null, settings: CreateSettings());
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        services.ViewModel.AnswerQualityMode = AnswerQualityModes.Standard;
+
+        Assert.Equal("gemma4:26b", services.ViewModel.ChatModel);
+        Assert.Contains("gemma4:26b", services.ViewModel.AvailableModels);
+        Assert.Equal(800, services.ViewModel.MaxOutputTokens);
+        Assert.Equal(600, services.ViewModel.TimeoutSeconds);
+        Assert.Equal(8000, services.ViewModel.MaxPromptChars);
+        Assert.Equal(3, services.ViewModel.MaxEvidenceItems);
+    }
+
+    [Fact]
+    public async Task InitializeFromCommandLineAsync_RestoresQualityModeAndSelectedModel()
+    {
+        var settings = CreateSettings() with
+        {
+            AnswerQualityMode = AnswerQualityModes.Quality,
+            LlmProvider = new LlmProviderSettings { ChatModel = "gemma4:31b" },
+        };
+        var services = CreateViewModel(context: null, settings: settings);
+
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        Assert.Equal(AnswerQualityModes.Quality, services.ViewModel.AnswerQualityMode);
+        Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+        Assert.Contains("gemma4:31b", services.ViewModel.AvailableModels);
     }
 
     private static TestServices CreateViewModel(
@@ -318,6 +379,8 @@ public sealed class LaunchContextApplyTests
 
         public int LoadCount { get; private set; }
 
+        public int SaveCount { get; private set; }
+
         public AiAssistantSettings? SavedSettings { get; private set; }
 
         public Task<AiAssistantSettings> LoadAsync(string aiDataFolder, CancellationToken cancellationToken = default)
@@ -328,6 +391,7 @@ public sealed class LaunchContextApplyTests
 
         public Task SaveAsync(AiAssistantSettings settings, CancellationToken cancellationToken = default)
         {
+            SaveCount += 1;
             SavedSettings = settings;
             return Task.CompletedTask;
         }

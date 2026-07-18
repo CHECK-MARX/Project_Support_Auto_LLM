@@ -49,6 +49,16 @@ public class AiSettingsStoreTests
             MaxPromptChars = 12000,
             SkipGenerationWhenNoEvidence = false,
             EnableTopNFallback = false,
+            AnswerQualityMode = AnswerQualityModes.Quality,
+            ModelCapabilityProfiles =
+            [
+                new ModelCapabilityProfile
+                {
+                    ModelName = "gemma4:31b",
+                    ThinkingParameterType = ThinkingParameterTypes.None,
+                    StructuredOutputMode = StructuredOutputModes.PlainText,
+                },
+            ],
             LlmProvider = new LlmProviderSettings
             {
                 Provider = "Ollama",
@@ -74,6 +84,10 @@ public class AiSettingsStoreTests
         Assert.Equal(settings.MaxPromptChars, restored.MaxPromptChars);
         Assert.Equal(settings.SkipGenerationWhenNoEvidence, restored.SkipGenerationWhenNoEvidence);
         Assert.Equal(settings.EnableTopNFallback, restored.EnableTopNFallback);
+        Assert.Equal(AnswerQualityModes.Quality, restored.AnswerQualityMode);
+        var profile = Assert.Single(restored.ModelCapabilityProfiles);
+        Assert.Equal("gemma4:31b", profile.ModelName);
+        Assert.Equal(ThinkingParameterTypes.None, profile.ThinkingParameterType);
         Assert.Equal("llama3.2", restored.LlmProvider.ChatModel);
         Assert.Equal("nomic-embed-text", restored.LlmProvider.EmbeddingModel);
         Assert.Equal(16384, restored.LlmProvider.ContextWindowTokens);
@@ -100,6 +114,8 @@ public class AiSettingsStoreTests
                     ManualFolders = [@"D:\Manuals\HelixQAC", @"D:\Manuals\Common"],
                     DocumentUrls = ["https://example.test/helixqac", "https://example.test/common"],
                     IsEnabled = true,
+                    CrawlMaxDepth = 3,
+                    CrawlMaxPages = 250,
                 },
             ],
         };
@@ -115,6 +131,8 @@ public class AiSettingsStoreTests
         Assert.Equal(2, product.DocumentUrls.Count);
         Assert.Contains("https://example.test/helixqac", product.DocumentUrls);
         Assert.Contains("https://example.test/common", product.DocumentUrls);
+        Assert.Equal(3, product.CrawlMaxDepth);
+        Assert.Equal(250, product.CrawlMaxPages);
     }
 
     [Fact]
@@ -145,6 +163,7 @@ public class AiSettingsStoreTests
         await store.SaveAsync(new AiAssistantSettings { AiDataFolder = aiDataFolder });
 
         Assert.True(File.Exists(System.IO.Path.Combine(aiDataFolder, "settings.json")));
+        Assert.Empty(Directory.EnumerateFiles(aiDataFolder, "*.tmp"));
     }
 
     [Fact]

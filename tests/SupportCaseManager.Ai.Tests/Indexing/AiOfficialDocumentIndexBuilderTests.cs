@@ -68,6 +68,37 @@ public sealed class AiOfficialDocumentIndexBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_FailedRefreshRetainsPreviousIndexAndFactCatalog()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "Checkmarx",
+            DocumentUrls = ["https://docs.example.test/release"],
+        };
+        var successful = new AiOfficialDocumentIndexBuilder(
+            new StubHttpMessageHandler(_ => HtmlResponse("""
+                <html><head><title>Release Notes</title></head>
+                <body><h1>Release Notes 9.7.0</h1><p>CxSAST 9.7.0 is the latest supported release version.</p></body></html>
+                """)));
+        var initial = await successful.BuildAsync(product, aiIndexFolder);
+        var productFolder = Path.GetDirectoryName(initial.IndexFilePath)!;
+        var catalogPath = Path.Combine(productFolder, FactCatalogStore.VersionCatalogFileName);
+        var initialIndex = await File.ReadAllBytesAsync(initial.IndexFilePath);
+        var initialCatalog = await File.ReadAllBytesAsync(catalogPath);
+        var failing = new AiOfficialDocumentIndexBuilder(
+            new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+        var result = await failing.BuildAsync(product, aiIndexFolder);
+
+        Assert.Equal(1, result.FetchFailureCount);
+        Assert.Equal(initialIndex, await File.ReadAllBytesAsync(initial.IndexFilePath));
+        Assert.Equal(initialCatalog, await File.ReadAllBytesAsync(catalogPath));
+        Assert.Contains(result.Warnings, warning => warning.Contains("previous successful index was retained", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BuildAsync_SkipsNonHttpUrls()
     {
         using var temp = new TempDirectory();
@@ -134,6 +165,33 @@ public sealed class AiOfficialDocumentIndexBuilderTests
         Assert.Contains(result.ImportantPageUrls, url => url.Contains("release-notes", StringComparison.OrdinalIgnoreCase));
         Assert.True(result.IndexedChunkCount >= 2);
         Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
+    }
+
+    [Fact]
+    public async Task BuildAsync_UsesProductCrawlDepthAndPageLimits()
+    {
+        using var temp = new TempDirectory();
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse("""
+            <html><head><title>Docs Home</title></head><body>
+            <p>This is the product documentation landing page with enough searchable support content.</p>
+            <a href="/child.html">Child page</a>
+            </body></html>
+            """));
+        var builder = new AiOfficialDocumentIndexBuilder(handler);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "Checkmarx",
+                DocumentUrls = ["https://docs.example.test/"],
+                CrawlMaxDepth = 0,
+                CrawlMaxPages = 1,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        Assert.Equal(0, result.MaxDepth);
+        Assert.Equal(1, result.MaxPages);
+        Assert.Single(handler.Requests);
     }
 
     private static async Task<AiOfficialDocumentIndexDocument> ReadIndexAsync(string indexFilePath)

@@ -8,4 +8,11 @@ public interface IOllamaConnectionChecker
         LlmProviderSettings settings,
         bool disableThinking = true,
         CancellationToken cancellationToken = default);
+
+    async Task<IReadOnlyList<string>> ListModelsAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        return (await CheckAsync(settings, cancellationToken: cancellationToken)).AvailableModels;
+    }
 }

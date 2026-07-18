@@ -21,6 +21,26 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
         var mentionsHotfix = ContainsAny(normalized, "hotfix", "hf", "ホットフィックス");
         var asksUpgrade = ContainsAny(normalized, "アップグレード", "アップデート", "upgrade", "update", "移行", "上げ", "更新可能", "可能ですか");
         var asksHowTo = ContainsAny(normalized, "手順", "方法", "howto", "設定", "対応手順");
+        var asksFeature = ContainsAny(
+            normalized,
+            "対応していますか",
+            "対応可否",
+            "利用可能",
+            "使用できますか",
+            "機能はありますか",
+            "featureavailability",
+            "issupported",
+            "supported");
+        var asksTroubleshooting = ContainsAny(
+            normalized,
+            "エラー",
+            "失敗",
+            "動かない",
+            "原因",
+            "解消",
+            "トラブル",
+            "exception",
+            "timeout");
 
         if (asksLatest && (mentionsSast || mentionsEnginePack || mentionsHotfix || ContainsAny(normalized, "バージョン", "version")))
         {
@@ -43,9 +63,19 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
             requestedFacts.Add(FactKeys.UpgradePossibility);
         }
 
-        if (asksHowTo && questionTypes.Count == 0)
+        if (asksHowTo && !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase))
         {
             questionTypes.Add(QuestionTypes.HowToQuestion);
+        }
+
+        if (asksFeature && !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase))
+        {
+            questionTypes.Add(QuestionTypes.FeatureAvailabilityQuestion);
+        }
+
+        if (asksTroubleshooting)
+        {
+            questionTypes.Add(QuestionTypes.TroubleshootingQuestion);
         }
 
         if (questionTypes.Count == 0)

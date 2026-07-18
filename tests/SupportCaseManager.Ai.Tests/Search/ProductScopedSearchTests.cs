@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.Ai.Tests.Helpers;
 
@@ -73,6 +74,64 @@ public sealed class ProductScopedSearchTests
         var source = Assert.Single(request.Sources);
         Assert.Equal("helix-manual", source.SourceId);
         Assert.Equal("HelixQAC", source.ProductName);
+    }
+
+    [Fact]
+    public async Task SearchAllHybridAsync_UsesEmbeddingSimilarityToRerankKeywordMatches()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "license guidance"),
+        ]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC");
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(),
+            new AiManualKeywordSearcher(),
+            embeddingClient: new StaticEmbeddingClient());
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "license" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            },
+            maxResults: 2);
+
+        Assert.Equal("manual-b", results[0].SourceId);
+        Assert.Contains("Hybrid embedding", results[0].ScoreBreakdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAllHybridAsync_WhenEmbeddingFails_ReturnsKeywordResults()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC", [CreateManual("manual-a", "license guidance")]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC");
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(),
+            new AiManualKeywordSearcher(),
+            embeddingClient: new ThrowingEmbeddingClient());
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "license" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            });
+
+        Assert.Single(results);
+        Assert.Equal("manual-a", results[0].SourceId);
+        Assert.Contains("Hybrid local", results[0].ScoreBreakdown, StringComparison.Ordinal);
     }
 
     private static ProductScopedSearchService CreateService()
@@ -148,5 +207,64 @@ public sealed class ProductScopedSearchTests
             SourceFolder = @"D:\Closed",
             Notes = notes,
         });
+    }
+
+    private static async Task WriteEmbeddingIndexAsync(string aiIndexFolder, string productName)
+    {
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, productName);
+        Directory.CreateDirectory(productFolder);
+        await using var stream = File.Create(Path.Combine(productFolder, EmbeddingIndexDocument.FileName));
+        await JsonSerializer.SerializeAsync(stream, new EmbeddingIndexDocument
+        {
+            ProductName = productName,
+            EmbeddingModel = "nomic-embed-text",
+            BuiltAt = DateTimeOffset.Now,
+            Entries =
+            [
+                new EmbeddingIndexEntry
+                {
+                    SourceId = "manual-a",
+                    SourceType = "Manual",
+                    ProductName = productName,
+                    ContentHash = "a",
+                    Vector = [1, 0],
+                },
+                new EmbeddingIndexEntry
+                {
+                    SourceId = "manual-b",
+                    SourceType = "Manual",
+                    ProductName = productName,
+                    ContentHash = "b",
+                    Vector = [0, 1],
+                },
+            ],
+        });
+    }
+
+    private sealed class StaticEmbeddingClient : IOllamaEmbeddingClient
+    {
+        public Task<IReadOnlyList<IReadOnlyList<float>>> EmbedAsync(
+            string endpoint,
+            string model,
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<IReadOnlyList<float>> vectors = inputs
+                .Select(static _ => (IReadOnlyList<float>)new float[] { 0, 1 })
+                .ToList();
+            return Task.FromResult(vectors);
+        }
+    }
+
+    private sealed class ThrowingEmbeddingClient : IOllamaEmbeddingClient
+    {
+        public Task<IReadOnlyList<IReadOnlyList<float>>> EmbedAsync(
+            string endpoint,
+            string model,
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default)
+        {
+            throw new InvalidOperationException("embedding unavailable");
+        }
     }
 }

@@ -32,4 +32,13 @@ public sealed record class LlmProviderSettings
 
     [JsonPropertyName("apiKeyEnvironmentVariable")]
     public string? ApiKeyEnvironmentVariable { get; init; }
+
+    [JsonPropertyName("thinkingParameterType")]
+    public string? ThinkingParameterType { get; init; }
+
+    [JsonPropertyName("thinkingValue")]
+    public string? ThinkingValue { get; init; }
+
+    [JsonPropertyName("structuredOutputMode")]
+    public string? StructuredOutputMode { get; init; }
 }

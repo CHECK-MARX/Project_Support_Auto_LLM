@@ -277,6 +277,38 @@ public class AiManualIndexBuilderTests
         Assert.Single(document.Manuals);
     }
 
+    [Fact]
+    public async Task BuildManyIncrementalAsync_TracksAddedChangedUnchangedAndDeletedFiles()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        Directory.CreateDirectory(manualFolder);
+        var firstPath = Path.Combine(manualFolder, "first.txt");
+        var secondPath = Path.Combine(manualFolder, "second.md");
+        await File.WriteAllTextAsync(firstPath, "first version", Encoding.UTF8);
+        var builder = CreateBuilder();
+
+        var initial = await builder.BuildManyIncrementalAsync([manualFolder], aiIndexFolder);
+        var unchanged = await builder.BuildManyIncrementalAsync([manualFolder], aiIndexFolder);
+        await File.WriteAllTextAsync(firstPath, "changed version", Encoding.UTF8);
+        File.SetLastWriteTime(firstPath, File.GetLastWriteTime(firstPath).AddSeconds(2));
+        var changed = await builder.BuildManyIncrementalAsync([manualFolder], aiIndexFolder);
+        await File.WriteAllTextAsync(secondPath, "# Second\r\nsecond content", Encoding.UTF8);
+        var added = await builder.BuildManyIncrementalAsync([manualFolder], aiIndexFolder);
+        File.Delete(firstPath);
+        var deleted = await builder.BuildManyIncrementalAsync([manualFolder], aiIndexFolder);
+
+        Assert.Equal(1, initial.AddedFileCount);
+        Assert.Equal(1, unchanged.UnchangedFileCount);
+        Assert.Equal(1, changed.ChangedFileCount);
+        Assert.Equal(1, added.AddedFileCount);
+        Assert.Equal(1, deleted.DeletedFileCount);
+        var document = await ReadIndexAsync(deleted.IndexFilePath);
+        var remaining = Assert.Single(document.Manuals.Select(item => item.FileName).Distinct());
+        Assert.Equal("second.md", remaining);
+    }
+
     private static AiManualIndexBuilder CreateBuilder()
     {
         return new AiManualIndexBuilder(() => new DateTimeOffset(2026, 6, 3, 10, 0, 0, TimeSpan.FromHours(9)));

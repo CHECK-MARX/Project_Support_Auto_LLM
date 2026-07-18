@@ -9,6 +9,7 @@ using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Cases;
 using SupportCaseManager.Ai.Core.Diagnostics;
 using SupportCaseManager.Ai.Core.Drafts;
+using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Core.Inquiries;
@@ -27,6 +28,17 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
 public sealed class MainViewModel : ObservableObject
 {
+    private static readonly HashSet<string> AutoSavedProperties =
+    [
+        nameof(AiDataFolder), nameof(AiIndexFolder), nameof(BaseFolder), nameof(CloseFolder),
+        nameof(ManualFolder), nameof(SupportToolSettingsFilePath), nameof(SelectedProductKnowledge),
+        nameof(UiLanguage), nameof(UseDarkMode), nameof(LlmProvider), nameof(OllamaEndpoint),
+        nameof(ChatModel), nameof(EmbeddingModel), nameof(Temperature), nameof(MaxOutputTokens),
+        nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
+        nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
+        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(HighScoreThreshold),
+        nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
+    ];
     private const int ProductionMiniTestMinTimeoutSeconds = 60;
     private const int ProductionMiniTestMaxTimeoutSeconds = 60;
     private const int ProductionMiniTestMinOutputTokens = 8;
@@ -53,6 +65,11 @@ public sealed class MainViewModel : ObservableObject
     private readonly Func<string, IAiDiagnosticLogger> loggerFactory;
     private readonly IAppAppearanceService appearanceService;
     private readonly ILlmClientFactory llmClientFactory;
+    private CancellationTokenSource? autoSaveCancellation;
+    private bool settingsLoaded;
+    private bool isApplyingSettings;
+    private bool ollamaModelsLoaded;
+    private IReadOnlyList<ModelCapabilityProfile> modelCapabilityProfiles = [];
 
     private CaseContext? currentCaseContext;
     private AnswerDraftRequest? lastRequest;
@@ -75,6 +92,7 @@ public sealed class MainViewModel : ObservableObject
     private string llmProvider = "Fake";
     private string ollamaEndpoint = "http://localhost:11434";
     private string chatModel = "qwen3:14b";
+    private string answerQualityMode = SupportCaseManager.Ai.Contracts.AnswerQualityModes.Custom;
     private string embeddingModel = "nomic-embed-text";
     private double temperature = 0.2;
     private int maxOutputTokens = 800;
@@ -102,6 +120,8 @@ public sealed class MainViewModel : ObservableObject
     private string customerReplyDraft = "まだ生成されていません。";
     private string internalMemo = string.Empty;
     private string needConfirmationsText = string.Empty;
+    private string answerReadinessText = "-";
+    private string resolvedFactsText = "(なし)";
     private string evidenceText = string.Empty;
     private string confidenceText = "-";
     private string warningsText = string.Empty;
@@ -144,6 +164,8 @@ public sealed class MainViewModel : ObservableObject
     private string modelRecommendationText = string.Empty;
     private string generationDiagnosticsText = string.Empty;
     private string ollamaProductionMiniTestResultText = "未実行";
+    private string modelCompatibilityTestResultText = "未実行";
+    private string knowledgeStatusText = "未作成";
     private bool isBusy;
     private bool isUpdatingPromptSummary;
 
@@ -192,6 +214,8 @@ public sealed class MainViewModel : ObservableObject
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
         CheckOllamaConnectionCommand = new AsyncRelayCommand(CheckOllamaConnectionAsync);
         RunOllamaProductionMiniTestCommand = new AsyncRelayCommand(RunOllamaProductionMiniTestAsync);
+        RefreshOllamaModelsCommand = new AsyncRelayCommand(RefreshOllamaModelsAsync);
+        RunModelCompatibilityTestCommand = new AsyncRelayCommand(RunModelCompatibilityTestAsync);
         SelectAiDataFolderCommand = new RelayCommand(() => SelectFolder(value => AiDataFolder = value));
         SelectAiIndexFolderCommand = new RelayCommand(() => SelectFolder(value => AiIndexFolder = value));
         SelectBaseFolderCommand = new RelayCommand(() => SelectFolder(value => BaseFolder = value));
@@ -211,6 +235,11 @@ public sealed class MainViewModel : ObservableObject
         BuildIndexCommand = new AsyncRelayCommand(BuildIndexAsync);
         BuildManualIndexCommand = new AsyncRelayCommand(BuildManualIndexAsync);
         BuildOfficialDocumentIndexCommand = new AsyncRelayCommand(BuildOfficialDocumentIndexAsync);
+        UpdateKnowledgeCommand = new AsyncRelayCommand(() => UpdateKnowledgeAsync(KnowledgeUpdateScope.All, forceRebuild: false));
+        RebuildKnowledgeCommand = new AsyncRelayCommand(() => UpdateKnowledgeAsync(KnowledgeUpdateScope.All, forceRebuild: true));
+        UpdateManualKnowledgeCommand = new AsyncRelayCommand(() => UpdateKnowledgeAsync(KnowledgeUpdateScope.Manuals, forceRebuild: false));
+        UpdatePastCaseKnowledgeCommand = new AsyncRelayCommand(() => UpdateKnowledgeAsync(KnowledgeUpdateScope.PastCases, forceRebuild: false));
+        UpdateOfficialKnowledgeCommand = new AsyncRelayCommand(() => UpdateKnowledgeAsync(KnowledgeUpdateScope.OfficialDocs, forceRebuild: false));
         SearchPastCasesCommand = new AsyncRelayCommand(SearchPastCasesAsync);
         SearchManualsCommand = new AsyncRelayCommand(SearchManualsAsync);
         SelectVisibleSourcesCommand = new RelayCommand(SelectVisibleSources);
@@ -221,6 +250,8 @@ public sealed class MainViewModel : ObservableObject
         OpenSelectedSourceFileCommand = new RelayCommand(OpenSelectedSourceFile);
         OpenSelectedSourceFolderCommand = new RelayCommand(OpenSelectedSourceFolder);
         GenerateDraftCommand = new AsyncRelayCommand(GenerateDraftAsync);
+        GenerateHighQualityDraftCommand = new AsyncRelayCommand(GenerateHighQualityDraftAsync);
+        ResetSettingsCommand = new AsyncRelayCommand(ResetSettingsAsync);
         ClearInquiryCommand = new RelayCommand(ClearInquiry);
         CopyCustomerReplyCommand = new RelayCommand(() => CopyText(CustomerReplyDraft));
         CopyInternalMemoCommand = new RelayCommand(() => CopyText(InternalMemo));
@@ -249,6 +280,16 @@ public sealed class MainViewModel : ObservableObject
     public ObservableCollection<SearchSourceViewModel> FilteredSearchResults { get; } = [];
 
     public ObservableCollection<ProductKnowledgeViewModel> Products { get; } = [];
+
+    public ObservableCollection<string> AvailableModels { get; } = [];
+
+    public IReadOnlyList<string> QualityModes { get; } =
+    [
+        SupportCaseManager.Ai.Contracts.AnswerQualityModes.Fast,
+        SupportCaseManager.Ai.Contracts.AnswerQualityModes.Standard,
+        SupportCaseManager.Ai.Contracts.AnswerQualityModes.Quality,
+        SupportCaseManager.Ai.Contracts.AnswerQualityModes.Custom,
+    ];
 
     public string AiDataFolder
     {
@@ -413,6 +454,21 @@ public sealed class MainViewModel : ObservableObject
         }
     }
 
+    public string AnswerQualityMode
+    {
+        get => answerQualityMode;
+        set
+        {
+            var normalized = string.IsNullOrWhiteSpace(value)
+                ? SupportCaseManager.Ai.Contracts.AnswerQualityModes.Custom
+                : value;
+            if (SetProperty(ref answerQualityMode, normalized) && !isApplyingSettings)
+            {
+                ApplyQualityModeProfile(normalized);
+            }
+        }
+    }
+
     public string EmbeddingModel
     {
         get => embeddingModel;
@@ -519,6 +575,18 @@ public sealed class MainViewModel : ObservableObject
     {
         get => ollamaProductionMiniTestResultText;
         private set => SetProperty(ref ollamaProductionMiniTestResultText, value);
+    }
+
+    public string ModelCompatibilityTestResultText
+    {
+        get => modelCompatibilityTestResultText;
+        private set => SetProperty(ref modelCompatibilityTestResultText, value);
+    }
+
+    public string KnowledgeStatusText
+    {
+        get => knowledgeStatusText;
+        private set => SetProperty(ref knowledgeStatusText, value);
     }
 
     public string CaseFolderPath
@@ -635,6 +703,18 @@ public sealed class MainViewModel : ObservableObject
     {
         get => needConfirmationsText;
         private set => SetProperty(ref needConfirmationsText, value);
+    }
+
+    public string AnswerReadinessText
+    {
+        get => answerReadinessText;
+        private set => SetProperty(ref answerReadinessText, value);
+    }
+
+    public string ResolvedFactsText
+    {
+        get => resolvedFactsText;
+        private set => SetProperty(ref resolvedFactsText, value);
     }
 
     public string EvidenceText
@@ -865,6 +945,8 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand SaveSettingsCommand { get; }
     public AsyncRelayCommand CheckOllamaConnectionCommand { get; }
     public AsyncRelayCommand RunOllamaProductionMiniTestCommand { get; }
+    public AsyncRelayCommand RefreshOllamaModelsCommand { get; }
+    public AsyncRelayCommand RunModelCompatibilityTestCommand { get; }
     public RelayCommand SelectAiDataFolderCommand { get; }
     public RelayCommand SelectAiIndexFolderCommand { get; }
     public RelayCommand SelectBaseFolderCommand { get; }
@@ -884,6 +966,11 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand BuildIndexCommand { get; }
     public AsyncRelayCommand BuildManualIndexCommand { get; }
     public AsyncRelayCommand BuildOfficialDocumentIndexCommand { get; }
+    public AsyncRelayCommand UpdateKnowledgeCommand { get; }
+    public AsyncRelayCommand RebuildKnowledgeCommand { get; }
+    public AsyncRelayCommand UpdateManualKnowledgeCommand { get; }
+    public AsyncRelayCommand UpdatePastCaseKnowledgeCommand { get; }
+    public AsyncRelayCommand UpdateOfficialKnowledgeCommand { get; }
     public AsyncRelayCommand SearchPastCasesCommand { get; }
     public AsyncRelayCommand SearchManualsCommand { get; }
     public RelayCommand SelectVisibleSourcesCommand { get; }
@@ -894,6 +981,8 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenSelectedSourceFileCommand { get; }
     public RelayCommand OpenSelectedSourceFolderCommand { get; }
     public AsyncRelayCommand GenerateDraftCommand { get; }
+    public AsyncRelayCommand GenerateHighQualityDraftCommand { get; }
+    public AsyncRelayCommand ResetSettingsCommand { get; }
     public RelayCommand ClearInquiryCommand { get; }
     public RelayCommand CopyCustomerReplyCommand { get; }
     public RelayCommand CopyInternalMemoCommand { get; }
@@ -913,33 +1002,47 @@ public sealed class MainViewModel : ObservableObject
             await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync($"Command line warning. Count={options.Warnings.Count}");
         }
 
-        if (string.IsNullOrWhiteSpace(options.ContextFilePath))
-        {
-            return;
-        }
-
         await RunBusyAsync(async () =>
         {
-            var settings = await settingsStore.LoadAsync(EffectiveAiDataFolder());
+            AiAssistantSettings settings;
+            try
+            {
+                settings = await settingsStore.LoadAsync(EffectiveAiDataFolder());
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                settings = new AiAssistantSettings { AiDataFolder = EffectiveAiDataFolder() };
+                StatusMessage = "設定の読込みに失敗したため、既定値で起動しました。";
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync($"Settings load failed. {ex.GetType().Name}: {ex.Message}");
+            }
+
             ApplySettings(settings);
+            settingsLoaded = true;
 
-            var context = await launchContextReader.ReadAsync(options.ContextFilePath);
-            ApplyLaunchContext(context);
+            if (!string.IsNullOrWhiteSpace(options.ContextFilePath))
+            {
+                var context = await launchContextReader.ReadAsync(options.ContextFilePath);
+                ApplyLaunchContext(context);
 
-            var caseFolderExists = !string.IsNullOrWhiteSpace(context.CaseFolderPath)
-                && Directory.Exists(context.CaseFolderPath);
-            var noteFileExists = !string.IsNullOrWhiteSpace(context.NoteFilePath)
-                && File.Exists(context.NoteFilePath);
+                var caseFolderExists = !string.IsNullOrWhiteSpace(context.CaseFolderPath)
+                    && Directory.Exists(context.CaseFolderPath);
+                var noteFileExists = !string.IsNullOrWhiteSpace(context.NoteFilePath)
+                    && File.Exists(context.NoteFilePath);
 
-            LastOperationResult = FormatLaunchContextDiagnostic(context, caseFolderExists, noteFileExists);
-            ProductKnowledgeStatusText = string.IsNullOrWhiteSpace(context.ProductName)
-                ? ProductKnowledgeStatusText
-                : $"外部コンテキスト製品: {context.ProductName}";
-            StatusMessage = "外部コンテキストを読み込みました。";
+                LastOperationResult = FormatLaunchContextDiagnostic(context, caseFolderExists, noteFileExists);
+                ProductKnowledgeStatusText = string.IsNullOrWhiteSpace(context.ProductName)
+                    ? ProductKnowledgeStatusText
+                    : $"外部コンテキスト製品: {context.ProductName}";
+                StatusMessage = "設定と案件情報を自動読込みしました。";
 
-            await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
-                $"Launch context loaded. Source={SanitizeLogToken(context.Source)}; ProductName={SanitizeLogToken(context.ProductName)}; CaseFolderExists={caseFolderExists}; NoteFileExists={noteFileExists}");
+                await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
+                    $"Launch context loaded. Source={SanitizeLogToken(context.Source)}; ProductName={SanitizeLogToken(context.ProductName)}; CaseFolderExists={caseFolderExists}; NoteFileExists={noteFileExists}");
+            }
+
+            await RefreshKnowledgeStatusCoreAsync();
         });
+        _ = RefreshOllamaModelsCoreAsync();
+        StartLocalKnowledgeRefreshInBackground();
     }
 
     public void ApplyLaunchContext(AiAssistantLaunchContext context)
@@ -1042,6 +1145,8 @@ public sealed class MainViewModel : ObservableObject
                 supportProducts);
 
             ApplySettings(synchronized);
+            settingsLoaded = true;
+            await settingsStore.SaveAsync(BuildSettings());
             ProductKnowledgeStatusText = $"既存設定を読み込みました。Products={supportProducts.Count}";
             await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync($"Support tool settings loaded. Products={supportProducts.Count}");
             StatusMessage = ProductKnowledgeStatusText;
@@ -1119,6 +1224,7 @@ public sealed class MainViewModel : ObservableObject
             SelectedProductKnowledge.DocumentUrls.Add(url);
             SelectedDocumentUrl = url;
             RefreshProductContextComputedProperties();
+            ScheduleAutoSave();
         }
 
         NewDocumentUrl = string.Empty;
@@ -1135,6 +1241,7 @@ public sealed class MainViewModel : ObservableObject
         SelectedProductKnowledge.DocumentUrls.Remove(SelectedDocumentUrl);
         SelectedDocumentUrl = SelectedProductKnowledge.DocumentUrls.FirstOrDefault() ?? string.Empty;
         RefreshProductContextComputedProperties();
+        ScheduleAutoSave();
     }
 
     private void UseSelectedProduct()
@@ -1157,6 +1264,7 @@ public sealed class MainViewModel : ObservableObject
         {
             var settings = BuildSettings();
             var result = await ollamaConnectionChecker.CheckAsync(settings.LlmProvider, settings.DisableThinking);
+            ReplaceAvailableModels(result.AvailableModels);
             OllamaConnectionResultText = FormatOllamaConnectionResult(result);
             UpdateModelRecommendationText();
 
@@ -1227,6 +1335,185 @@ public sealed class MainViewModel : ObservableObject
                     ex);
             }
         });
+    }
+
+    private async Task RefreshOllamaModelsAsync()
+    {
+        await RunBusyAsync(RefreshOllamaModelsCoreAsync);
+    }
+
+    private async Task RefreshOllamaModelsCoreAsync()
+    {
+        var models = await ollamaConnectionChecker.ListModelsAsync(BuildSettings().LlmProvider);
+        ReplaceAvailableModels(models);
+        if (models.Count == 0)
+        {
+            OllamaConnectionResultText = "Ollamaモデル一覧を取得できませんでした。既存の選択値は保持します。";
+            return;
+        }
+
+        var selectedExists = models.Any(model => ModelNameMatches(model, ChatModel));
+        if (!selectedExists)
+        {
+            var fallback = FindAvailableFallbackModel(models);
+            OllamaConnectionResultText = $"選択モデル '{ChatModel}' はありません。利用可能な候補: {fallback}";
+        }
+        else
+        {
+            OllamaConnectionResultText = $"Ollama接続: Ready / モデル数: {models.Count} / 選択: {ChatModel}";
+        }
+    }
+
+    private async Task RunModelCompatibilityTestAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            var settings = BuildSettings();
+            var provider = settings.LlmProvider;
+            const string expected = "接続確認に成功しました。";
+            var messages = new PromptMessages
+            {
+                SystemPrompt = "日本語で指定された一文だけを回答してください。",
+                UserPrompt = $"日本語で「{expected}」と一文だけ回答してください。",
+            };
+            var stopwatch = Stopwatch.StartNew();
+            try
+            {
+                var generation = await llmClientFactory.Create(provider).GenerateAsync(
+                    messages,
+                    provider,
+                    DisableThinking);
+                stopwatch.Stop();
+                var profileUpdated = generation.Diagnostics.Any(diagnostic =>
+                    diagnostic.Contains("Unsupported Ollama parameter", StringComparison.OrdinalIgnoreCase));
+                if (profileUpdated)
+                {
+                    RecordCompatiblePlainTextProfile(provider.ChatModel);
+                    await settingsStore.SaveAsync(BuildSettings());
+                }
+
+                var profile = ModelCapabilityProfiles.Resolve(provider.ChatModel, modelCapabilityProfiles);
+                var durationSeconds = generation.TotalDuration is > 0
+                    ? generation.TotalDuration.Value / 1_000_000_000d
+                    : stopwatch.Elapsed.TotalSeconds;
+                var tokensPerSecond = generation.EvalCount is > 0 && durationSeconds > 0
+                    ? generation.EvalCount.Value / durationSeconds
+                    : 0;
+                ModelCompatibilityTestResultText = string.Join(Environment.NewLine,
+                [
+                    $"Model: {provider.ChatModel}",
+                    $"Available: {AvailableModels.Any(model => ModelNameMatches(model, provider.ChatModel))}",
+                    $"Chat success: {generation.Content.Contains(expected, StringComparison.Ordinal)}",
+                    $"送信したthinking設定: {profile.ThinkingParameterType} {profile.ThinkingValue}".TrimEnd(),
+                    $"Content returned: {generation.ContentReturned}",
+                    $"Thinking returned: {generation.ThinkingReturned}",
+                    $"Done reason: {generation.DoneReason ?? "(未設定)"}",
+                    $"Elapsed seconds: {stopwatch.Elapsed.TotalSeconds:0.0}",
+                    $"Tokens per second: {tokensPerSecond:0.0}",
+                    $"Profile updated: {profileUpdated}",
+                    "Error: (なし)",
+                ]);
+            }
+            catch (Exception ex)
+            {
+                stopwatch.Stop();
+                ModelCompatibilityTestResultText = string.Join(Environment.NewLine,
+                [
+                    $"Model: {provider.ChatModel}",
+                    $"Available: {AvailableModels.Any(model => ModelNameMatches(model, provider.ChatModel))}",
+                    "Chat success: False",
+                    $"Elapsed seconds: {stopwatch.Elapsed.TotalSeconds:0.0}",
+                    $"Error: {ex.GetType().Name}: {ex.Message}",
+                ]);
+            }
+        });
+    }
+
+    private void RecordCompatiblePlainTextProfile(string modelName)
+    {
+        var current = ModelCapabilityProfiles.Resolve(modelName, modelCapabilityProfiles);
+        var updated = current with
+        {
+            ModelName = modelName,
+            ThinkingParameterType = ThinkingParameterTypes.None,
+            ThinkingValue = string.Empty,
+            StructuredOutputMode = StructuredOutputModes.PlainText,
+        };
+        modelCapabilityProfiles = modelCapabilityProfiles
+            .Where(profile => !ModelNameMatches(profile.ModelName, modelName))
+            .Append(updated)
+            .OrderBy(static profile => profile.ModelName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private void ReplaceAvailableModels(IReadOnlyList<string> models, bool confirmedByOllama = true)
+    {
+        var normalizedModels = models
+            .Where(static model => !string.IsNullOrWhiteSpace(model))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static model => model, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (normalizedModels.Count == 0)
+        {
+            return;
+        }
+
+        AvailableModels.Clear();
+        foreach (var model in normalizedModels)
+        {
+            AvailableModels.Add(model);
+        }
+
+        ollamaModelsLoaded |= confirmedByOllama;
+    }
+
+    private void ApplyQualityModeProfile(string qualityMode)
+    {
+        var requestedModel = ModelCapabilityProfiles.ModelForQualityMode(qualityMode);
+        if (string.IsNullOrWhiteSpace(requestedModel))
+        {
+            return;
+        }
+
+        var selectedModel = requestedModel;
+        if (ollamaModelsLoaded &&
+            AvailableModels.Count > 0 &&
+            !AvailableModels.Any(model => ModelNameMatches(model, requestedModel)))
+        {
+            selectedModel = FindAvailableFallbackModel(AvailableModels);
+            StatusMessage = $"品質モードの既定モデル '{requestedModel}' がないため、'{selectedModel}' を候補として使用します。自動pullは行いません。";
+        }
+
+        if (!AvailableModels.Any(model => ModelNameMatches(model, selectedModel)))
+        {
+            ReplaceAvailableModels(
+                AvailableModels.Append(selectedModel).ToList(),
+                confirmedByOllama: false);
+        }
+
+        ChatModel = selectedModel;
+        var profile = ModelCapabilityProfiles.Resolve(selectedModel, modelCapabilityProfiles);
+        Temperature = profile.Temperature;
+        MaxOutputTokens = profile.MaxOutputTokens;
+        TimeoutSeconds = profile.TimeoutSeconds;
+        MaxPromptChars = profile.MaxPromptChars;
+        MaxEvidenceItems = profile.RecommendedEvidenceCount;
+    }
+
+    private static string FindAvailableFallbackModel(IEnumerable<string> models)
+    {
+        var list = models.ToList();
+        return list.FirstOrDefault(model => ModelNameMatches(model, "qwen3:8b"))
+            ?? list.FirstOrDefault(model => ModelNameMatches(model, "gemma4:26b"))
+            ?? list.FirstOrDefault()
+            ?? string.Empty;
+    }
+
+    private static bool ModelNameMatches(string left, string right)
+    {
+        return string.Equals(left, right, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(left.Replace(":latest", string.Empty, StringComparison.OrdinalIgnoreCase), right, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(left, right.Replace(":latest", string.Empty, StringComparison.OrdinalIgnoreCase), StringComparison.OrdinalIgnoreCase);
     }
 
     private static PromptMessages BuildOllamaProductionMiniTestPromptMessages()
@@ -1472,10 +1759,11 @@ public sealed class MainViewModel : ObservableObject
             }
             else
             {
-                var allSources = await productScopedSearchService.SearchAllAsync(
+                var allSources = await productScopedSearchService.SearchAllHybridAsync(
                     selectedProduct,
                     EffectiveAiIndexFolder(),
                     lastInquiryFocus,
+                    BuildSettings().LlmProvider,
                     searchLimit * 3);
                 lastSearchSources = allSources
                     .Where(static source => string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase))
@@ -1549,6 +1837,12 @@ public sealed class MainViewModel : ObservableObject
         StatusMessage = SelectedSearchResult.IsSelected
             ? "Selected current evidence."
             : "Cleared current evidence selection.";
+    }
+
+    private async Task GenerateHighQualityDraftAsync()
+    {
+        AnswerQualityMode = SupportCaseManager.Ai.Contracts.AnswerQualityModes.Quality;
+        await GenerateDraftAsync();
     }
 
     private async Task GenerateDraftAsync()
@@ -1709,6 +2003,9 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplySettings(AiAssistantSettings settings)
     {
+        isApplyingSettings = true;
+        try
+        {
         AiDataFolder = string.IsNullOrWhiteSpace(settings.AiDataFolder)
             ? DefaultAiDataFolder()
             : settings.AiDataFolder;
@@ -1736,17 +2033,188 @@ public sealed class MainViewModel : ObservableObject
         LlmProvider = string.IsNullOrWhiteSpace(settings.LlmProvider.Provider) ? "Fake" : settings.LlmProvider.Provider;
         OllamaEndpoint = settings.LlmProvider.Endpoint;
         ChatModel = settings.LlmProvider.ChatModel;
+        ollamaModelsLoaded = false;
+        ReplaceAvailableModels(string.IsNullOrWhiteSpace(settings.LlmProvider.ChatModel)
+            ? []
+            : [settings.LlmProvider.ChatModel], confirmedByOllama: false);
         EmbeddingModel = settings.LlmProvider.EmbeddingModel ?? string.Empty;
         Temperature = settings.LlmProvider.Temperature;
         MaxOutputTokens = settings.LlmProvider.MaxOutputTokens;
         ContextWindowTokens = settings.LlmProvider.ContextWindowTokens;
         TimeoutSeconds = settings.LlmProvider.TimeoutSeconds;
+        answerQualityMode = string.IsNullOrWhiteSpace(settings.AnswerQualityMode)
+            ? SupportCaseManager.Ai.Contracts.AnswerQualityModes.Custom
+            : settings.AnswerQualityMode;
+        OnPropertyChanged(nameof(AnswerQualityMode));
+        modelCapabilityProfiles = settings.ModelCapabilityProfiles.Count > 0
+            ? settings.ModelCapabilityProfiles
+            : ModelCapabilityProfiles.GetDefaults();
         RefreshProductContextComputedProperties();
+        }
+        finally
+        {
+            isApplyingSettings = false;
+        }
+    }
+
+    private async Task ResetSettingsAsync()
+    {
+        await RunBusyAsync(async () =>
+        {
+            var defaults = new AiAssistantSettings
+            {
+                AiDataFolder = DefaultAiDataFolder(),
+                AiIndexFolder = DefaultAiIndexFolder(),
+                ModelCapabilityProfiles = ModelCapabilityProfiles.GetDefaults(),
+            };
+            ApplySettings(defaults);
+            settingsLoaded = true;
+            await settingsStore.SaveAsync(BuildSettings());
+            await RefreshKnowledgeStatusCoreAsync();
+            StatusMessage = "設定を初期値に戻しました。";
+        });
+    }
+
+    public async Task FlushSettingsAsync()
+    {
+        if (!settingsLoaded)
+        {
+            return;
+        }
+
+        autoSaveCancellation?.Cancel();
+        await settingsStore.SaveAsync(BuildSettings());
+    }
+
+    private async Task RefreshKnowledgeStatusCoreAsync()
+    {
+        var product = GetSelectedProductSettings();
+        if (product is null)
+        {
+            KnowledgeStatusText = "ナレッジ: 未作成（製品未選択）";
+            return;
+        }
+
+        var status = await productScopedIndexService.InspectKnowledgeAsync(
+            product,
+            EffectiveAiIndexFolder());
+        KnowledgeStatusText = FormatKnowledgeStatus(status);
+        ProductKnowledgeStatusText = KnowledgeStatusText;
+    }
+
+    private async Task UpdateKnowledgeAsync(KnowledgeUpdateScope scope, bool forceRebuild)
+    {
+        await RunBusyAsync(async () =>
+        {
+            var product = GetSelectedProductSettings();
+            if (product is null)
+            {
+                KnowledgeStatusText = "ナレッジ: 未作成（製品未選択）";
+                return;
+            }
+
+            KnowledgeStatusText = $"{product.ProductName} ナレッジ: 更新中";
+            var result = await productScopedIndexService.UpdateKnowledgeWithEmbeddingsAsync(
+                product,
+                EffectiveAiIndexFolder(),
+                scope,
+                forceRebuild,
+                EmbeddingModel,
+                OllamaEndpoint);
+            KnowledgeStatusText = FormatKnowledgeStatus(result.Status);
+            ProductKnowledgeStatusText = KnowledgeStatusText;
+            LastOperationResult = result.Status.Message;
+            StatusMessage = result.Status.Status == KnowledgeStatuses.Ready
+                ? "ナレッジ更新が完了しました。"
+                : "ナレッジ更新結果を確認してください。";
+            RefreshProductContextComputedProperties();
+        });
+    }
+
+    private static string FormatKnowledgeStatus(KnowledgeIndexStatus status)
+    {
+        var updated = status.LastUpdatedAt?.ToLocalTime().ToString("yyyy/MM/dd HH:mm") ?? "-";
+        var statusLabel = status.Status switch
+        {
+            KnowledgeStatuses.Ready => "Ready",
+            KnowledgeStatuses.UpdateAvailable => "更新あり",
+            KnowledgeStatuses.Updating => "更新中",
+            KnowledgeStatuses.Warning => "警告",
+            KnowledgeStatuses.Error => "エラー",
+            KnowledgeStatuses.NotCreated => "未作成",
+            _ => status.Status,
+        };
+        return string.Join(Environment.NewLine,
+        [
+            $"{status.ProductName} ナレッジ: {statusLabel}",
+            $"最終更新: {updated}",
+            $"Manual: {status.ManualDocumentCount}ファイル / {status.ManualChunkCount}チャンク",
+            $"OfficialDoc: {status.OfficialDocumentCount}ページ / {status.OfficialChunkCount}チャンク",
+            $"PastCase: {status.PastCaseCount}案件 / {status.PastCaseChunkCount}チャンク",
+            status.Message,
+        ]);
+    }
+
+    private void StartLocalKnowledgeRefreshInBackground()
+    {
+        var product = GetSelectedProductSettings();
+        if (product is null)
+        {
+            return;
+        }
+
+        var indexFolder = EffectiveAiIndexFolder();
+        var embedding = EmbeddingModel;
+        var embeddingEndpoint = OllamaEndpoint;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var result = await productScopedIndexService.UpdateKnowledgeWithEmbeddingsAsync(
+                    product,
+                    indexFolder,
+                    KnowledgeUpdateScope.PastCases | KnowledgeUpdateScope.Manuals,
+                    forceRebuild: false,
+                    embeddingModel: embedding,
+                    embeddingEndpoint: embeddingEndpoint);
+                await ApplyBackgroundKnowledgeStatusAsync(result.Status);
+            }
+            catch (Exception ex)
+            {
+                try
+                {
+                    await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                        $"Background knowledge refresh failed. {ex.GetType().Name}: {ex.Message}");
+                }
+                catch
+                {
+                }
+            }
+        });
+    }
+
+    private async Task ApplyBackgroundKnowledgeStatusAsync(KnowledgeIndexStatus status)
+    {
+        void Apply()
+        {
+            KnowledgeStatusText = FormatKnowledgeStatus(status);
+            ProductKnowledgeStatusText = KnowledgeStatusText;
+        }
+
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            await dispatcher.InvokeAsync(Apply);
+            return;
+        }
+
+        Apply();
     }
 
     private AiAssistantSettings BuildSettings()
     {
         SynchronizeSelectedProductFromCurrentFields();
+        var profile = ModelCapabilityProfiles.Resolve(ChatModel, modelCapabilityProfiles);
         return new AiAssistantSettings
         {
             AiDataFolder = EffectiveAiDataFolder(),
@@ -1769,6 +2237,10 @@ public sealed class MainViewModel : ObservableObject
             DisableThinking = DisableThinking,
             SkipGenerationWhenNoEvidence = SkipGenerationWhenNoEvidence,
             EnableTopNFallback = EnableTopNFallback,
+            AnswerQualityMode = AnswerQualityMode,
+            ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
+                ? modelCapabilityProfiles
+                : ModelCapabilityProfiles.GetDefaults(),
             LlmProvider = new LlmProviderSettings
             {
                 Provider = string.IsNullOrWhiteSpace(this.LlmProvider) ? "Fake" : this.LlmProvider,
@@ -1779,6 +2251,9 @@ public sealed class MainViewModel : ObservableObject
                 MaxOutputTokens = MaxOutputTokens,
                 ContextWindowTokens = ContextWindowTokens,
                 TimeoutSeconds = TimeoutSeconds,
+                ThinkingParameterType = profile.ThinkingParameterType,
+                ThinkingValue = profile.ThinkingValue,
+                StructuredOutputMode = profile.StructuredOutputMode,
             },
         };
     }
@@ -1847,7 +2322,7 @@ public sealed class MainViewModel : ObservableObject
 
         foreach (var product in products)
         {
-            Products.Add(ProductKnowledgeViewModel.FromSettings(product));
+            AddProduct(ProductKnowledgeViewModel.FromSettings(product));
         }
 
         ProductKnowledgeStatusText = Products.Count == 0
@@ -1887,7 +2362,7 @@ public sealed class MainViewModel : ObservableObject
                 CloseFolder = context.CloseFolder ?? string.Empty,
                 IsEnabled = true,
             };
-            Products.Add(product);
+            AddProduct(product);
             ProductKnowledgeStatusText = $"外部Context製品を新規作成し、検索対象にしました: {productNameFromContext}";
         }
         else
@@ -1896,6 +2371,19 @@ public sealed class MainViewModel : ObservableObject
         }
 
         SelectedProductKnowledge = product;
+    }
+
+    private void AddProduct(ProductKnowledgeViewModel product)
+    {
+        product.PropertyChanged += (_, _) =>
+        {
+            RefreshProductContextComputedProperties();
+            if (settingsLoaded && !isApplyingSettings)
+            {
+                ScheduleAutoSave();
+            }
+        };
+        Products.Add(product);
     }
 
     private void RefreshProductContextComputedProperties()
@@ -2141,18 +2629,25 @@ public sealed class MainViewModel : ObservableObject
         var caseContext = BuildCurrentCaseContext(effectiveProductName);
         var inquiryFocus = lastInquiryFocus ?? inquiryFocusExtractor.Extract(InquiryText, caseContext);
         var settings = BuildSettings();
+        var factResolution = new FactResolver().Resolve(
+            effectiveProductName,
+            settings.AiIndexFolder,
+            InquiryText,
+            inquiryFocus);
+        var selectedSources = EvidenceSourceSelector.Select(
+            sources,
+            caseContext,
+            factResolution,
+            settings.MaxEvidenceItems,
+            settings.MaxPromptChars);
         return new AnswerDraftRequest
         {
             Case = caseContext,
             InquiryText = InquiryText,
             InquiryFocus = inquiryFocus,
             UserInstruction = AdditionalInstruction,
-            Sources = sources,
-            FactResolution = new FactResolver().Resolve(
-                effectiveProductName,
-                settings.AiIndexFolder,
-                InquiryText,
-                inquiryFocus),
+            Sources = selectedSources,
+            FactResolution = factResolution,
             Settings = settings,
             RequestedAt = DateTimeOffset.Now,
         };
@@ -2228,9 +2723,15 @@ public sealed class MainViewModel : ObservableObject
         NeedConfirmationsText = result.NeedConfirmations.Count == 0
             ? "(なし)"
             : string.Join(Environment.NewLine, result.NeedConfirmations.Select(item => $"- [{item.Priority}] {item.Question} / {item.Reason}"));
+        var factResolution = lastRequest?.FactResolution;
+        AnswerReadinessText = factResolution?.AnswerReadiness ?? AnswerReadiness.InsufficientEvidence;
+        ResolvedFactsText = factResolution?.ResolvedFacts.Count > 0
+            ? string.Join(Environment.NewLine, factResolution.ResolvedFacts.Select(fact =>
+                $"- {fact.Key}={fact.Value} [{fact.Status}/{fact.Confidence}] ({fact.SourceType})"))
+            : "(なし)";
         EvidenceText = result.Evidence.Count == 0
             ? "(なし)"
-            : string.Join(Environment.NewLine, result.Evidence.Select(item => $"- {item.SourceId} {item.Title} ({item.Relevance:0.00}) {item.Excerpt}"));
+            : string.Join(Environment.NewLine, result.Evidence.Select(item => $"- [{item.SourceType}] {item.Title}"));
         ConfidenceText = $"{result.Confidence:0.00}";
         WarningsText = result.Warnings.Count == 0
             ? "(なし)"
@@ -3235,6 +3736,53 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine("# 警告");
         builder.AppendLine(WarningsText);
         return builder.ToString();
+    }
+
+    protected override void OnPropertyChanged(string? propertyName = null)
+    {
+        base.OnPropertyChanged(propertyName);
+        if (settingsLoaded &&
+            !isApplyingSettings &&
+            propertyName is not null &&
+            AutoSavedProperties.Contains(propertyName))
+        {
+            ScheduleAutoSave();
+        }
+    }
+
+    private void ScheduleAutoSave()
+    {
+        autoSaveCancellation?.Cancel();
+        autoSaveCancellation?.Dispose();
+        autoSaveCancellation = new CancellationTokenSource();
+        var token = autoSaveCancellation.Token;
+        var snapshot = BuildSettings();
+        _ = SaveSettingsAfterDelayAsync(snapshot, token);
+    }
+
+    private async Task SaveSettingsAfterDelayAsync(
+        AiAssistantSettings settings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(400, cancellationToken).ConfigureAwait(false);
+            await settingsStore.SaveAsync(settings, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            try
+            {
+                await loggerFactory(settings.AiDataFolder).LogWarningAsync(
+                    $"Settings auto-save failed. {ex.GetType().Name}: {ex.Message}");
+            }
+            catch
+            {
+            }
+        }
     }
 
     private void CopyText(string text)

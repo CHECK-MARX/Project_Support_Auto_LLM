@@ -162,6 +162,135 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
         };
     }
 
+    public async Task<AiCaseIndexBuildResult> BuildIncrementalAsync(
+        string sourceFolder,
+        string aiIndexFolder,
+        bool forceRebuild = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(aiIndexFolder))
+        {
+            throw new ArgumentException("AI index folder is required.", nameof(aiIndexFolder));
+        }
+
+        Directory.CreateDirectory(aiIndexFolder);
+        var indexFilePath = Path.Combine(aiIndexFolder, IndexFileName);
+        var existing = await ReadExistingIndexAsync(indexFilePath, cancellationToken);
+        var existingByCase = existing.Notes
+            .Where(static note => !string.IsNullOrWhiteSpace(note.CaseFolderPath))
+            .GroupBy(static note => Path.GetFullPath(note.CaseFolderPath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        var warnings = new List<string>();
+
+        if (string.IsNullOrWhiteSpace(sourceFolder) || !Directory.Exists(sourceFolder))
+        {
+            return new AiCaseIndexBuildResult
+            {
+                ErrorCount = 1,
+                IndexFilePath = indexFilePath,
+                IndexedNoteCount = existing.Notes.Count,
+                Warnings = ["Source folder does not exist. Existing index was retained."],
+            };
+        }
+
+        var currentCaseFolders = EnumerateCaseFolders(sourceFolder)
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var currentCaseSet = currentCaseFolders.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var output = new List<AiIndexedNote>();
+        var added = 0;
+        var changed = 0;
+        var unchanged = 0;
+        var errors = 0;
+        var scannedNoteFiles = 0;
+
+        foreach (var caseFolderPath in currentCaseFolders)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            existingByCase.TryGetValue(caseFolderPath, out var oldNotes);
+            var currentNoteFiles = Directory.EnumerateFiles(caseFolderPath, "*.txt", SearchOption.TopDirectoryOnly)
+                .Select(Path.GetFullPath)
+                .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            scannedNoteFiles += currentNoteFiles.Count;
+
+            var isUnchanged = !forceRebuild && oldNotes is { Count: > 0 } &&
+                HasSameNoteFilesAndTimestamps(oldNotes, currentNoteFiles);
+            if (isUnchanged)
+            {
+                output.AddRange(oldNotes!);
+                unchanged += 1;
+                continue;
+            }
+
+            try
+            {
+                var context = await caseContextBuilder.BuildFromCaseFolderAsync(caseFolderPath, cancellationToken: cancellationToken);
+                var caseFolderName = Path.GetFileName(caseFolderPath);
+                foreach (var note in context.Notes.Where(static note => !string.IsNullOrWhiteSpace(note.Text)))
+                {
+                    var chunkIndex = 0;
+                    foreach (var chunk in SplitIntoChunks(note.Text))
+                    {
+                        output.Add(new AiIndexedNote
+                        {
+                            Id = BuildId(caseFolderPath, note.FilePath, chunkIndex),
+                            CaseFolderPath = caseFolderPath,
+                            CaseFolderName = caseFolderName,
+                            CompanyName = context.CompanyName,
+                            SupportNumber = context.SupportNumber,
+                            Status = context.Status,
+                            ReceptionDate = context.ReceptionDate,
+                            NoteKind = note.NoteKind,
+                            NoteFilePath = note.FilePath,
+                            Title = BuildTitle(context.SupportNumber, context.CompanyName, note.NoteKind, chunkIndex),
+                            Text = chunk,
+                            LastModifiedAt = note.LastModifiedAt,
+                        });
+                        chunkIndex += 1;
+                    }
+                }
+
+                if (oldNotes is { Count: > 0 })
+                {
+                    changed += 1;
+                }
+                else
+                {
+                    added += 1;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                errors += 1;
+                warnings.Add($"Failed to update case folder: {caseFolderPath}. {ex.GetType().Name}: {ex.Message}");
+                if (oldNotes is { Count: > 0 })
+                {
+                    output.AddRange(oldNotes);
+                }
+            }
+        }
+
+        var deleted = existingByCase.Keys.Count(path => !currentCaseSet.Contains(path));
+        await WriteIndexAtomicallyAsync(indexFilePath, sourceFolder, output, cancellationToken);
+        return new AiCaseIndexBuildResult
+        {
+            ScannedCaseFolderCount = currentCaseFolders.Count,
+            ScannedNoteFileCount = scannedNoteFiles,
+            IndexedCaseCount = output.Select(static note => note.CaseFolderPath).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            IndexedNoteCount = output.Count,
+            AddedCaseCount = added,
+            ChangedCaseCount = changed,
+            DeletedCaseCount = deleted,
+            UnchangedCaseCount = unchanged,
+            ErrorCount = errors,
+            IndexFilePath = indexFilePath,
+            Warnings = warnings,
+        };
+    }
+
     private async Task WriteIndexAsync(
         string indexFilePath,
         string sourceFolder,
@@ -177,6 +306,76 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
 
         await using var stream = File.Create(indexFilePath);
         await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+    }
+
+    private async Task WriteIndexAtomicallyAsync(
+        string indexFilePath,
+        string sourceFolder,
+        IReadOnlyList<AiIndexedNote> notes,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath = indexFilePath + ".tmp";
+        try
+        {
+            var document = new AiIndexDocument
+            {
+                BuiltAt = nowProvider(),
+                SourceFolder = sourceFolder,
+                Notes = notes,
+            };
+            await using (var stream = File.Create(temporaryPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+            }
+
+            File.Move(temporaryPath, indexFilePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static async Task<AiIndexDocument> ReadExistingIndexAsync(
+        string indexFilePath,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(indexFilePath))
+        {
+            return new AiIndexDocument();
+        }
+
+        try
+        {
+            await using var stream = File.OpenRead(indexFilePath);
+            return await JsonSerializer.DeserializeAsync<AiIndexDocument>(stream, JsonOptions, cancellationToken)
+                ?? new AiIndexDocument();
+        }
+        catch (JsonException)
+        {
+            return new AiIndexDocument();
+        }
+    }
+
+    private static bool HasSameNoteFilesAndTimestamps(
+        IReadOnlyList<AiIndexedNote> oldNotes,
+        IReadOnlyList<string> currentNoteFiles)
+    {
+        var oldByPath = oldNotes
+            .Where(static note => !string.IsNullOrWhiteSpace(note.NoteFilePath))
+            .GroupBy(static note => Path.GetFullPath(note.NoteFilePath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.First().LastModifiedAt, StringComparer.OrdinalIgnoreCase);
+        if (oldByPath.Count != currentNoteFiles.Count)
+        {
+            return false;
+        }
+
+        return currentNoteFiles.All(path =>
+            oldByPath.TryGetValue(path, out var oldModified) &&
+            oldModified == new FileInfo(path).LastWriteTime);
     }
 
     private static IEnumerable<string> EnumerateCaseFolders(string sourceFolder)

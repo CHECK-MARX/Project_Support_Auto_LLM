@@ -12,5 +12,16 @@ public partial class MainWindow : Window
         ViewModel = viewModel;
         InitializeComponent();
         DataContext = viewModel;
+        Closed += (_, _) =>
+        {
+            try
+            {
+                Task.Run(viewModel.FlushSettingsAsync).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                // Auto-save already covers normal changes; shutdown must not be blocked by an I/O failure.
+            }
+        };
     }
 }

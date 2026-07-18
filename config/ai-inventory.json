@@ -11,25 +11,48 @@
     "name": "Ollama",
     "type": "local LLM runtime",
     "endpoint": "http://localhost:11434/api/chat",
+    "embeddingEndpoint": "http://localhost:11434/api/embed",
     "cloudTransmissionDefault": false
   },
   "endpoint": "http://localhost:11434/api/chat",
   "models": [
     {
-      "name": "qwen3:14b",
+      "name": "qwen3:8b",
       "provider": "Ollama",
       "deployment": "local",
-      "usage": "support answer generation",
+      "usage": "fast support answer generation preset",
       "thinkingDefault": false
     },
     {
-      "name": "gpt-oss:20b",
+      "name": "qwen3:14b",
       "provider": "Ollama",
       "deployment": "local",
-      "usage": "optional support answer generation model",
-      "thinkingDefault": false,
-      "thinkingOnlyRetry": true,
-      "minimumRetryOutputTokens": 800
+      "usage": "backward-compatible custom/default support answer model",
+      "thinkingDefault": false
+    },
+    {
+      "name": "gemma4:26b",
+      "provider": "Ollama",
+      "deployment": "local",
+      "usage": "standard support answer generation preset",
+      "thinkingParameterType": "None",
+      "structuredOutputMode": "PlainText"
+    },
+    {
+      "name": "gemma4:31b",
+      "provider": "Ollama",
+      "deployment": "local",
+      "usage": "quality support answer generation preset",
+      "thinkingParameterType": "None",
+      "structuredOutputMode": "PlainText"
+    },
+    {
+      "name": "gpt-oss:120b-cloud",
+      "provider": "Ollama",
+      "deployment": "configured runtime",
+      "usage": "optional cloud-quality support answer generation profile",
+      "thinkingParameterType": "None",
+      "structuredOutputMode": "PlainText"
     }
   ],
   "aibom": {
@@ -40,7 +63,15 @@
   },
   "rag": {
     "enabled": true,
-    "description": "Retrieves evidence from local support cases, manuals, official documents, and curated facts, then passes selected evidence to the local Ollama model.",
+    "description": "Routes product-scoped evidence by question type, combines keyword and optional Ollama embedding ranking with reciprocal-rank fusion, removes duplicates, and passes selected evidence to Ollama.",
+    "embedding": {
+      "endpoint": "http://localhost:11434/api/embed",
+      "modelSource": "settings.json LlmProvider.EmbeddingModel",
+      "indexFile": "embeddings-index.json",
+      "differentialUpdate": true,
+      "keywordFallback": true,
+      "automaticPull": false
+    },
     "dataSources": [
       "PastCaseNote",
       "Manual",
@@ -65,7 +96,7 @@
     {
       "type": "AI index",
       "pathPattern": "ai-index/products/<productName>/",
-      "description": "Product-scoped keyword/RAG search index for evidence retrieval. It is not a vector database."
+      "description": "Product-scoped differential RAG index with knowledge-manifest.json, optional embeddings-index.json, reciprocal-rank fusion, and keyword fallback without a separate vector database."
     }
   ],
   "prompts": [

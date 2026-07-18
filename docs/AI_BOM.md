@@ -28,10 +28,12 @@ It is intended for manual AI Supply Chain review, AI asset inventory review, and
 | Asset | Type | Provider | Endpoint | Deployment | Notes |
 | --- | --- | --- | --- | --- | --- |
 | Ollama | Local LLM runtime | Ollama | `http://localhost:11434/api/chat` | Local | Called directly via `HttpClient` |
+| Ollama embeddings | Local embedding runtime | Ollama | `http://localhost:11434/api/embed` | Local | Optional; model is selected in settings and no model is pulled automatically |
 
 Implementation:
 
 - `src/SupportCaseManager.Ai.Core/Llm/OllamaClient.cs`
+- `src/SupportCaseManager.Ai.Core/Llm/OllamaEmbeddingClient.cs`
 - `src/SupportCaseManager.Ai.Core/Llm/OllamaConnectionChecker.cs`
 - `src/SupportCaseManager.Ai.Core/Llm/OllamaRequestBuilder.cs`
 
@@ -41,15 +43,19 @@ The application sends UTF-8 JSON to Ollama `/api/chat`, then extracts `message.c
 
 | Model | Provider | Deployment | Required | Usage | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `qwen3:14b` | Ollama | Local | Default | Support answer generation | Default configured chat model |
-| `gpt-oss:20b` | Ollama | Local | Optional | Support answer generation | User-selectable local model |
+| `qwen3:8b` | Ollama | Local | Fast preset | Support answer generation | Boolean thinking control; JSON-capable profile |
+| `qwen3:14b` | Ollama | Local | Legacy custom default | Support answer generation | Retained for backward compatibility with existing settings |
+| `gemma4:26b` | Ollama | Local | Standard preset | Support answer generation | Plain text; no `think` parameter |
+| `gemma4:31b` | Ollama | Local | Quality preset | Support answer generation | Plain text; no `think` parameter |
+| `gpt-oss:120b-cloud` | Ollama | Configured runtime | Optional | Cloud-quality answer generation | Plain text; no unconditional `think:false` |
+| Custom installed model | Ollama | Local/configured | Optional | Support answer generation | Selected from `/api/tags`; no automatic pull |
 
 Thinking controls:
 
-- The application sends `think: false` when thinking is disabled.
-- For qwen3 models, `/no_think` is also prefixed to prompts.
-- If `gpt-oss:*` returns only `message.thinking` and no `message.content`, the client retries once with stronger no-think instructions.
-- For `gpt-oss:*` retry requests, `num_predict` is raised to at least `800`.
+- `ModelCapabilityProfile` determines thinking, structured output, token, prompt, timeout, temperature, and evidence settings.
+- Gemma 4 and GPT-OSS profiles omit `think` and request plain-text output.
+- HTTP 400 unsupported-parameter responses are retried once without `think` and `format`.
+- Legacy Qwen settings retain the compatible `think:false` and `/no_think` behavior.
 - If the retry still returns no `message.content`, generation fails safely and the thinking text is not treated as a customer answer.
 
 ## Prompts
@@ -83,6 +89,10 @@ Index path:
 ```text
 ai-index/products/<productName>/
 ```
+
+Each product index also has `knowledge-manifest.json`. Startup reads the manifest and existing index files first, then performs local change detection in the background. Manual and past-case indexes update added, changed, and deleted files atomically. Official documentation is reused for seven days by default, and a failed refresh preserves the prior index and derived fact catalogs.
+
+Retrieval combines keyword ranking with Ollama embedding cosine similarity and reciprocal-rank fusion when an embedding model is configured. Product-scoped vectors are persisted in `embeddings-index.json` and updated differentially by content hash; failed updates retain the previous vector index. Question classification controls source priority and prevents past cases from being used for latest-version questions. No separate vector database is bundled, and keyword/local-term fallback remains available without the embedding endpoint.
 
 Curated fact path example:
 

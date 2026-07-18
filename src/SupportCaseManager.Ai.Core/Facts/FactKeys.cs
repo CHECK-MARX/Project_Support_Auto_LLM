@@ -15,6 +15,7 @@ public static class QuestionTypes
     public const string FeatureAvailabilityQuestion = "FeatureAvailabilityQuestion";
     public const string HowToQuestion = "HowToQuestion";
     public const string UpgradePossibilityQuestion = "UpgradePossibilityQuestion";
+    public const string TroubleshootingQuestion = "TroubleshootingQuestion";
     public const string GeneralSupportQuestion = "GeneralSupportQuestion";
 }
 

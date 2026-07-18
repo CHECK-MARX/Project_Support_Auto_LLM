@@ -194,6 +194,112 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         };
     }
 
+    public async Task<AiManualIndexBuildResult> BuildManyIncrementalAsync(
+        IReadOnlyList<string> manualFolders,
+        string aiIndexFolder,
+        bool forceRebuild = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(aiIndexFolder))
+        {
+            throw new ArgumentException("AI index folder is required.", nameof(aiIndexFolder));
+        }
+
+        Directory.CreateDirectory(aiIndexFolder);
+        var indexFilePath = Path.Combine(aiIndexFolder, IndexFileName);
+        var existing = await ReadExistingIndexAsync(indexFilePath, cancellationToken);
+        var existingByPath = existing.Manuals
+            .Where(static item => !string.IsNullOrWhiteSpace(item.FilePath))
+            .GroupBy(static item => Path.GetFullPath(item.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        var targetFolders = (manualFolders ?? [])
+            .Where(static folder => !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
+            .Select(static folder => Path.GetFullPath(folder.Trim()))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var warnings = new List<string>();
+        var currentFiles = targetFolders
+            .SelectMany(folder => EnumerateFilesSafely(folder, warnings))
+            .Where(path => ManualDocumentFilter.ClassifyFile(path).Category == ManualDocumentCategory.ImportCandidate)
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var currentPaths = currentFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var output = new List<AiIndexedManual>();
+        var added = 0;
+        var changed = 0;
+        var unchanged = 0;
+        var errors = 0;
+
+        foreach (var filePath in currentFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var fileInfo = new FileInfo(filePath);
+            existingByPath.TryGetValue(filePath, out var oldChunks);
+            var isUnchanged = !forceRebuild && oldChunks is { Count: > 0 } &&
+                oldChunks.All(chunk => chunk.LastModifiedAt == fileInfo.LastWriteTime);
+            if (isUnchanged)
+            {
+                output.AddRange(oldChunks!);
+                unchanged += 1;
+                continue;
+            }
+
+            try
+            {
+                var content = await ManualDocumentTextExtractor.ReadAsync(filePath, cancellationToken);
+                var classification = ManualDocumentFilter.ClassifyTextFileContent(filePath, content.Text);
+                if (classification.Category == ManualDocumentCategory.ContentExcludedText)
+                {
+                    continue;
+                }
+
+                var chunks = CreateManualChunks(fileInfo, content).ToList();
+                output.AddRange(chunks);
+                if (oldChunks is { Count: > 0 })
+                {
+                    changed += 1;
+                }
+                else
+                {
+                    added += 1;
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                errors += 1;
+                warnings.Add($"Failed to update manual file: {filePath}. {ex.GetType().Name}: {ex.Message}");
+                if (oldChunks is { Count: > 0 })
+                {
+                    output.AddRange(oldChunks);
+                }
+            }
+        }
+
+        var deleted = existingByPath.Keys.Count(path => !currentPaths.Contains(path));
+        await WriteIndexAtomicallyAsync(
+            indexFilePath,
+            string.Join(Path.PathSeparator, targetFolders),
+            output,
+            cancellationToken);
+
+        return new AiManualIndexBuildResult
+        {
+            ScannedFileCount = currentFiles.Count,
+            SupportedFileCount = currentFiles.Count,
+            IndexedFileCount = output.Select(static item => item.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            IndexedChunkCount = output.Count,
+            AddedFileCount = added,
+            ChangedFileCount = changed,
+            DeletedFileCount = deleted,
+            UnchangedFileCount = unchanged,
+            ErrorCount = errors,
+            IndexFilePath = indexFilePath,
+            Warnings = warnings,
+        };
+    }
+
     private async Task WriteIndexAsync(
         string indexFilePath,
         string sourceFolder,
@@ -209,6 +315,58 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
         await using var stream = File.Create(indexFilePath);
         await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+    }
+
+    private async Task WriteIndexAtomicallyAsync(
+        string indexFilePath,
+        string sourceFolder,
+        IReadOnlyList<AiIndexedManual> manuals,
+        CancellationToken cancellationToken)
+    {
+        var temporaryPath = indexFilePath + ".tmp";
+        try
+        {
+            var document = new AiManualIndexDocument
+            {
+                BuiltAt = nowProvider(),
+                SourceFolder = sourceFolder,
+                Manuals = manuals,
+            };
+            await using (var stream = File.Create(temporaryPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+            }
+
+            File.Move(temporaryPath, indexFilePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static async Task<AiManualIndexDocument> ReadExistingIndexAsync(
+        string indexFilePath,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(indexFilePath))
+        {
+            return new AiManualIndexDocument();
+        }
+
+        try
+        {
+            await using var stream = File.OpenRead(indexFilePath);
+            return await JsonSerializer.DeserializeAsync<AiManualIndexDocument>(stream, JsonOptions, cancellationToken)
+                ?? new AiManualIndexDocument();
+        }
+        catch (JsonException)
+        {
+            return new AiManualIndexDocument();
+        }
     }
 
     private static IEnumerable<string> EnumerateFilesSafely(string manualFolder, List<string> warnings)

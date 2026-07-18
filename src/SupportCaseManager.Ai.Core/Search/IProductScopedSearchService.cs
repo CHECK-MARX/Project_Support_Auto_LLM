@@ -31,4 +31,15 @@ public interface IProductScopedSearchService
         InquiryFocus inquiryFocus,
         int maxResults = 8,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SearchSource>> SearchAllHybridAsync(
+        ProductKnowledgeSettings product,
+        string aiIndexFolder,
+        InquiryFocus inquiryFocus,
+        LlmProviderSettings providerSettings,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        return SearchAllAsync(product, aiIndexFolder, inquiryFocus, maxResults, cancellationToken);
+    }
 }

@@ -9,6 +9,8 @@ public sealed class ProductKnowledgeViewModel : ObservableObject
     private string baseFolder = string.Empty;
     private string closeFolder = string.Empty;
     private bool isEnabled = true;
+    private int crawlMaxDepth = ProductKnowledgeSettings.DefaultCrawlMaxDepth;
+    private int crawlMaxPages = ProductKnowledgeSettings.DefaultCrawlMaxPages;
 
     public ProductKnowledgeViewModel()
     {
@@ -43,6 +45,18 @@ public sealed class ProductKnowledgeViewModel : ObservableObject
         set => SetProperty(ref isEnabled, value);
     }
 
+    public int CrawlMaxDepth
+    {
+        get => crawlMaxDepth;
+        set => SetProperty(ref crawlMaxDepth, value);
+    }
+
+    public int CrawlMaxPages
+    {
+        get => crawlMaxPages;
+        set => SetProperty(ref crawlMaxPages, value);
+    }
+
     public string ManualFoldersSummary => ManualFolders.Count == 0
         ? "-"
         : string.Join("; ", ManualFolders);
@@ -69,6 +83,8 @@ public sealed class ProductKnowledgeViewModel : ObservableObject
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList(),
             IsEnabled = IsEnabled,
+            CrawlMaxDepth = CrawlMaxDepth,
+            CrawlMaxPages = CrawlMaxPages,
         };
     }
 
@@ -80,6 +96,8 @@ public sealed class ProductKnowledgeViewModel : ObservableObject
             BaseFolder = settings.BaseFolder,
             CloseFolder = settings.CloseFolder,
             IsEnabled = settings.IsEnabled,
+            CrawlMaxDepth = settings.CrawlMaxDepth,
+            CrawlMaxPages = settings.CrawlMaxPages,
         };
 
         foreach (var manualFolder in settings.ManualFolders.Where(static value => !string.IsNullOrWhiteSpace(value)))

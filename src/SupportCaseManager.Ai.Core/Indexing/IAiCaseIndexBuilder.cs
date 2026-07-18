@@ -6,4 +6,13 @@ public interface IAiCaseIndexBuilder
         string sourceFolder,
         string aiIndexFolder,
         CancellationToken cancellationToken = default);
+
+    Task<AiCaseIndexBuildResult> BuildIncrementalAsync(
+        string sourceFolder,
+        string aiIndexFolder,
+        bool forceRebuild = false,
+        CancellationToken cancellationToken = default)
+    {
+        return BuildAsync(sourceFolder, aiIndexFolder, cancellationToken);
+    }
 }

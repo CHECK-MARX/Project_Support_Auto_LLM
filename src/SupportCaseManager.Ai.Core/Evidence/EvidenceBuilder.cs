@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Facts;
 
 namespace SupportCaseManager.Ai.Core.Evidence;
 
@@ -18,10 +19,58 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             ? request.Settings.MaxEvidenceItems
             : DefaultMaxEvidenceItems;
 
-        return request.Sources
-            .OrderByDescending(static source => source.Score ?? 0)
-            .ThenBy(static source => source.SourceId, StringComparer.Ordinal)
-            .Take(maxItems)
+        var questionTypes = request.FactResolution?.Classification.QuestionTypes ?? [];
+        var charBudget = Math.Max(600, request.Settings.MaxPromptChars / 2);
+        var selected = new List<SearchSource>();
+        var urlCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        var titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var usedChars = 0;
+
+        foreach (var source in request.Sources
+            .Where(source => IsRelevantSource(source, request, questionTypes))
+            .OrderBy(source => SourcePriority(source.SourceType, questionTypes))
+            .ThenByDescending(static source => source.Score ?? 0))
+        {
+            if (selected.Count >= maxItems)
+            {
+                break;
+            }
+
+            var normalizedTitle = source.Title.Trim();
+            if (!string.IsNullOrWhiteSpace(normalizedTitle) && !titles.Add(normalizedTitle))
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(source.Url))
+            {
+                var normalizedUrl = NormalizeUrl(source.Url);
+                var count = urlCounts.GetValueOrDefault(normalizedUrl);
+                if (count >= 1)
+                {
+                    continue;
+                }
+
+                urlCounts[normalizedUrl] = count + 1;
+            }
+
+            var excerpt = BuildExcerpt(source.Text);
+            if (selected.Any(existing => IsNearDuplicate(existing.Text, source.Text)))
+            {
+                continue;
+            }
+
+            var itemChars = source.Title.Length + excerpt.Length;
+            if (selected.Count > 0 && usedChars + itemChars > charBudget)
+            {
+                continue;
+            }
+
+            selected.Add(source);
+            usedChars += itemChars;
+        }
+
+        return selected
             .Select(static source => new EvidenceItem
             {
                 SourceId = source.SourceId,
@@ -63,5 +112,74 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
         return normalized.Length <= ExcerptMaxLength
             ? normalized
             : normalized[..ExcerptMaxLength] + "...";
+    }
+
+    private static bool IsRelevantSource(
+        SearchSource source,
+        AnswerDraftRequest request,
+        IReadOnlyList<string> questionTypes)
+    {
+        if (!string.IsNullOrWhiteSpace(source.ProductName) &&
+            !string.IsNullOrWhiteSpace(request.Case.ProductName) &&
+            !string.Equals(source.ProductName, request.Case.ProductName, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase)
+            || !string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int SourcePriority(string? sourceType, IReadOnlyList<string> questionTypes)
+    {
+        if (string.Equals(sourceType, "CuratedFact", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        if (questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) ||
+            questionTypes.Contains(QuestionTypes.TroubleshootingQuestion, StringComparer.OrdinalIgnoreCase))
+        {
+            return sourceType switch
+            {
+                "Manual" => 1,
+                "OfficialDoc" => 2,
+                "PastCaseNote" => 3,
+                _ => 4,
+            };
+        }
+
+        return sourceType switch
+        {
+            "OfficialDoc" => 1,
+            "Manual" => 2,
+            "PastCaseNote" => 3,
+            _ => 4,
+        };
+    }
+
+    private static string NormalizeUrl(string value) => value.Trim().TrimEnd('/');
+
+    private static bool IsNearDuplicate(string left, string right)
+    {
+        var leftTerms = Tokenize(left);
+        var rightTerms = Tokenize(right);
+        if (leftTerms.Count == 0 || rightTerms.Count == 0)
+        {
+            return false;
+        }
+
+        var intersection = leftTerms.Intersect(rightTerms, StringComparer.OrdinalIgnoreCase).Count();
+        var union = leftTerms.Union(rightTerms, StringComparer.OrdinalIgnoreCase).Count();
+        return union > 0 && intersection / (double)union >= 0.88;
+    }
+
+    private static HashSet<string> Tokenize(string value)
+    {
+        return value
+            .Split([' ', '\r', '\n', '\t', '。', '、', ',', '.', ':', ';', '/', '\\', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static term => term.Length > 1)
+            .Take(200)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 }

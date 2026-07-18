@@ -35,13 +35,19 @@
             <TabItem Header="{DynamicResource SettingsTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
-                        <GroupBox Header="{DynamicResource AppearanceSettingsHeader}">
+                        <GroupBox Header="基本設定">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="180" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -60,9 +66,61 @@
                                 <CheckBox Grid.Row="1"
                                           Grid.Column="1"
                                           IsChecked="{Binding UseDarkMode, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Text="選択製品" />
+                                <ComboBox Grid.Row="2"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding Products}"
+                                          SelectedItem="{Binding SelectedProductKnowledge, UpdateSourceTrigger=PropertyChanged}"
+                                          DisplayMemberPath="ProductName" />
+
+                                <TextBlock Grid.Row="3" Text="回答品質モード" />
+                                <ComboBox Grid.Row="3"
+                                          Grid.Column="1"
+                                          SelectedValue="{Binding AnswerQualityMode, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectedValuePath="Tag">
+                                    <ComboBoxItem Tag="Fast" Content="高速" />
+                                    <ComboBoxItem Tag="Standard" Content="標準" />
+                                    <ComboBoxItem Tag="Quality" Content="高品質" />
+                                    <ComboBoxItem Tag="Custom" Content="カスタム" />
+                                </ComboBox>
+
+                                <TextBlock Grid.Row="4" Text="現在の回答モデル" />
+                                <ComboBox Grid.Row="4"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding AvailableModels}"
+                                          SelectedItem="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEditable="False" />
+                                <Button Grid.Row="4"
+                                        Grid.Column="2"
+                                        Content="接続確認"
+                                        Command="{Binding CheckOllamaConnectionCommand}" />
+
+                                <TextBlock Grid.Row="5" Text="Ollama接続状態" />
+                                <TextBlock Grid.Row="5"
+                                           Grid.Column="1"
+                                           Grid.ColumnSpan="2"
+                                           Text="{Binding OllamaConnectionResultText, Mode=OneWay}"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="6" Text="ナレッジ状態" />
+                                <TextBox Grid.Row="6"
+                                         Grid.Column="1"
+                                         Text="{Binding KnowledgeStatusText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="90" />
+                                <Button Grid.Row="6"
+                                        Grid.Column="2"
+                                        VerticalAlignment="Top"
+                                        Content="ナレッジを更新"
+                                        Command="{Binding UpdateKnowledgeCommand}" />
                             </Grid>
                         </GroupBox>
 
+                        <Expander Header="詳細設定" IsExpanded="False">
+                            <StackPanel>
                         <GroupBox Header="{DynamicResource AiDataFoldersHeader}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -194,6 +252,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="既存設定ファイル" />
@@ -276,28 +335,24 @@
                                              MinHeight="70" />
                                 </DockPanel>
 
-                                <TextBlock Grid.Row="8" Text="状態" />
+                                <TextBlock Grid.Row="8" Text="クロール深度" />
                                 <TextBox Grid.Row="8"
+                                         Grid.Column="1"
+                                         Text="{Binding SelectedProductKnowledge.CrawlMaxDepth, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="9" Text="最大ページ数" />
+                                <TextBox Grid.Row="9"
+                                         Grid.Column="1"
+                                         Text="{Binding SelectedProductKnowledge.CrawlMaxPages, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="10" Text="状態" />
+                                <TextBox Grid.Row="10"
                                          Grid.Column="1"
                                          Grid.ColumnSpan="2"
                                          Text="{Binding ProductKnowledgeStatusText, Mode=OneWay}"
                                          IsReadOnly="True" />
 
-                                <StackPanel Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal">
-                                    <Button Content="選択製品を検索対象にする" Command="{Binding UseSelectedProductCommand}" />
-                                    <Button Content="製品別設定を保存" Command="{Binding SaveProductKnowledgeSettingsCommand}" Margin="8,0,0,0" />
-                                    <Button Content="公式URLインデックス作成" Command="{Binding BuildOfficialDocumentIndexCommand}" Margin="8,0,0,0" />
-                                </StackPanel>
                             </Grid>
-                        </GroupBox>
-
-                        <GroupBox Header="公式URLインデックス作成結果">
-                            <TextBox Text="{Binding OfficialDocumentIndexBuildResultText, Mode=OneWay}"
-                                     AcceptsReturn="True"
-                                     IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     MinHeight="90" />
                         </GroupBox>
 
                         <GroupBox Header="{DynamicResource LlmSettingsHeader}">
@@ -325,7 +380,11 @@
                                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" />
 
                                 <TextBlock Grid.Row="2" Text="{DynamicResource ChatModelLabel}" />
-                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}" />
+                                <ComboBox Grid.Row="2"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding AvailableModels}"
+                                          SelectedItem="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEditable="False" />
 
                                 <TextBlock Grid.Row="3" Text="{DynamicResource EmbeddingModelLabel}" />
                                 <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding EmbeddingModel, UpdateSourceTrigger=PropertyChanged}" />
@@ -368,10 +427,18 @@
                         </GroupBox>
 
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="{DynamicResource LoadSettingsButton}" Command="{Binding LoadSettingsCommand}" />
-                            <Button Content="{DynamicResource SaveSettingsButton}" Command="{Binding SaveSettingsCommand}" />
                             <Button Content="{DynamicResource CheckOllamaConnectionButton}" Command="{Binding CheckOllamaConnectionCommand}" />
                             <Button Content="Ollama本番生成ミニテスト" Command="{Binding RunOllamaProductionMiniTestCommand}" />
+                            <Button Content="モデル一覧を更新" Command="{Binding RefreshOllamaModelsCommand}" />
+                            <Button Content="モデル互換性テスト" Command="{Binding RunModelCompatibilityTestCommand}" />
+                            <Button Content="設定を初期値に戻す" Command="{Binding ResetSettingsCommand}" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="完全再構築" Command="{Binding RebuildKnowledgeCommand}" />
+                            <Button Content="公式Docsのみ更新" Command="{Binding UpdateOfficialKnowledgeCommand}" />
+                            <Button Content="マニュアルのみ更新" Command="{Binding UpdateManualKnowledgeCommand}" />
+                            <Button Content="過去案件のみ更新" Command="{Binding UpdatePastCaseKnowledgeCommand}" />
                         </StackPanel>
 
                         <GroupBox Header="{DynamicResource OllamaConnectionResultHeader}">
@@ -391,6 +458,16 @@
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="100" />
                         </GroupBox>
+                        <GroupBox Header="モデル互換性テスト">
+                            <TextBox Text="{Binding ModelCompatibilityTestResultText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="100" />
+                        </GroupBox>
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -724,14 +801,14 @@
             <TabItem Header="{DynamicResource DraftResultTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
-                        <GroupBox Header="生成情報">
+                        <Expander Header="生成情報" IsExpanded="False">
                             <TextBox Text="{Binding DraftProviderStatusText, Mode=OneWay}"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="80" />
-                        </GroupBox>
+                        </Expander>
 
                         <GroupBox Header="{DynamicResource CustomerReplyDraftHeader}">
                             <TextBox Text="{Binding CustomerReplyDraft, Mode=OneWay}"
@@ -742,13 +819,10 @@
                                      MinHeight="150" />
                         </GroupBox>
 
-                        <GroupBox Header="{DynamicResource InternalMemoHeader}">
-                            <TextBox Text="{Binding InternalMemo, Mode=OneWay}"
-                                     AcceptsReturn="True"
+                        <GroupBox Header="回答可能判定">
+                            <TextBox Text="{Binding AnswerReadinessText, Mode=OneWay}"
                                      IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     MinHeight="90" />
+                                     TextWrapping="Wrap" />
                         </GroupBox>
 
                         <GroupBox Header="{DynamicResource NeedConfirmationsHeader}">
@@ -760,8 +834,34 @@
                                      MinHeight="80" />
                         </GroupBox>
 
+                        <GroupBox Header="確定済みFact">
+                            <TextBox Text="{Binding ResolvedFactsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="70" />
+                        </GroupBox>
+
                         <GroupBox Header="{DynamicResource EvidenceHeader}">
+                            <TextBox Text="{Binding EvidenceText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <Expander Header="詳細診断" IsExpanded="False">
                             <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{DynamicResource ConfidenceLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ConfidenceText}" />
+                                </Grid>
                                 <GroupBox Header="{DynamicResource UsedEvidenceHeader}">
                                     <TextBox Text="{Binding UsedSourcesText, Mode=OneWay}"
                                              AcceptsReturn="True"
@@ -770,48 +870,39 @@
                                              VerticalScrollBarVisibility="Auto"
                                              MinHeight="100" />
                                 </GroupBox>
-                                <GroupBox Header="{DynamicResource ReturnedEvidenceHeader}">
-                                    <TextBox Text="{Binding EvidenceText, Mode=OneWay}"
-                                             AcceptsReturn="True"
-                                             IsReadOnly="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             MinHeight="80" />
-                                </GroupBox>
+                                <TextBox Text="{Binding GenerationDiagnosticsText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="90" />
                             </StackPanel>
-                        </GroupBox>
+                        </Expander>
 
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="160" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="{DynamicResource ConfidenceLabel}" />
-                            <TextBlock Grid.Column="1" Text="{Binding ConfidenceText}" />
-                        </Grid>
-
-                        <GroupBox Header="回答生成診断">
-                            <TextBox Text="{Binding GenerationDiagnosticsText, Mode=OneWay}"
+                        <Expander Header="{DynamicResource InternalMemoHeader}" IsExpanded="False">
+                            <TextBox Text="{Binding InternalMemo, Mode=OneWay}"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="90" />
-                        </GroupBox>
+                        </Expander>
 
-                        <GroupBox Header="{DynamicResource WarningsHeader}">
+                        <Expander Header="{DynamicResource WarningsHeader}" IsExpanded="False">
                             <TextBox Text="{Binding WarningsText, Mode=OneWay}"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="70" />
-                        </GroupBox>
+                        </Expander>
 
                         <TextBlock Text="{Binding SavedDraftPath}" Foreground="{DynamicResource AppMutedForegroundBrush}" TextWrapping="Wrap" />
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{DynamicResource CopyCustomerReplyButton}" Command="{Binding CopyCustomerReplyCommand}" />
+                            <Button Content="再生成" Command="{Binding GenerateDraftCommand}" />
+                            <Button Content="高品質モデルで再生成" Command="{Binding GenerateHighQualityDraftCommand}" />
                             <Button Content="{DynamicResource CopyInternalMemoButton}" Command="{Binding CopyInternalMemoCommand}" />
                             <Button Content="{DynamicResource CopyAllButton}" Command="{Binding CopyAllCommand}" />
                             <Button Content="{DynamicResource SaveDraftButton}" Command="{Binding SaveDraftCommand}" />
