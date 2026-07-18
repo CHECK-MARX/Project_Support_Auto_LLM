@@ -45,9 +45,13 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
 
         var query = BuildQuery(inquiryFocus);
         return document.Documents
-            .Select(doc => new ScoredOfficialDocument(doc, Score(doc, query, inquiryFocus)))
+            .Select(doc => new ScoredOfficialDocument(
+                doc,
+                Score(doc, query, inquiryFocus),
+                ProcedureSearchBoost.Calculate(query, doc.Title, doc.SectionTitle, doc.Url, doc.Text)))
             .Where(item => item.Score.Score > 0)
-            .OrderByDescending(item => item.Score.Score)
+            .OrderByDescending(item => item.ProcedureSpecificity)
+            .ThenByDescending(item => item.Score.Score)
             .ThenByDescending(item => item.Document.RetrievedAt)
             .ThenBy(item => item.Document.Title, StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
@@ -102,6 +106,23 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         }
 
         var score = KeywordSearchScorer.Score(query, fields);
+        var procedureBoost = ProcedureSearchBoost.Calculate(
+            query,
+            document.Title,
+            document.SectionTitle,
+            document.Url,
+            document.Text);
+        if (procedureBoost > 0)
+        {
+            score = score with
+            {
+                Score = Math.Round(Math.Clamp(score.Score + procedureBoost, 0, 1), 3),
+                ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
+                    ? $"procedureProximity={procedureBoost:0.00}"
+                    : $"{score.ScoreBreakdown}; procedureProximity={procedureBoost:0.00}",
+            };
+        }
+
         if (score.Score <= 0 || inquiryFocus.TargetVersions.Count == 0)
         {
             return score;
@@ -178,5 +199,8 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             : normalized[..SearchTextMaxLength] + "...";
     }
 
-    private sealed record ScoredOfficialDocument(AiIndexedOfficialDocument Document, SearchScoreDetails Score);
+    private sealed record ScoredOfficialDocument(
+        AiIndexedOfficialDocument Document,
+        SearchScoreDetails Score,
+        double ProcedureSpecificity);
 }

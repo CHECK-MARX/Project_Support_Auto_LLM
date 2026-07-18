@@ -231,6 +231,39 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_RecoversValidateGuiAndCliProcedureWhenJsonIsTruncated()
+    {
+        var service = CreateService("""
+            { "customerReplyDraft": "回答を作成中です
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "validate-upload-procedure",
+                    SourceType = "Manual",
+                    Title = "Perforce_QAC_Manual",
+                    Text = "QA·GUIからValidateに解析結果をアップロードするには以下のメニューを使用します。［ポータル］>［Validate］>［解析結果をアップロード］。QA·CLIではqacli validate build --qaf-project . を実行します。アップロードにはValidateでの認証、適切な権限、ビルドライセンスが必要です。",
+                    Score = 0.92,
+                },
+            ]) with
+            {
+                InquiryText = "QACで解析した結果をValidateへアップロードする方法を教えて。GUIでのアップロード方法及びCLIでの方法についても教えて。",
+                InquiryFocus = new InquiryFocusExtractor().Extract("QACで解析した結果をValidateへアップロードする方法を教えて。GUIでのアップロード方法及びCLIでの方法についても教えて。"),
+                Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("［ポータル］>［Validate］>［解析結果をアップロード］", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("qacli validate build --qaf-project .", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ビルドライセンス", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("LLM応答を解析できませんでした", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains(result.Warnings, warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal));
+        Assert.Contains(result.Warnings, warning => warning.Contains("Validateアップロード手順を補完", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_UsesSelectedPastCaseTechnicalContentWhenOfficialDocExistsAndLlmRefuses()
     {
         var service = CreateService("""

@@ -95,6 +95,29 @@ public sealed class PastAnswerRetrievalTests
     }
 
     [Fact]
+    public async Task SearchBySupportNumberAsync_ReturnsIndexedReplyForLoadedClosedCase()
+    {
+        using var temp = new TempDirectory();
+        await WritePairIndexAsync(temp.Path,
+        [
+            CreatePair("HelixQAC", "案件に保存された問い合わせです。", "案件に保存された回答です。") with
+            {
+                SupportNumber = "00015391",
+            },
+        ]);
+
+        var result = Assert.Single(await new CaseAnswerPairSearcher().SearchBySupportNumberAsync(
+            temp.Path,
+            "00015391"));
+
+        Assert.Equal("ExactPastAnswer", result.SourceType);
+        Assert.Equal(PastAnswerMatchKinds.SupportNumber, result.MatchKind);
+        Assert.Equal("00015391", result.SupportNumber);
+        Assert.Equal("案件に保存された回答です。", result.Text);
+        Assert.Equal(1, result.Score);
+    }
+
+    [Fact]
     public async Task SearchAsync_MatchesWhenGreetingCompanyAndSignatureDiffer()
     {
         using var temp = new TempDirectory();

@@ -122,6 +122,7 @@
     <sys:String x:Key="TextPreviewLabel">Text preview</sys:String>
     <sys:String x:Key="EvidenceSummaryHeader">Evidence summary</sys:String>
     <sys:String x:Key="GenerateDraftButton">Generate draft</sys:String>
+    <sys:String x:Key="CancelGenerationButton">Cancel generation</sys:String>
     <sys:String x:Key="ClearInputButton">Clear input</sys:String>
 
     <sys:String x:Key="CustomerReplyDraftHeader">Customer reply draft</sys:String>

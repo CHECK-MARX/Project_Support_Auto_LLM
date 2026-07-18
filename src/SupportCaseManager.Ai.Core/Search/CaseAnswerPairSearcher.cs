@@ -20,14 +20,7 @@ public sealed class CaseAnswerPairSearcher : ICaseAnswerPairSearcher
             return [];
         }
 
-        var indexPath = Path.Combine(productIndexFolder, CaseAnswerPairIndexDocument.FileName);
-        if (!File.Exists(indexPath))
-        {
-            return [];
-        }
-
-        await using var stream = File.OpenRead(indexPath);
-        var document = await JsonSerializer.DeserializeAsync<CaseAnswerPairIndexDocument>(stream, JsonOptions, cancellationToken);
+        var document = await ReadIndexAsync(productIndexFolder, cancellationToken);
         if (document?.Pairs.Count is null or 0)
         {
             return [];
@@ -44,6 +37,36 @@ public sealed class CaseAnswerPairSearcher : ICaseAnswerPairSearcher
             .ThenByDescending(static match => match.Pair.UpdatedAt)
             .Take(maxResults)
             .Select(static match => ToSearchSource(match))
+            .ToList();
+    }
+
+    public async Task<IReadOnlyList<SearchSource>> SearchBySupportNumberAsync(
+        string productIndexFolder,
+        string supportNumber,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(supportNumber) || maxResults <= 0)
+        {
+            return [];
+        }
+
+        var document = await ReadIndexAsync(productIndexFolder, cancellationToken);
+        if (document?.Pairs.Count is null or 0)
+        {
+            return [];
+        }
+
+        var normalizedSupportNumber = supportNumber.Trim();
+        return document.Pairs
+            .Where(pair => string.Equals(
+                pair.SupportNumber.Trim(),
+                normalizedSupportNumber,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(static pair => pair.UpdatedAt)
+            .Take(maxResults)
+            .Select(static pair => ToSearchSource(
+                new ScoredPair(pair, 1, 0, PastAnswerMatchKinds.SupportNumber)))
             .ToList();
     }
 
@@ -87,7 +110,7 @@ public sealed class CaseAnswerPairSearcher : ICaseAnswerPairSearcher
 
     private static SearchSource ToSearchSource(ScoredPair match)
     {
-        var exactOrNear = match.Order <= 4 && match.Score >= 0.90;
+        var exactOrNear = match.Order == 0 || match.Order <= 4 && match.Score >= 0.90;
         return new SearchSource
         {
             SourceId = match.Pair.Id,
@@ -125,6 +148,20 @@ public sealed class CaseAnswerPairSearcher : ICaseAnswerPairSearcher
     }
 
     private sealed record ScoredPair(CaseAnswerPair Pair, double Score, int Order, string Kind);
+
+    private static async Task<CaseAnswerPairIndexDocument?> ReadIndexAsync(
+        string productIndexFolder,
+        CancellationToken cancellationToken)
+    {
+        var indexPath = Path.Combine(productIndexFolder, CaseAnswerPairIndexDocument.FileName);
+        if (!File.Exists(indexPath))
+        {
+            return null;
+        }
+
+        await using var stream = File.OpenRead(indexPath);
+        return await JsonSerializer.DeserializeAsync<CaseAnswerPairIndexDocument>(stream, JsonOptions, cancellationToken);
+    }
 }
 
 public static class PastAnswerMatchKinds
@@ -135,4 +172,5 @@ public static class PastAnswerMatchKinds
     public const string HashExact = "QuestionHash";
     public const string NearDuplicate = "NearDuplicate";
     public const string Keyword = "Keyword";
+    public const string SupportNumber = "SupportNumber";
 }

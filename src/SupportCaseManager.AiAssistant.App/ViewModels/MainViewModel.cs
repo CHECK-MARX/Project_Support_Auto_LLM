@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Windows;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
@@ -45,6 +46,12 @@ public sealed class MainViewModel : ObservableObject
     private const int ProductionMiniTestMaxOutputTokens = 8;
     private const int ProductionMiniTestMinContextWindowTokens = 512;
     private const int ProductionMiniTestMaxContextWindowTokens = 512;
+    private const string FastManualPreferredModelName = "qwen3:4b";
+    private const string FastManualFallbackModelName = "qwen3:8b";
+    private const int FastManualTimeoutSeconds = 90;
+    private const int FastManualMaxPromptChars = 3500;
+    private const int FastManualMaxEvidenceItems = 2;
+    private const int FastManualMaxOutputTokens = 320;
 
     private readonly IAiSettingsStore settingsStore;
     private readonly ICaseContextBuilder caseContextBuilder;
@@ -66,6 +73,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IAppAppearanceService appearanceService;
     private readonly ILlmClientFactory llmClientFactory;
     private CancellationTokenSource? autoSaveCancellation;
+    private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
     private bool isApplyingSettings;
     private bool ollamaModelsLoaded;
@@ -114,6 +122,8 @@ public sealed class MainViewModel : ObservableObject
     private string receptionDate = "2026-06-02";
     private NoteSnapshot? selectedNote;
     private string inquiryText = "エラーの原因と対応方針を確認したいです。";
+    private bool isSettingInquiryInternally;
+    private bool inquiryManuallyEdited;
     private string additionalInstruction = "丁寧で簡潔に回答してください。";
     private int evidenceCount;
     private int promptApproxChars;
@@ -175,6 +185,8 @@ public sealed class MainViewModel : ObservableObject
     private string generationSkippedReason = string.Empty;
     private string ragDiagnosticsText = string.Empty;
     private bool isBusy;
+    private int operationProgressPercent = 100;
+    private string operationStage = "Ready";
     private bool isUpdatingPromptSummary;
 
     public MainViewModel(
@@ -258,6 +270,9 @@ public sealed class MainViewModel : ObservableObject
         OpenSelectedSourceFileCommand = new RelayCommand(OpenSelectedSourceFile);
         OpenSelectedSourceFolderCommand = new RelayCommand(OpenSelectedSourceFolder);
         GenerateDraftCommand = new AsyncRelayCommand(GenerateDraftAsync);
+        CancelGenerationCommand = new RelayCommand(
+            CancelGeneration,
+            () => generationCancellation is { IsCancellationRequested: false });
         GenerateHighQualityDraftCommand = new AsyncRelayCommand(GenerateHighQualityDraftAsync);
         UsePastAnswerCommand = new RelayCommand(UsePastAnswerWithoutLlm);
         ApplyPastAnswerCommand = new RelayCommand(ApplyPastAnswerToDraft);
@@ -693,6 +708,13 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref inquiryText, value))
             {
+                if (!isSettingInquiryInternally)
+                {
+                    inquiryManuallyEdited = true;
+                    selectedPastAnswerCandidate = null;
+                    PastAnswerCandidateText = "問い合わせ内容が変更されました。過去回答を再検索してください。";
+                }
+
                 UpdatePromptSummary();
             }
         }
@@ -977,8 +999,40 @@ public sealed class MainViewModel : ObservableObject
     public bool IsBusy
     {
         get => isBusy;
-        private set => SetProperty(ref isBusy, value);
+        private set
+        {
+            if (SetProperty(ref isBusy, value))
+            {
+                CancelGenerationCommand.RaiseCanExecuteChanged();
+            }
+        }
     }
+
+    public int OperationProgressPercent
+    {
+        get => operationProgressPercent;
+        private set
+        {
+            if (SetProperty(ref operationProgressPercent, Math.Clamp(value, 0, 100)))
+            {
+                OnPropertyChanged(nameof(OperationProgressText));
+            }
+        }
+    }
+
+    public string OperationStage
+    {
+        get => operationStage;
+        private set
+        {
+            if (SetProperty(ref operationStage, value))
+            {
+                OnPropertyChanged(nameof(OperationProgressText));
+            }
+        }
+    }
+
+    public string OperationProgressText => $"{OperationStage} {OperationProgressPercent}%";
 
     public string LogFilePath => Path.Combine(EffectiveAiDataFolder(), "logs", "AiAssistant.log");
 
@@ -1022,6 +1076,7 @@ public sealed class MainViewModel : ObservableObject
     public RelayCommand OpenSelectedSourceFileCommand { get; }
     public RelayCommand OpenSelectedSourceFolderCommand { get; }
     public AsyncRelayCommand GenerateDraftCommand { get; }
+    public RelayCommand CancelGenerationCommand { get; }
     public AsyncRelayCommand GenerateHighQualityDraftCommand { get; }
     public RelayCommand UsePastAnswerCommand { get; }
     public RelayCommand ApplyPastAnswerCommand { get; }
@@ -1048,6 +1103,7 @@ public sealed class MainViewModel : ObservableObject
 
         await RunBusyAsync(async () =>
         {
+            SetOperationProgress(5, "設定を読み込んでいます");
             AiAssistantSettings settings;
             try
             {
@@ -1062,6 +1118,7 @@ public sealed class MainViewModel : ObservableObject
 
             ApplySettings(settings);
             settingsLoaded = true;
+            SetOperationProgress(15, "設定を反映しました");
 
             if (!string.IsNullOrWhiteSpace(options.ContextFilePath))
             {
@@ -1073,6 +1130,21 @@ public sealed class MainViewModel : ObservableObject
                 var noteFileExists = !string.IsNullOrWhiteSpace(context.NoteFilePath)
                     && File.Exists(context.NoteFilePath);
 
+                if (caseFolderExists)
+                {
+                    SetOperationProgress(25, "案件ノートを読み込んでいます");
+                    currentCaseContext = await caseContextBuilder.BuildFromCaseFolderAsync(
+                        context.CaseFolderPath,
+                        ProductName,
+                        BaseFolder,
+                        CloseFolder);
+                    ApplyCaseContext(currentCaseContext);
+                    ApplyPreferredCustomerInquiry(currentCaseContext.Notes);
+
+                    SetOperationProgress(45, "過去回答候補を検索しています");
+                    await RefreshPastAnswerCandidateCoreAsync();
+                }
+
                 LastOperationResult = FormatLaunchContextDiagnostic(context, caseFolderExists, noteFileExists);
                 ProductKnowledgeStatusText = string.IsNullOrWhiteSpace(context.ProductName)
                     ? ProductKnowledgeStatusText
@@ -1083,7 +1155,9 @@ public sealed class MainViewModel : ObservableObject
                     $"Launch context loaded. Source={SanitizeLogToken(context.Source)}; ProductName={SanitizeLogToken(context.ProductName)}; CaseFolderExists={caseFolderExists}; NoteFileExists={noteFileExists}");
             }
 
+            SetOperationProgress(75, "ナレッジ状態を確認しています");
             await RefreshKnowledgeStatusCoreAsync();
+            SetOperationProgress(95, "起動準備を完了しています");
         });
         await RunBusyAsync(RefreshOllamaModelsCoreAsync, clearExistingError: false);
         StartLocalKnowledgeRefreshInBackground();
@@ -1120,7 +1194,13 @@ public sealed class MainViewModel : ObservableObject
         var inquiry = FirstNonWhiteSpace(context.InquiryText, context.SelectedText, context.CurrentNoteText);
         if (!string.IsNullOrWhiteSpace(inquiry))
         {
-            InquiryText = inquiry;
+            var hasExplicitInquiry = !string.IsNullOrWhiteSpace(context.SelectedText)
+                || (!string.IsNullOrWhiteSpace(context.InquiryText)
+                    && !string.Equals(
+                        context.InquiryText.Trim(),
+                        context.CurrentNoteText?.Trim(),
+                        StringComparison.Ordinal));
+            SetInquiryTextInternally(inquiry, hasExplicitInquiry);
         }
 
         if (!string.IsNullOrWhiteSpace(context.AdditionalInstruction))
@@ -1657,12 +1737,18 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
+            SetOperationProgress(15, "案件ノートを読み込んでいます");
             currentCaseContext = await caseContextBuilder.BuildFromCaseFolderAsync(
                 CaseFolderPath,
                 ProductName,
                 BaseFolder,
                 CloseFolder);
+            inquiryManuallyEdited = false;
             ApplyCaseContext(currentCaseContext);
+            ApplyPreferredCustomerInquiry(currentCaseContext.Notes);
+            SetOperationProgress(55, "過去回答候補を検索しています");
+            await RefreshPastAnswerCandidateCoreAsync();
+            SetOperationProgress(90, "案件情報を反映しています");
             StatusMessage = "選択された案件フォルダを読み込みました。";
             LastOperationResult = "案件読み込み完了";
         });
@@ -1678,9 +1764,14 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
+            SetOperationProgress(20, "案件ノートを再読み込みしています");
             var notes = await noteSnapshotReader.ReadAllAsync(CaseFolderPath);
             ReplaceNotes(notes);
+            ApplyPreferredCustomerInquiry(notes);
             currentCaseContext = BuildCurrentCaseContext();
+            SetOperationProgress(60, "過去回答候補を再検索しています");
+            await RefreshPastAnswerCandidateCoreAsync();
+            SetOperationProgress(90, "再読み込み結果を反映しています");
             StatusMessage = "ノートを再読み込みしました。";
             LastOperationResult = "ノート再読み込み完了";
         });
@@ -1813,6 +1904,7 @@ public sealed class MainViewModel : ObservableObject
     {
         await RunBusyAsync(async () =>
         {
+            SetOperationProgress(5, "問い合わせ内容を解析しています");
             GenerationState = "Searching";
             GenerationSkippedReason = string.Empty;
             var searchLimit = Math.Max(12, Math.Max(1, MaxEvidenceItems) * 2);
@@ -1820,6 +1912,7 @@ public sealed class MainViewModel : ObservableObject
             allowPastAnswerAutoSelection = selectedProduct is not null;
             lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext());
             InquiryFocusSummaryText = FormatInquiryFocusSummary(lastInquiryFocus);
+            SetOperationProgress(20, "ナレッジを検索しています");
 
             if (selectedProduct is null)
             {
@@ -1856,11 +1949,24 @@ public sealed class MainViewModel : ObservableObject
                 lastOfficialDocumentSearchSources = allSources
                     .Where(static source => string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase))
                     .ToList();
+
+                if (!inquiryManuallyEdited && !string.IsNullOrWhiteSpace(SupportNumber))
+                {
+                    SetOperationProgress(65, "案件番号から過去回答を照合しています");
+                    var supportNumberAnswers = await productScopedSearchService.SearchPastAnswersBySupportNumberAsync(
+                        selectedProduct,
+                        EffectiveAiIndexFolder(),
+                        SupportNumber,
+                        searchLimit);
+                    lastSearchSources = MergeSearchSources(supportNumberAnswers, lastSearchSources, searchLimit * 2);
+                }
             }
 
+            SetOperationProgress(80, "検索結果を整理しています");
             var combined = BuildCombinedSearchSources();
             ReplaceSearchResults(combined);
             UpdatePastAnswerCandidate(selectedProduct);
+            var appliedSupportNumberAnswer = TryApplySupportNumberPastAnswer();
             SearchResultsText = FormatSearchResults(combined);
             UpdatePromptSummary();
             var summary = SearchSourceSummaryBuilder.Build(
@@ -1872,8 +1978,12 @@ public sealed class MainViewModel : ObservableObject
                 lastInquiryFocus.IsFreshnessSensitive,
                 EnableTopNFallback);
             UpdateOfficialDocDiagnostics(summary);
-            GenerationState = "Ready";
+            if (!appliedSupportNumberAnswer)
+            {
+                GenerationState = "Ready";
+            }
             UpdateRagDiagnostics();
+            SetOperationProgress(95, "検索結果を表示しています");
             await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
                 $"Keyword search completed. Operation={operationName}; Product={selectedProduct?.ProductName ?? "(root)"}; PastCaseResults={lastSearchSources.Count}; ManualResults={lastManualSearchSources.Count}; OfficialDocResults={lastOfficialDocumentSearchSources.Count}; FreshnessSensitive={lastInquiryFocus.IsFreshnessSensitive}; CombinedResults={SearchResults.Count}; VisibleResults={summary.FilteredCount}; HiddenBySourceTypeFilter={summary.HiddenBySourceTypeFilterCount}; HiddenByMinimumScore={summary.HiddenByMinimumScoreCount}; BelowAutoSelectScore={summary.BelowAutoSelectScoreCount}; IndexFolder={GetCurrentSearchIndexFolder()}");
             StatusMessage = $"{operationName}が完了しました。";
@@ -1934,6 +2044,7 @@ public sealed class MainViewModel : ObservableObject
     {
         await RunBusyAsync(async () =>
         {
+            SetOperationProgress(5, "回答生成の条件を確認しています");
             GenerationState = "Generating";
             GenerationSkippedReason = string.Empty;
             var provider = NormalizeProvider(LlmProvider);
@@ -1949,6 +2060,12 @@ public sealed class MainViewModel : ObservableObject
             if (resolvedProduct is null)
             {
                 SkipGeneration("NeedsConfiguration", "ProductUnresolved", "製品を解決できないため回答生成を開始しませんでした。製品を選択してください。");
+                return;
+            }
+
+            if (!pastAnswerPolishRequested && TryApplySupportNumberPastAnswer())
+            {
+                SetOperationProgress(100, "過去回答を表示しました");
                 return;
             }
 
@@ -1970,6 +2087,7 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
+            SetOperationProgress(25, "回答に使う根拠を選定しています");
             lastRequest = BuildDraftRequest();
             provider = NormalizeProvider(lastRequest.Settings.LlmProvider.Provider);
             model = lastRequest.Settings.LlmProvider.ChatModel;
@@ -2018,9 +2136,50 @@ public sealed class MainViewModel : ObservableObject
                 return;
             }
 
+            generationCancellation?.Dispose();
+            generationCancellation = new CancellationTokenSource();
+            CancelGenerationCommand.RaiseCanExecuteChanged();
             try
             {
-                lastResult = await answerServiceFactory(lastRequest.Settings.LlmProvider).GenerateDraftAsync(lastRequest);
+                var routeDescription = !string.Equals(model, ChatModel, StringComparison.OrdinalIgnoreCase)
+                    ? $"高速モデル {model} でLLM回答を待っています"
+                    : "LLMからの回答を待っています";
+                SetOperationProgress(45, routeDescription);
+                lastResult = await GenerateDraftWithProgressAsync(lastRequest, routeDescription, generationCancellation.Token);
+            }
+            catch (OperationCanceledException) when (generationCancellation.IsCancellationRequested)
+            {
+                GenerationDiagnosticsText = $"回答生成はユーザー操作で中止されました。{Environment.NewLine}使用モデル: {model}";
+                ErrorText = string.Empty;
+                DraftProviderStatusText = FormatDraftProviderStatus(provider, model, provider == "Ollama", lastUsedSources.Count, isSuccess: false);
+                StatusMessage = "回答生成を中止しました。根拠の検索結果は保持しています。";
+                LastOperationResult = $"Draft generation canceled. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}";
+                GenerationState = "Canceled";
+                GenerationSkippedReason = "CanceledByUser";
+                SetOperationProgress(100, "中止");
+                UpdateRagDiagnostics();
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                    $"Draft generation canceled. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
+                return;
+            }
+            catch (Exception ex) when (CanBuildManualTimeoutFallback(lastRequest, ex))
+            {
+                lastResult = BuildManualTimeoutFallbackResult(lastRequest, ex);
+                ApplyDraftResult(lastResult);
+                GenerationDiagnosticsText = FormatGenerationFailureDiagnostics(lastRequest, ex)
+                    + Environment.NewLine
+                    + "LLMタイムアウトのため、送信済みのマニュアル根拠を回答案として表示しました。";
+                ErrorText = FormatExceptionForUi(ex);
+                DraftProviderStatusText = FormatDraftProviderStatus(provider, model, provider == "Ollama", lastUsedSources.Count, isSuccess: false);
+                StatusMessage = "LLMが時間内に完了しなかったため、PDFマニュアルの該当根拠を回答案として表示しました。";
+                LastOperationResult = $"Draft generation completed with manual fallback. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}; Error={ex.GetType().Name}";
+                GenerationState = "CompletedWithFallback";
+                GenerationSkippedReason = "LlmTimeoutManualFallback";
+                SetOperationProgress(100, "マニュアル根拠を表示しました");
+                UpdateRagDiagnostics();
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                    $"Draft generation timed out; manual fallback displayed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
+                return;
             }
             catch (Exception ex)
             {
@@ -2038,27 +2197,109 @@ public sealed class MainViewModel : ObservableObject
                 LastOperationResult = $"Draft generation failed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}; Error={ex.GetType().Name}";
                 GenerationState = "Failed";
                 GenerationSkippedReason = ex.GetType().Name;
+                SetOperationProgress(100, "失敗");
                 UpdateRagDiagnostics();
                 await loggerFactory(EffectiveAiDataFolder()).LogErrorAsync($"Draft generation failed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}", ex);
                 return;
             }
+            finally
+            {
+                generationCancellation.Dispose();
+                generationCancellation = null;
+                CancelGenerationCommand.RaiseCanExecuteChanged();
+            }
 
+            SetOperationProgress(90, "回答案を整形しています");
             ApplyDraftResult(lastResult);
             GenerationDiagnosticsText = FormatGenerationSuccessDiagnostics(lastRequest, lastResult);
+            var completedWithFallback = lastResult.Warnings.Any(static warning =>
+                warning.Contains("JSON解析に失敗", StringComparison.Ordinal) ||
+                warning.Contains("応答を解析できなかった", StringComparison.Ordinal) ||
+                warning.Contains("根拠から回答案を補完", StringComparison.Ordinal) ||
+                warning.Contains("根拠からValidateアップロード手順を補完", StringComparison.Ordinal));
             if (lastUsedSources.Count == 0)
             {
                 WarningsText = PrependWarning(WarningsText, "LLMへ送信された根拠がありません。");
             }
 
             DraftProviderStatusText = FormatDraftProviderStatus(provider, model, provider == "Ollama", lastUsedSources.Count, isSuccess: true);
-            await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync($"Draft generated. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
-            StatusMessage = provider == "Ollama"
-                ? "Ollamaで回答案を生成しました。"
-                : "モック回答案を生成しました。";
-            LastOperationResult = $"Draft generated. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}";
-            GenerationState = "Completed";
+            if (completedWithFallback)
+            {
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync($"Draft response parse failed; grounded fallback displayed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
+                StatusMessage = "LLM回答をそのまま使用できなかったため、送信済み根拠から回答案を補完しました。";
+                LastOperationResult = $"Draft generation completed with grounded fallback. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}";
+                GenerationState = "CompletedWithFallback";
+                GenerationSkippedReason = "LlmResponseParseFallback";
+                SetOperationProgress(98, "根拠から補完した回答案を表示しています");
+            }
+            else
+            {
+                await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync($"Draft generated. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
+                StatusMessage = provider == "Ollama"
+                    ? "Ollamaで回答案を生成しました。"
+                    : "モック回答案を生成しました。";
+                LastOperationResult = $"Draft generated. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}";
+                GenerationState = "Completed";
+                SetOperationProgress(98, "回答案を表示しています");
+            }
             UpdateRagDiagnostics();
         });
+    }
+
+    private async Task<AnswerDraftResult> GenerateDraftWithProgressAsync(
+        AnswerDraftRequest request,
+        string stage,
+        CancellationToken cancellationToken)
+    {
+        var generationTask = answerServiceFactory(request.Settings.LlmProvider)
+            .GenerateDraftAsync(request, cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        var timeoutSeconds = Math.Max(1, request.Settings.LlmProvider.TimeoutSeconds);
+
+        try
+        {
+            while (!generationTask.IsCompleted)
+            {
+                var delayTask = Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                if (await Task.WhenAny(generationTask, delayTask) == generationTask)
+                {
+                    break;
+                }
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var elapsedSeconds = Math.Max(1, (int)stopwatch.Elapsed.TotalSeconds);
+                var progress = 45 + Math.Min(43, (int)Math.Floor(elapsedSeconds / (double)timeoutSeconds * 43));
+                SetOperationProgress(progress, $"{stage} ({elapsedSeconds}秒 / 上限{timeoutSeconds}秒)");
+            }
+
+            return await generationTask;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await generationTask;
+            }
+            catch
+            {
+                // Observe the canceled provider task before returning control to the UI.
+            }
+
+            throw;
+        }
+    }
+
+    private void CancelGeneration()
+    {
+        if (generationCancellation is not { IsCancellationRequested: false } cancellation)
+        {
+            return;
+        }
+
+        SetOperationProgress(OperationProgressPercent, "回答生成を中止しています");
+        StatusMessage = "回答生成の中止を要求しました。";
+        cancellation.Cancel();
+        CancelGenerationCommand.RaiseCanExecuteChanged();
     }
 
     private void ClearInquiry()
@@ -2112,15 +2353,18 @@ public sealed class MainViewModel : ObservableObject
 
     private async Task RunBusyAsync(Func<Task> action, bool clearExistingError = true)
     {
+        var completed = false;
         try
         {
             IsBusy = true;
+            SetOperationProgress(0, "処理を開始しています");
             if (clearExistingError)
             {
                 ErrorText = string.Empty;
             }
 
             await action();
+            completed = true;
         }
         catch (Exception ex)
         {
@@ -2136,11 +2380,39 @@ public sealed class MainViewModel : ObservableObject
             ErrorText = FormatExceptionForUi(ex);
             StatusMessage = $"処理中にエラーが発生しました: {ErrorText}";
             LastOperationResult = $"Error: {ex.GetType().Name}";
+            SetOperationProgress(100, "失敗");
         }
         finally
         {
             IsBusy = false;
+            if (completed
+                && !string.Equals(OperationStage, "失敗", StringComparison.Ordinal)
+                && !string.Equals(OperationStage, "中止", StringComparison.Ordinal))
+            {
+                SetOperationProgress(100, "完了");
+            }
         }
+    }
+
+    private void SetOperationProgress(int percent, string stage)
+    {
+        OperationStage = string.IsNullOrWhiteSpace(stage) ? "処理中" : stage.Trim();
+        OperationProgressPercent = percent;
+    }
+
+    private void SetInquiryTextInternally(string value, bool isExplicitUserInput = false)
+    {
+        isSettingInquiryInternally = true;
+        try
+        {
+            InquiryText = value;
+        }
+        finally
+        {
+            isSettingInquiryInternally = false;
+        }
+
+        inquiryManuallyEdited = isExplicitUserInput;
     }
 
     private void ApplySettings(AiAssistantSettings settings)
@@ -2417,6 +2689,34 @@ public sealed class MainViewModel : ObservableObject
         ReplaceNotes(context.Notes);
     }
 
+    private void ApplyPreferredCustomerInquiry(IReadOnlyList<NoteSnapshot> notes)
+    {
+        if (inquiryManuallyEdited)
+        {
+            return;
+        }
+
+        var inquiryNote = notes
+            .Where(IsCustomerInquiryNote)
+            .OrderByDescending(note => !string.IsNullOrWhiteSpace(SupportNumber)
+                && note.FileName.Contains(SupportNumber, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static note => note.LastModifiedAt)
+            .FirstOrDefault();
+        if (inquiryNote is null || string.IsNullOrWhiteSpace(inquiryNote.Text))
+        {
+            return;
+        }
+
+        SetInquiryTextInternally(inquiryNote.Text);
+        SelectedNote = inquiryNote;
+    }
+
+    private static bool IsCustomerInquiryNote(NoteSnapshot note)
+    {
+        return string.Equals(note.NoteKind, "お客様ご相談内容", StringComparison.OrdinalIgnoreCase)
+            || note.FileName.StartsWith("お客様ご相談内容_", StringComparison.OrdinalIgnoreCase);
+    }
+
     private void ApplyLaunchContextNote(AiAssistantLaunchContext context)
     {
         if (string.IsNullOrWhiteSpace(context.CurrentNoteText)
@@ -2691,6 +2991,99 @@ public sealed class MainViewModel : ObservableObject
                 && (inquiry.Contains("Helix QAC", StringComparison.OrdinalIgnoreCase) || inquiry.Contains("QAC", StringComparison.OrdinalIgnoreCase));
     }
 
+    private async Task RefreshPastAnswerCandidateCoreAsync(CancellationToken cancellationToken = default)
+    {
+        var searchLimit = Math.Max(12, Math.Max(1, MaxEvidenceItems) * 2);
+        var resolvedProduct = ResolveProductForSearch();
+        allowPastAnswerAutoSelection = resolvedProduct is not null;
+        lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext());
+        InquiryFocusSummaryText = FormatInquiryFocusSummary(lastInquiryFocus);
+
+        IReadOnlyList<SearchSource> inquiryMatches;
+        IReadOnlyList<SearchSource> supportNumberMatches = [];
+        if (resolvedProduct is null)
+        {
+            inquiryMatches = string.IsNullOrWhiteSpace(InquiryText)
+                ? []
+                : await productScopedSearchService.SearchPastAnswersAcrossProductsAsync(
+                    BuildProductKnowledgeSettings(),
+                    EffectiveAiIndexFolder(),
+                    InquiryText,
+                    searchLimit,
+                    cancellationToken);
+        }
+        else
+        {
+            inquiryMatches = string.IsNullOrWhiteSpace(InquiryText)
+                ? []
+                : await productScopedSearchService.SearchPastAnswersAsync(
+                    resolvedProduct,
+                    EffectiveAiIndexFolder(),
+                    InquiryText,
+                    searchLimit,
+                    cancellationToken);
+
+            if (!inquiryManuallyEdited && !string.IsNullOrWhiteSpace(SupportNumber))
+            {
+                supportNumberMatches = await productScopedSearchService.SearchPastAnswersBySupportNumberAsync(
+                    resolvedProduct,
+                    EffectiveAiIndexFolder(),
+                    SupportNumber,
+                    searchLimit,
+                    cancellationToken);
+            }
+        }
+
+        lastSearchSources = MergeSearchSources(supportNumberMatches, inquiryMatches, searchLimit);
+        lastManualSearchSources = [];
+        lastOfficialDocumentSearchSources = [];
+
+        var combined = BuildCombinedSearchSources();
+        ReplaceSearchResults(combined);
+        UpdatePastAnswerCandidate(resolvedProduct);
+        var appliedSupportNumberAnswer = TryApplySupportNumberPastAnswer();
+        SearchResultsText = FormatSearchResults(combined);
+        UpdatePromptSummary();
+        var summary = SearchSourceSummaryBuilder.Build(
+            SearchResults,
+            SourceTypeFilter,
+            MaxEvidenceItems,
+            HighScoreThreshold,
+            MinimumDisplayScore,
+            lastInquiryFocus.IsFreshnessSensitive,
+            EnableTopNFallback);
+        UpdateOfficialDocDiagnostics(summary);
+        if (!appliedSupportNumberAnswer)
+        {
+            GenerationState = "Ready";
+        }
+        UpdateRagDiagnostics();
+    }
+
+    private static IReadOnlyList<SearchSource> MergeSearchSources(
+        IEnumerable<SearchSource> preferred,
+        IEnumerable<SearchSource> additional,
+        int maxResults)
+    {
+        return preferred
+            .Concat(additional)
+            .GroupBy(static source => source.SourceId, StringComparer.Ordinal)
+            .Select(static group => group
+                .OrderByDescending(source => string.Equals(
+                    source.MatchKind,
+                    PastAnswerMatchKinds.SupportNumber,
+                    StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(static source => source.Score ?? 0)
+                .First())
+            .OrderByDescending(source => string.Equals(
+                source.MatchKind,
+                PastAnswerMatchKinds.SupportNumber,
+                StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static source => source.Score ?? 0)
+            .Take(Math.Max(1, maxResults))
+            .ToList();
+    }
+
     private void UpdatePastAnswerCandidate(ProductKnowledgeSettings? resolvedProduct)
     {
         selectedPastAnswerCandidate = SearchResults
@@ -2720,6 +3113,22 @@ public sealed class MainViewModel : ObservableObject
             $"更新日: {selectedPastAnswerCandidate.RetrievedAt?.ToString("yyyy/MM/dd HH:mm") ?? "(未設定)"}",
             $"回答本文: {selectedPastAnswerCandidate.Text}{productWarning}",
         ]);
+    }
+
+    private bool TryApplySupportNumberPastAnswer()
+    {
+        if (selectedPastAnswerCandidate is null
+            || !allowPastAnswerAutoSelection
+            || !string.Equals(
+                selectedPastAnswerCandidate.MatchKind,
+                PastAnswerMatchKinds.SupportNumber,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        ApplyPastAnswerCandidate("案件番号に一致する保存済み回答を表示しました。");
+        return true;
     }
 
     private void UsePastAnswerWithoutLlm()
@@ -2993,8 +3402,13 @@ public sealed class MainViewModel : ObservableObject
         var sources = BuildSearchSources();
         var effectiveProductName = ResolveEffectiveProductName(sources);
         var caseContext = BuildCurrentCaseContext(effectiveProductName);
+        if (inquiryManuallyEdited)
+        {
+            caseContext = caseContext with { Notes = [] };
+        }
+
         var inquiryFocus = lastInquiryFocus ?? inquiryFocusExtractor.Extract(InquiryText, caseContext);
-        var settings = BuildSettings();
+        var settings = ApplyAutomaticGenerationRoute(BuildSettings(), sources, inquiryFocus);
         var factResolution = new FactResolver().Resolve(
             effectiveProductName,
             settings.AiIndexFolder,
@@ -3019,6 +3433,83 @@ public sealed class MainViewModel : ObservableObject
             Settings = settings,
             RequestedAt = DateTimeOffset.Now,
         };
+    }
+
+    private AiAssistantSettings ApplyAutomaticGenerationRoute(
+        AiAssistantSettings settings,
+        IReadOnlyList<SearchSource> sources,
+        InquiryFocus inquiryFocus)
+    {
+        if (!ShouldUseFastManualRoute(settings, sources, inquiryFocus))
+        {
+            return settings;
+        }
+
+        var availableModel = ResolveFastManualModel()
+            ?? throw new InvalidOperationException("Fast manual model could not be resolved.");
+        var profile = ModelCapabilityProfiles.Resolve(availableModel, modelCapabilityProfiles);
+        return settings with
+        {
+            MaxEvidenceItems = Math.Min(FastManualMaxEvidenceItems, Math.Max(1, settings.MaxEvidenceItems)),
+            MaxPromptChars = Math.Min(FastManualMaxPromptChars, Math.Max(1200, settings.MaxPromptChars)),
+            DisableThinking = true,
+            LlmProvider = settings.LlmProvider with
+            {
+                ChatModel = availableModel,
+                Temperature = profile.Temperature,
+                MaxOutputTokens = Math.Min(
+                    FastManualMaxOutputTokens,
+                    Math.Max(240, Math.Min(settings.LlmProvider.MaxOutputTokens, profile.MaxOutputTokens))),
+                ContextWindowTokens = Math.Min(4096, Math.Max(2048, settings.LlmProvider.ContextWindowTokens)),
+                TimeoutSeconds = FastManualTimeoutSeconds,
+                ThinkingParameterType = profile.ThinkingParameterType,
+                ThinkingValue = profile.ThinkingValue,
+                StructuredOutputMode = profile.StructuredOutputMode,
+            },
+        };
+    }
+
+    private bool ShouldUseFastManualRoute(
+        AiAssistantSettings settings,
+        IReadOnlyList<SearchSource> sources,
+        InquiryFocus inquiryFocus)
+    {
+        return string.Equals(NormalizeProvider(settings.LlmProvider.Provider), "Ollama", StringComparison.Ordinal)
+            && !pastAnswerPolishRequested
+            && InquiryText.Trim().Length <= 500
+            && inquiryFocus.IsFreshnessSensitive == false
+            && sources.Count > 0
+            && sources.All(static source =>
+                string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase))
+            && ResolveFastManualModel() is not null;
+    }
+
+    private string? ResolveFastManualModel()
+    {
+        foreach (var candidate in new[] { FastManualPreferredModelName, FastManualFallbackModelName })
+        {
+            var available = AvailableModels.FirstOrDefault(model => ModelNamesEquivalent(model, candidate));
+            if (!string.IsNullOrWhiteSpace(available))
+            {
+                return available;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool ModelNamesEquivalent(string left, string right)
+    {
+        return string.Equals(RemoveLatestModelTag(left), RemoveLatestModelTag(right), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string RemoveLatestModelTag(string value)
+    {
+        var trimmed = value.Trim();
+        return trimmed.EndsWith(":latest", StringComparison.OrdinalIgnoreCase)
+            ? trimmed[..^7]
+            : trimmed;
     }
 
     private CaseContext BuildCurrentCaseContext(string? productNameOverride = null)
@@ -3139,7 +3630,7 @@ public sealed class MainViewModel : ObservableObject
             PromptApproxChars = SafeLength(InquiryText)
                 + SafeLength(AdditionalInstruction)
                 + summary.Selection.Sources.Sum(static source => SafeLength(source.Text))
-                + Notes.Sum(static note => SafeLength(note.Text));
+                + (inquiryManuallyEdited ? 0 : Notes.Sum(static note => SafeLength(note.Text)));
         }
         finally
         {
@@ -3280,6 +3771,108 @@ public sealed class MainViewModel : ObservableObject
     {
         return request.InquiryFocus?.IsFreshnessSensitive == true &&
             request.Sources.All(static source => !string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool CanBuildManualTimeoutFallback(AnswerDraftRequest request, Exception exception)
+    {
+        return IsTimeoutException(exception)
+            && request.Sources.Any(static source => string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsTimeoutException(Exception exception)
+    {
+        return exception is TimeoutException or TaskCanceledException
+            || exception.Message.Contains("timed out", StringComparison.OrdinalIgnoreCase)
+            || exception.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+            || (exception.InnerException is not null && IsTimeoutException(exception.InnerException));
+    }
+
+    private static AnswerDraftResult BuildManualTimeoutFallbackResult(AnswerDraftRequest request, Exception exception)
+    {
+        var manuals = request.Sources
+            .Where(static source => string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(static source => source.Score ?? 0)
+            .Take(2)
+            .ToList();
+        var reply = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(request.Case.CompanyName))
+        {
+            reply.AppendLine(request.Case.CompanyName.Trim());
+        }
+
+        reply.AppendLine(string.IsNullOrWhiteSpace(request.Case.CustomerName)
+            ? "ご担当者様"
+            : $"{request.Case.CustomerName.Trim()} 様");
+        reply.AppendLine();
+        reply.AppendLine("お問い合わせいただきありがとうございます。");
+        reply.AppendLine("マニュアルで確認できた関連手順を以下に記載します。");
+        reply.AppendLine();
+        foreach (var manual in manuals)
+        {
+            reply.AppendLine($"■ {manual.Title}");
+            reply.AppendLine(BuildFocusedManualExcerpt(manual.Text, request.InquiryText, 700));
+            reply.AppendLine();
+        }
+
+        reply.AppendLine("対象バージョンやご利用のビルド環境によって手順が異なる場合がありますので、該当条件をご確認のうえ実施してください。");
+        reply.AppendLine("以上、よろしくお願いいたします。");
+
+        var evidence = manuals.Select(manual => new EvidenceItem
+        {
+            SourceId = manual.SourceId,
+            SourceType = manual.SourceType,
+            Title = manual.Title,
+            Excerpt = BuildFocusedManualExcerpt(manual.Text, request.InquiryText, 240),
+            FilePath = manual.FilePath,
+            SupportNumber = manual.SupportNumber,
+            Relevance = Math.Clamp(manual.Score ?? 0, 0, 1),
+        }).ToList();
+        var confidence = evidence.Count == 0
+            ? 0
+            : Math.Round(Math.Min(0.65, evidence.Average(static item => item.Relevance)), 2);
+
+        return new AnswerDraftResult
+        {
+            CustomerReplyDraft = reply.ToString().Trim(),
+            InternalMemo = $"LLMがタイムアウトしたため、選択済みマニュアル根拠をそのまま回答案へ反映しました。モデル={request.Settings.LlmProvider.ChatModel}; 根拠={manuals.Count}; エラー={exception.GetType().Name}",
+            NeedConfirmations =
+            [
+                new NeedConfirmationItem
+                {
+                    Question = "対象バージョンとビルド環境に合う手順か確認してください。",
+                    Reason = "LLMによる要約が完了せず、マニュアル抜粋を直接提示しているため。",
+                    Priority = "Normal",
+                    RelatedSourceIds = manuals.Select(static source => source.SourceId).ToList(),
+                },
+            ],
+            Evidence = evidence,
+            Confidence = confidence,
+            Warnings = ["LLMタイムアウトのため、マニュアル抜粋を使った保守的な回答案です。送信前に内容を確認してください。"],
+            GeneratedAt = DateTimeOffset.Now,
+        };
+    }
+
+    private static string BuildFocusedManualExcerpt(string text, string inquiry, int maxLength)
+    {
+        var normalized = Regex.Replace(text ?? string.Empty, @"\s+", " ").Trim();
+        if (normalized.Length <= maxLength)
+        {
+            return normalized;
+        }
+
+        var keywords = Regex.Matches(inquiry ?? string.Empty, @"[A-Za-z][A-Za-z0-9_.-]{1,}")
+            .Select(static match => match.Value)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(static value => value.Length)
+            .ToList();
+        var matchIndex = keywords
+            .Select(keyword => normalized.IndexOf(keyword, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(static index => index >= 0, -1);
+        var start = matchIndex < 0
+            ? 0
+            : Math.Clamp(matchIndex - (maxLength / 4), 0, Math.Max(0, normalized.Length - maxLength));
+        var excerpt = normalized.Substring(start, Math.Min(maxLength, normalized.Length - start));
+        return $"{(start > 0 ? "..." : string.Empty)}{excerpt}{(start + excerpt.Length < normalized.Length ? "..." : string.Empty)}";
     }
 
     private static AnswerDraftResult BuildNoEvidenceSkippedResult()

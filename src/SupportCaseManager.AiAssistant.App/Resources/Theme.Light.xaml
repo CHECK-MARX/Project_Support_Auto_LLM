@@ -13,6 +13,7 @@
     <SolidColorBrush x:Key="AppHoverBrush" Color="#E2F0FF" />
     <SolidColorBrush x:Key="AppSelectionBrush" Color="#DDF4FF" />
     <SolidColorBrush x:Key="AppSelectionForegroundBrush" Color="#0F172A" />
+    <SolidColorBrush x:Key="AppProgressBrush" Color="#0969DA" />
     <SolidColorBrush x:Key="AppGridHeaderBrush" Color="#EAEFF5" />
     <SolidColorBrush x:Key="AppWarningBrush" Color="#CF222E" />
 
@@ -30,6 +31,12 @@
         <Setter Property="Margin" Value="0,0,8,8" />
         <Setter Property="MinHeight" Value="28" />
         <Setter Property="Padding" Value="4,2" />
+    </Style>
+
+    <Style TargetType="{x:Type ProgressBar}">
+        <Setter Property="Foreground" Value="{DynamicResource AppProgressBrush}" />
+        <Setter Property="Background" Value="{DynamicResource AppReadOnlyBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
     </Style>
 
     <Style TargetType="{x:Type Button}">

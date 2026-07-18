@@ -13,6 +13,7 @@
     <SolidColorBrush x:Key="AppHoverBrush" Color="#174E8C" />
     <SolidColorBrush x:Key="AppSelectionBrush" Color="#1F6FEB" />
     <SolidColorBrush x:Key="AppSelectionForegroundBrush" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="AppProgressBrush" Color="#2F81F7" />
     <SolidColorBrush x:Key="AppGridHeaderBrush" Color="#202A35" />
     <SolidColorBrush x:Key="AppWarningBrush" Color="#FF7B72" />
 
@@ -30,6 +31,12 @@
         <Setter Property="Margin" Value="0,0,8,8" />
         <Setter Property="MinHeight" Value="28" />
         <Setter Property="Padding" Value="4,2" />
+    </Style>
+
+    <Style TargetType="{x:Type ProgressBar}">
+        <Setter Property="Foreground" Value="{DynamicResource AppProgressBrush}" />
+        <Setter Property="Background" Value="{DynamicResource AppReadOnlyBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
     </Style>
 
     <Style TargetType="{x:Type Button}">
@@ -51,13 +58,133 @@
         <Setter Property="Background" Value="{DynamicResource AppControlBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource AppForegroundBrush}" />
         <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Margin" Value="4,3" />
+        <Setter Property="MinHeight" Value="28" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ComboBox}">
+                    <Grid>
+                        <Border x:Name="ComboBorder"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="2" />
+                        <ToggleButton x:Name="DropDownToggle"
+                                      Background="Transparent"
+                                      BorderThickness="0"
+                                      ClickMode="Press"
+                                      Focusable="False"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="{x:Type ToggleButton}">
+                                    <Border Background="Transparent" />
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="SelectedContent"
+                                          Margin="10,3,34,3"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                          IsHitTestVisible="False"
+                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
+                        <Path x:Name="DropDownArrow"
+                              Width="10"
+                              Height="6"
+                              Margin="0,0,11,0"
+                              HorizontalAlignment="Right"
+                              VerticalAlignment="Center"
+                              Data="M 0 0 L 5 5 L 10 0 Z"
+                              Fill="{TemplateBinding Foreground}"
+                              IsHitTestVisible="False"
+                              Stretch="Fill" />
+                        <Popup x:Name="PART_Popup"
+                               AllowsTransparency="True"
+                               Focusable="False"
+                               IsOpen="{TemplateBinding IsDropDownOpen}"
+                               Placement="Bottom"
+                               PlacementTarget="{Binding ElementName=ComboBorder}"
+                               PopupAnimation="Fade">
+                            <Border x:Name="DropDownBorder"
+                                    MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                    MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                    Background="{DynamicResource AppControlBackgroundBrush}"
+                                    BorderBrush="{DynamicResource AppBorderBrush}"
+                                    BorderThickness="1">
+                                <ScrollViewer CanContentScroll="True"
+                                              SnapsToDevicePixels="True">
+                                    <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained" />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ComboBorder" Property="Background" Value="{DynamicResource AppHoverBrush}" />
+                            <Setter TargetName="SelectedContent" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                            <Setter TargetName="DropDownArrow" Property="Fill" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <Setter TargetName="ComboBorder" Property="BorderBrush" Value="{DynamicResource AppSelectionBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsDropDownOpen" Value="True">
+                            <Setter TargetName="ComboBorder" Property="Background" Value="{DynamicResource AppSelectionBrush}" />
+                            <Setter TargetName="SelectedContent" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                            <Setter TargetName="DropDownArrow" Property="Fill" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ComboBorder" Property="Background" Value="{DynamicResource AppReadOnlyBackgroundBrush}" />
+                            <Setter TargetName="SelectedContent" Property="TextElement.Foreground" Value="{DynamicResource AppMutedForegroundBrush}" />
+                            <Setter TargetName="DropDownArrow" Property="Fill" Value="{DynamicResource AppMutedForegroundBrush}" />
+                            <Setter Property="Opacity" Value="0.75" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <Style TargetType="{x:Type ComboBoxItem}">
         <Setter Property="Background" Value="{DynamicResource AppControlBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource AppForegroundBrush}" />
         <Setter Property="Padding" Value="6,4" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type ComboBoxItem}">
+                    <Border x:Name="ItemBorder"
+                            Background="{TemplateBinding Background}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="ItemContent"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource AppHoverBrush}" />
+                            <Setter TargetName="ItemContent" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource AppSelectionBrush}" />
+                            <Setter TargetName="ItemContent" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ItemContent" Property="TextElement.Foreground" Value="{DynamicResource AppMutedForegroundBrush}" />
+                            <Setter Property="Opacity" Value="0.75" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource AppHoverBrush}" />
@@ -87,7 +214,46 @@
     <Style TargetType="{x:Type TabItem}">
         <Setter Property="Background" Value="{DynamicResource AppTabBackgroundBrush}" />
         <Setter Property="Foreground" Value="{DynamicResource AppForegroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
         <Setter Property="Padding" Value="10,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type TabItem}">
+                    <Border x:Name="TabBorder"
+                            Margin="0,0,1,0"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="TabHeader"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          ContentSource="Header"
+                                          RecognizesAccessKey="True"
+                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource AppHoverBrush}" />
+                            <Setter TargetName="TabHeader" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Panel.ZIndex" Value="1" />
+                            <Setter TargetName="TabBorder" Property="Background" Value="{DynamicResource AppSelectionBrush}" />
+                            <Setter TargetName="TabBorder" Property="BorderBrush" Value="{DynamicResource AppSelectionBrush}" />
+                            <Setter TargetName="TabHeader" Property="TextElement.Foreground" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="TabHeader" Property="TextElement.Foreground" Value="{DynamicResource AppMutedForegroundBrush}" />
+                            <Setter Property="Opacity" Value="0.75" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
         <Style.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
                 <Setter Property="Background" Value="{DynamicResource AppHoverBrush}" />

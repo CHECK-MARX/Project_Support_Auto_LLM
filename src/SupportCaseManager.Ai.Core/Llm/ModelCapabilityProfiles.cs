@@ -8,6 +8,20 @@ public static class ModelCapabilityProfiles
     [
         new()
         {
+            ModelName = "qwen3:4b",
+            ModelFamily = "Qwen3",
+            PrimaryUse = "FastManualDraft",
+            ThinkingParameterType = ThinkingParameterTypes.Boolean,
+            ThinkingValue = "false",
+            StructuredOutputMode = StructuredOutputModes.Json,
+            Temperature = 0.2,
+            MaxOutputTokens = 400,
+            TimeoutSeconds = 90,
+            MaxPromptChars = 3500,
+            RecommendedEvidenceCount = 2,
+        },
+        new()
+        {
             ModelName = "qwen3:8b",
             ModelFamily = "Qwen3",
             PrimaryUse = "FastDraft",

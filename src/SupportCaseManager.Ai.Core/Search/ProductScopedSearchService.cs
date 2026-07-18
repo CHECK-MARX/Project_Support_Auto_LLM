@@ -86,6 +86,23 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         return AttachProductName(results, product.ProductName);
     }
 
+    public async Task<IReadOnlyList<SearchSource>> SearchPastAnswersBySupportNumberAsync(
+        ProductKnowledgeSettings product,
+        string aiIndexFolder,
+        string supportNumber,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(product);
+        var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        var results = await answerPairSearcher.SearchBySupportNumberAsync(
+            productIndexFolder,
+            supportNumber,
+            maxResults,
+            cancellationToken);
+        return AttachProductName(results, product.ProductName);
+    }
+
     public async Task<IReadOnlyList<SearchSource>> SearchPastAnswersAcrossProductsAsync(
         IReadOnlyList<ProductKnowledgeSettings> products,
         string aiIndexFolder,

@@ -43,6 +43,10 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         "hf",
         "engine pack",
         "engine-pack",
+        "cct",
+        "auto-cct",
+        "auto cct",
+        "compiler compatibility",
         "version",
         "versions",
         "sast",
@@ -52,6 +56,21 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         "リリース",
         "ホットフィックス",
         "エンジンパック",
+        "コンパイラ",
+        "自動生成",
+        "同期",
+    ];
+
+    private static readonly string[] HelixQacOfficialSeedUrls =
+    [
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/automatic_ccts.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/prqa-framework-manualse7.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/multi_CCTs_with_qagui.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/en-us/doc/manual/html/Sync.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/the_validate_menu.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/uploading_results_to_validate_using_qacli.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/qacli_validate_build.html",
+        "https://help.perforce.com/qac/current/perforceqac/en-us/doc/manual/html/uploading_to_validate_using_qagui.html",
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -88,6 +107,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             .Select(static url => url.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        AddKnownOfficialSeeds(product.ProductName, sourceUrls);
 
         var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
         Directory.CreateDirectory(productIndexFolder);
@@ -244,6 +264,25 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             FailedUrls = failedUrls,
             Warnings = warnings,
         };
+    }
+
+    private static void AddKnownOfficialSeeds(string productName, List<string> sourceUrls)
+    {
+        if (!string.Equals(productName, "HelixQAC", StringComparison.OrdinalIgnoreCase)
+            || !sourceUrls.Any(static url =>
+                Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && string.Equals(uri.Host, "help.perforce.com", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        foreach (var url in HelixQacOfficialSeedUrls)
+        {
+            if (!sourceUrls.Contains(url, StringComparer.OrdinalIgnoreCase))
+            {
+                sourceUrls.Add(url);
+            }
+        }
     }
 
     private static async Task<CrawlResult> CrawlAsync(

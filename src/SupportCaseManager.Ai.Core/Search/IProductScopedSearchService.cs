@@ -45,6 +45,16 @@ public interface IProductScopedSearchService
         return Task.FromResult<IReadOnlyList<SearchSource>>([]);
     }
 
+    Task<IReadOnlyList<SearchSource>> SearchPastAnswersBySupportNumberAsync(
+        ProductKnowledgeSettings product,
+        string aiIndexFolder,
+        string supportNumber,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<SearchSource>>([]);
+    }
+
     Task<IReadOnlyList<SearchSource>> SearchAllAsync(
         ProductKnowledgeSettings product,
         string aiIndexFolder,

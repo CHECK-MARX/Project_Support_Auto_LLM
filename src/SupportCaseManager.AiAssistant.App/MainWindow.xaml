@@ -16,6 +16,10 @@
                 Margin="0,8,0,0"
                 Background="{DynamicResource AppPanelBackgroundBrush}">
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -23,11 +27,20 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
                 <TextBlock Grid.Column="1"
+                           Margin="12,0,0,0"
                            Text="{Binding GenerationState}"
                            Foreground="{DynamicResource AppMutedForegroundBrush}" />
                 <TextBlock Grid.Column="2"
-                           Text="{Binding IsBusy}"
+                           Margin="12,0,0,0"
+                           Text="{Binding OperationProgressText}"
                            Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                <ProgressBar Grid.Row="1"
+                             Grid.ColumnSpan="3"
+                             Height="8"
+                             Margin="0,7,0,0"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="{Binding OperationProgressPercent, Mode=OneWay}" />
             </Grid>
         </Border>
 
@@ -808,6 +821,7 @@
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{DynamicResource GenerateDraftButton}" Command="{Binding GenerateDraftCommand}" />
+                            <Button Content="{DynamicResource CancelGenerationButton}" Command="{Binding CancelGenerationCommand}" />
                             <Button Content="{DynamicResource ClearInputButton}" Command="{Binding ClearInquiryCommand}" />
                         </StackPanel>
                     </StackPanel>

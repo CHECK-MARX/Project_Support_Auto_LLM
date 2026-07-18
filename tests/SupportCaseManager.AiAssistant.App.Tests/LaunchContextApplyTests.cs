@@ -121,6 +121,82 @@ public sealed class LaunchContextApplyTests
     }
 
     [Fact]
+    public async Task InitializeFromCommandLineAsync_LoadedClosedCaseUsesCustomerInquiryAndFindsReplyBySupportNumber()
+    {
+        var caseFolder = Directory.CreateTempSubdirectory("ai-assistant-case-");
+        try
+        {
+            const string supportNumber = "00015391";
+            const string genericCurrentNote = "qac release notes 11.x to 12.x";
+            const string customerInquiry = "QACの更新手順について確認したいです。";
+            var context = CreateContext() with
+            {
+                CaseFolderPath = caseFolder.FullName,
+                SupportNumber = supportNumber,
+                NoteKind = "Unknown",
+                NoteFilePath = Path.Combine(caseFolder.FullName, "qac-release_notes.txt"),
+                CurrentNoteText = genericCurrentNote,
+                InquiryText = genericCurrentNote,
+                SelectedText = string.Empty,
+            };
+            var caseContext = new CaseContext
+            {
+                ProductName = "Klocwork",
+                CaseFolderPath = caseFolder.FullName,
+                CompanyName = "東洋電装株式会社",
+                SupportNumber = supportNumber,
+                Notes =
+                [
+                    new NoteSnapshot
+                    {
+                        NoteKind = "Unknown",
+                        FileName = "qac-release_notes.txt",
+                        Text = genericCurrentNote,
+                    },
+                    new NoteSnapshot
+                    {
+                        NoteKind = "お客様ご相談内容",
+                        FileName = $"お客様ご相談内容_{supportNumber}.txt",
+                        Text = customerInquiry,
+                    },
+                ],
+            };
+            var supportAnswer = new SearchSource
+            {
+                SourceId = "pair-00015391",
+                SourceType = "ExactPastAnswer",
+                ProductName = "Klocwork",
+                SupportNumber = supportNumber,
+                Title = "過去回答: QACの更新手順",
+                Text = "保存済みのお客様向け回答です。",
+                Score = 1,
+                MatchKind = PastAnswerMatchKinds.SupportNumber,
+            };
+            var services = CreateViewModel(
+                context,
+                CreateSettings(),
+                caseContext: caseContext,
+                supportAnswers: [supportAnswer]);
+
+            await services.ViewModel.InitializeFromCommandLineAsync(
+                new CommandLineOptions { ContextFilePath = "ai-context.json" });
+
+            Assert.Equal(customerInquiry, services.ViewModel.InquiryText);
+            Assert.Equal("お客様ご相談内容", services.ViewModel.SelectedNote?.NoteKind);
+            Assert.Contains("過去回答候補あり", services.ViewModel.PastAnswerCandidateText);
+            Assert.Contains(supportNumber, services.ViewModel.PastAnswerCandidateText);
+            Assert.Equal("保存済みのお客様向け回答です。", services.ViewModel.CustomerReplyDraft);
+            Assert.Equal("Completed", services.ViewModel.GenerationState);
+            Assert.Equal(100, services.ViewModel.OperationProgressPercent);
+            Assert.Equal("完了 100%", services.ViewModel.OperationProgressText);
+        }
+        finally
+        {
+            caseFolder.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
     public async Task InitializeFromCommandLineAsync_UsesInquiryTextThenSelectedTextThenCurrentNoteText()
     {
         var services = CreateViewModel(
@@ -275,21 +351,23 @@ public sealed class LaunchContextApplyTests
     private static TestServices CreateViewModel(
         AiAssistantLaunchContext? context,
         AiAssistantSettings settings,
-        Exception? launchException = null)
+        Exception? launchException = null,
+        CaseContext? caseContext = null,
+        IReadOnlyList<SearchSource>? supportAnswers = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var settingsStore = new FakeSettingsStore(settings);
         var launchReader = new FakeLaunchContextReader(context, launchException);
         var viewModel = new MainViewModel(
             settingsStore,
-            new FakeCaseContextBuilder(),
+            new FakeCaseContextBuilder(caseContext),
             new FakeNoteSnapshotReader(),
             new FakeCaseIndexBuilder(),
             new FakeManualIndexBuilder(),
             new FakeProductScopedIndexService(),
             new FakeCaseKeywordSearcher(),
             new FakeManualKeywordSearcher(),
-            new FakeProductScopedSearchService(),
+            new FakeProductScopedSearchService(supportAnswers),
             new InquiryFocusExtractor(),
             new FakeOllamaConnectionChecker(),
             new FakeSupportToolSettingsReader(),
@@ -426,6 +504,13 @@ public sealed class LaunchContextApplyTests
 
     private sealed class FakeCaseContextBuilder : ICaseContextBuilder
     {
+        private readonly CaseContext? context;
+
+        public FakeCaseContextBuilder(CaseContext? context)
+        {
+            this.context = context;
+        }
+
         public Task<CaseContext> BuildFromCaseFolderAsync(
             string caseFolderPath,
             string? productName = null,
@@ -433,7 +518,7 @@ public sealed class LaunchContextApplyTests
             string? closeFolder = null,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new CaseContext());
+            return Task.FromResult(context ?? new CaseContext());
         }
     }
 
@@ -515,6 +600,13 @@ public sealed class LaunchContextApplyTests
 
     private sealed class FakeProductScopedSearchService : IProductScopedSearchService
     {
+        private readonly IReadOnlyList<SearchSource> supportAnswers;
+
+        public FakeProductScopedSearchService(IReadOnlyList<SearchSource>? supportAnswers)
+        {
+            this.supportAnswers = supportAnswers ?? [];
+        }
+
         public Task<IReadOnlyList<SearchSource>> SearchPastCasesAsync(ProductKnowledgeSettings product, string aiIndexFolder, string query, int maxResults = 8, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SearchSource>>([]);
@@ -528,6 +620,14 @@ public sealed class LaunchContextApplyTests
         public Task<IReadOnlyList<SearchSource>> SearchOfficialDocumentsAsync(ProductKnowledgeSettings product, string aiIndexFolder, InquiryFocus inquiryFocus, int maxResults = 8, CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SearchSource>>([]);
+        }
+
+        public Task<IReadOnlyList<SearchSource>> SearchPastAnswersBySupportNumberAsync(ProductKnowledgeSettings product, string aiIndexFolder, string supportNumber, int maxResults = 8, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(supportAnswers
+                .Where(answer => string.Equals(answer.SupportNumber, supportNumber, StringComparison.OrdinalIgnoreCase))
+                .Take(maxResults)
+                .ToList() as IReadOnlyList<SearchSource>);
         }
 
         public Task<IReadOnlyList<SearchSource>> SearchAllAsync(ProductKnowledgeSettings product, string aiIndexFolder, InquiryFocus inquiryFocus, int maxResults = 8, CancellationToken cancellationToken = default)

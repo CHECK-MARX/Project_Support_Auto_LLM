@@ -15,7 +15,6 @@ public static class EvidenceSourceSelector
         var questionTypes = factResolution.Classification.QuestionTypes;
         var budget = Math.Max(600, maxPromptChars / 2);
         var selected = new List<SearchSource>();
-        var titleKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var urlCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var usedChars = 0;
 
@@ -27,12 +26,6 @@ public static class EvidenceSourceSelector
             if (selected.Count >= Math.Max(1, maxItems))
             {
                 break;
-            }
-
-            var titleKey = source.Title.Trim();
-            if (!string.IsNullOrWhiteSpace(titleKey) && !titleKeys.Add(titleKey))
-            {
-                continue;
             }
 
             if (!string.IsNullOrWhiteSpace(source.Url))

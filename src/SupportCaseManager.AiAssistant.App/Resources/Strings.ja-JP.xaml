@@ -122,6 +122,7 @@
     <sys:String x:Key="TextPreviewLabel">本文プレビュー</sys:String>
     <sys:String x:Key="EvidenceSummaryHeader">使用根拠サマリー</sys:String>
     <sys:String x:Key="GenerateDraftButton">回答案生成</sys:String>
+    <sys:String x:Key="CancelGenerationButton">生成中止</sys:String>
     <sys:String x:Key="ClearInputButton">入力クリア</sys:String>
 
     <sys:String x:Key="CustomerReplyDraftHeader">お客様向け回答案</sys:String>

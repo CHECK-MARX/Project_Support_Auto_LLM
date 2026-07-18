@@ -9,4 +9,13 @@ public interface ICaseAnswerPairSearcher
         string query,
         int maxResults = 8,
         CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<SearchSource>> SearchBySupportNumberAsync(
+        string productIndexFolder,
+        string supportNumber,
+        int maxResults = 8,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult<IReadOnlyList<SearchSource>>([]);
+    }
 }

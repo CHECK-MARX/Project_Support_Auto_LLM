@@ -68,6 +68,41 @@ public sealed class AiOfficialDocumentIndexBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_HelixQacPerforceSeedAddsJapaneseCctPages()
+    {
+        using var temp = new TempDirectory();
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse("""
+            <html><head><title>Perforce QAC Documentation</title></head>
+            <body><main><h1>Auto CCTs</h1><p>Auto CCTを有効にして同期するとCCTを自動生成できます。</p></main></body></html>
+            """));
+        var builder = new AiOfficialDocumentIndexBuilder(handler);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "HelixQAC",
+                DocumentUrls = ["https://help.perforce.com/helix-qac/current/helixqac/en-us/doc/release_notes/html/Introduction.html"],
+                CrawlMaxDepth = 0,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        Assert.Equal(9, result.SourceUrlCount);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/automatic_ccts.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/multi_CCTs_with_qagui.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/uploading_results_to_validate_using_qacli.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/en-us/doc/manual/html/uploading_to_validate_using_qagui.html",
+            result.SourceUrls);
+        Assert.Equal(9, result.FetchSuccessCount);
+    }
+
+    [Fact]
     public async Task BuildAsync_FailedRefreshRetainsPreviousIndexAndFactCatalog()
     {
         using var temp = new TempDirectory();

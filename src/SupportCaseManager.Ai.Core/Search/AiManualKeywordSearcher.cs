@@ -38,24 +38,28 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
         }
 
         return document.Manuals
-            .Select(manual => new ScoredManual(manual, Score(manual, query)))
+            .Select(manual => new ScoredManual(
+                manual,
+                Score(manual, query),
+                ProcedureSearchBoost.Calculate(query, manual.Title, manual.SectionTitle, manual.FileName, manual.Text)))
             .Where(item => item.Score.Score > 0)
-            .OrderByDescending(item => item.Score.Score)
+            .OrderByDescending(item => item.ProcedureSpecificity)
+            .ThenByDescending(item => item.Score.Score)
             .ThenBy(item => item.Manual.FileName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Manual.SectionTitle, StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
-            .Select(item => ToSearchSource(item.Manual, item.Score))
+            .Select(item => ToSearchSource(item.Manual, item.Score, query))
             .ToList();
     }
 
-    private static SearchSource ToSearchSource(AiIndexedManual manual, SearchScoreDetails score)
+    private static SearchSource ToSearchSource(AiIndexedManual manual, SearchScoreDetails score, string query)
     {
         return new SearchSource
         {
             SourceId = manual.Id,
             SourceType = "Manual",
             Title = manual.Title,
-            Text = BuildExcerpt(manual.Text),
+            Text = BuildExcerpt(manual.Text, query, score.MatchedTerms),
             FilePath = manual.FilePath,
             SupportNumber = null,
             Score = score.Score,
@@ -67,7 +71,7 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
 
     private static SearchScoreDetails Score(AiIndexedManual manual, string query)
     {
-        return KeywordSearchScorer.Score(
+        var score = KeywordSearchScorer.Score(
             query,
             [
                 new WeightedSearchField(manual.Title, 3.4, SearchFieldKind.Title),
@@ -75,9 +79,36 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
                 new WeightedSearchField(manual.FileName, 2.0, SearchFieldKind.Metadata),
                 new WeightedSearchField(manual.Text, 1.0, SearchFieldKind.Body),
             ]);
+        var procedureBoost = ProcedureSearchBoost.Calculate(
+            query,
+            manual.Title,
+            manual.SectionTitle,
+            manual.FileName,
+            manual.Text);
+        if (procedureBoost > 0)
+        {
+            score = score with
+            {
+                Score = Math.Round(Math.Clamp(score.Score + procedureBoost, 0, 1), 3),
+                ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
+                    ? $"procedureProximity={procedureBoost:0.00}"
+                    : $"{score.ScoreBreakdown}; procedureProximity={procedureBoost:0.00}",
+            };
+        }
+
+        var tableOfContentsPenalty = SearchDocumentQuality.CalculateTableOfContentsPenalty(manual.Text);
+        return tableOfContentsPenalty <= 0
+            ? score
+            : score with
+            {
+                Score = Math.Round(Math.Max(0, score.Score - tableOfContentsPenalty), 3),
+                ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
+                    ? $"tableOfContentsPenalty=-{tableOfContentsPenalty:0.00}"
+                    : $"{score.ScoreBreakdown}; tableOfContentsPenalty=-{tableOfContentsPenalty:0.00}",
+            };
     }
 
-    private static string BuildExcerpt(string text)
+    private static string BuildExcerpt(string text, string query, IReadOnlyList<string> matchedTerms)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -87,10 +118,28 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
         var normalized = string.Join(
             " ",
             text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        return normalized.Length <= SearchTextMaxLength
-            ? normalized
-            : normalized[..SearchTextMaxLength] + "...";
+        if (normalized.Length <= SearchTextMaxLength)
+        {
+            return normalized;
+        }
+
+        var candidates = new[] { "解析結果をアップロード", "アップロード", "Validate", "GUI", "CLI" }
+            .Where(term => query.Contains(term, StringComparison.OrdinalIgnoreCase))
+            .Concat(matchedTerms.OrderByDescending(static term => term.Length))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var matchIndex = candidates
+            .Select(term => normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(static index => index >= 0, -1);
+        var start = matchIndex < 0
+            ? 0
+            : Math.Clamp(matchIndex - 220, 0, normalized.Length - SearchTextMaxLength);
+        var excerpt = normalized.Substring(start, SearchTextMaxLength);
+        return $"{(start > 0 ? "..." : string.Empty)}{excerpt}{(start + excerpt.Length < normalized.Length ? "..." : string.Empty)}";
     }
 
-    private sealed record ScoredManual(AiIndexedManual Manual, SearchScoreDetails Score);
+    private sealed record ScoredManual(
+        AiIndexedManual Manual,
+        SearchScoreDetails Score,
+        double ProcedureSpecificity);
 }

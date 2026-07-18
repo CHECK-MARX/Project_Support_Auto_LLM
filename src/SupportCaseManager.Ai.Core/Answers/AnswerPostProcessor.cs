@@ -62,12 +62,17 @@ internal static partial class AnswerPostProcessor
 
                 if (finalEvidence.Count > 0)
                 {
-                    customerReply = BuildEvidenceBackedCustomerReply(request, finalEvidence);
+                    var usedProcedureFallback = TryBuildValidateUploadProcedureReply(request, out var procedureReply);
+                    customerReply = usedProcedureFallback
+                        ? procedureReply
+                        : BuildEvidenceBackedCustomerReply(request, finalEvidence);
                     internalMemo = BuildInternalMemo(
                         request,
                         finalEvidence,
                         "LLM回答が送信済み根拠を十分に活用できていなかったため、根拠タイトル/抜粋から保守的に回答案を補完しました。");
-                    mergedWarnings.Add("LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                    mergedWarnings.Add(usedProcedureFallback
+                        ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
+                        : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -236,6 +241,12 @@ internal static partial class AnswerPostProcessor
             return true;
         }
 
+        if (normalized.Contains("LLM応答を解析できませんでした", StringComparison.Ordinal) ||
+            normalized.Contains("回答内容を確認してください", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         return (normalized.Contains("選択根拠からは", StringComparison.Ordinal) ||
                 normalized.Contains("参照根拠からは", StringComparison.Ordinal) ||
                 normalized.Contains("根拠からは", StringComparison.Ordinal)) &&
@@ -353,6 +364,70 @@ internal static partial class AnswerPostProcessor
         builder.AppendLine("次の対応");
         builder.AppendLine("・上記の確認内容をもとに、必要な条件を確認したうえで回答内容を確定します。");
         return builder.ToString();
+    }
+
+    private static bool TryBuildValidateUploadProcedureReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        var inquiry = NormalizeWhitespace(request.InquiryText);
+        if (!inquiry.Contains("Validate", StringComparison.OrdinalIgnoreCase) ||
+            !inquiry.Contains("アップロード", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources
+                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+                .Select(static source => source.Text));
+        var compactSource = NormalizeWhitespace(sourceText);
+        var hasGuiProcedure =
+            (compactSource.Contains("ポータル", StringComparison.OrdinalIgnoreCase) ||
+             compactSource.Contains("Portals", StringComparison.OrdinalIgnoreCase)) &&
+            compactSource.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
+            (compactSource.Contains("解析結果をアップロード", StringComparison.OrdinalIgnoreCase) ||
+             compactSource.Contains("Upload Results", StringComparison.OrdinalIgnoreCase));
+        var hasCliProcedure =
+            compactSource.Contains("qaclivalidatebuild", StringComparison.OrdinalIgnoreCase) ||
+            compactSource.Contains("qacli validate build", StringComparison.OrdinalIgnoreCase);
+        if (!hasGuiProcedure && !hasCliProcedure)
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいた、Perforce QACの解析結果をValidateへアップロードする方法についてご案内します。");
+        if (hasGuiProcedure)
+        {
+            builder.AppendLine();
+            builder.AppendLine("【GUIでの手順】");
+            builder.AppendLine("1. QA GUIで、解析済みの対象プロジェクトを開きます。");
+            builder.AppendLine("2. ［ポータル］>［Validate］>［解析結果をアップロード］を選択します。");
+            builder.AppendLine("3. 必要に応じてソースコードエンコーディングとビルド名を指定し、アップロードを実行します。未指定の場合、エンコーディングはシステム設定、ビルド名はValidateサーバ側の割り当てが使用されます。");
+        }
+
+        if (hasCliProcedure)
+        {
+            builder.AppendLine();
+            builder.AppendLine("【CLIでの手順】");
+            builder.AppendLine("対象プロジェクトのディレクトリを指定して、次のコマンドを実行します。");
+            builder.AppendLine("qacli validate build --qaf-project .");
+            builder.AppendLine("任意のビルド名を付ける場合は、次のように --build-name を追加します。");
+            builder.AppendLine("qacli validate build --qaf-project . --build-name MyBuild-1");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【事前条件】");
+        builder.AppendLine("・Validateで認証済みで、アップロードに必要な権限があること");
+        builder.AppendLine("・Validate側に対象プロジェクトが作成され、Perforce QACプロジェクトとの接続が完了していること");
+        builder.AppendLine("・必要なビルドライセンスを利用できること");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
     }
 
     private static bool IsCustomerVisibleSourceType(string sourceType)

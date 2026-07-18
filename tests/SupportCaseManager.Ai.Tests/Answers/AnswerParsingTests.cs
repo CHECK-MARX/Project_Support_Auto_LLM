@@ -159,15 +159,16 @@ public class AnswerParsingTests
     }
 
     [Fact]
-    public async Task GenerateDraftAsync_InvalidJsonWithoutDraftDoesNotExposeRawResponse()
+    public async Task GenerateDraftAsync_InvalidJsonWithoutDraftUsesSafeGroundedFallback()
     {
         var rawResponse = "これはJSONではありません。{ invalid json";
         var service = CreateService(rawResponse);
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("LLM応答を解析できませんでした。回答内容を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain(rawResponse, result.CustomerReplyDraft);
+        Assert.DoesNotContain("LLM応答を解析できませんでした", result.CustomerReplyDraft);
+        Assert.Contains("過去案件情報", result.CustomerReplyDraft);
         Assert.Contains(result.Warnings, warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal));
     }
 
