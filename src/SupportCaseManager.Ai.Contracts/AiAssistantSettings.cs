@@ -72,4 +72,7 @@ public sealed record class AiAssistantSettings
 
     [JsonPropertyName("modelCapabilityProfiles")]
     public IReadOnlyList<ModelCapabilityProfile> ModelCapabilityProfiles { get; init; } = [];
+
+    [JsonPropertyName("codexExecutablePath")]
+    public string CodexExecutablePath { get; init; } = string.Empty;
 }

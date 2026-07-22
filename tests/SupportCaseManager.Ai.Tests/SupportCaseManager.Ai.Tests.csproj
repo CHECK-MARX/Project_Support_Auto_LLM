@@ -21,6 +21,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SupportCaseManager.Ai.Core\SupportCaseManager.Ai.Core.csproj" />
     <ProjectReference Include="..\..\src\SupportCaseManager.Ai.Contracts\SupportCaseManager.Ai.Contracts.csproj" />
+    <ProjectReference Include="..\SupportCaseManager.Codex.FakeServer\SupportCaseManager.Codex.FakeServer.csproj" />
   </ItemGroup>
 
 </Project>

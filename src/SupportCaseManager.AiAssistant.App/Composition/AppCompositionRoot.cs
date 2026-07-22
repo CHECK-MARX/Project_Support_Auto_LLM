@@ -1,5 +1,6 @@
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Cases;
+using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Ai.Core.Diagnostics;
 using SupportCaseManager.Ai.Core.Drafts;
 using SupportCaseManager.Ai.Core.Evidence;
@@ -78,6 +79,24 @@ public static class AppCompositionRoot
             draftStore,
             CreateLogger,
             appearanceService);
+
+        var codexLogger = new CodexDiagnosticLogger();
+        var codexProcessHost = new CodexAppServerProcessHost();
+        var codexTransport = new CodexJsonRpcTransport(codexProcessHost, codexLogger);
+        var codexClient = new CodexAppServerClient(new CodexExecutableResolver(), codexTransport, codexLogger);
+        var codexViewModel = new CodexChatViewModel(
+            codexClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(),
+            new CodexSessionStore(),
+            new CodexTechnicalValueDiffDetector(),
+            codexLogger,
+            viewModel.BuildCodexCaseSnapshot,
+            () => viewModel.CodexExecutablePath,
+            viewModel.ApplyCodexReply,
+            viewModel.ApplyCodexMemo,
+            viewModel.UndoCodexApplication);
+        viewModel.AttachCodex(codexViewModel);
 
         return new MainWindow(viewModel);
     }

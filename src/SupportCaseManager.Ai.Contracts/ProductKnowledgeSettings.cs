@@ -7,8 +7,14 @@ public sealed record class ProductKnowledgeSettings
     public const int DefaultCrawlMaxDepth = 2;
     public const int DefaultCrawlMaxPages = 100;
 
+    [JsonPropertyName("productId")]
+    public Guid ProductId { get; init; }
+
     [JsonPropertyName("productName")]
     public string ProductName { get; init; } = string.Empty;
+
+    [JsonPropertyName("aliases")]
+    public IReadOnlyList<string> Aliases { get; init; } = [];
 
     [JsonPropertyName("baseFolder")]
     public string BaseFolder { get; init; } = string.Empty;
@@ -24,6 +30,12 @@ public sealed record class ProductKnowledgeSettings
 
     [JsonPropertyName("isEnabled")]
     public bool IsEnabled { get; init; } = true;
+
+    [JsonPropertyName("productPromptFilePath")]
+    public string ProductPromptFilePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("sortOrder")]
+    public int SortOrder { get; init; }
 
     [JsonPropertyName("crawlMaxDepth")]
     public int CrawlMaxDepth { get; init; } = DefaultCrawlMaxDepth;

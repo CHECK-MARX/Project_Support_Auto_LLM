@@ -18,7 +18,10 @@ public sealed class AiAssistantLaunchContextBuilder : IAiAssistantLaunchContextB
         return new AiAssistantLaunchContext
         {
             Source = SourceName,
+            ProductId = state.ProductId,
             ProductName = Normalize(state.ProductName),
+            ProductPromptFilePath = Normalize(state.ProductPromptFilePath),
+            SupportToolSettingsFilePath = Normalize(state.SupportToolSettingsFilePath),
             BaseFolder = Normalize(state.BaseFolder),
             CloseFolder = Normalize(state.CloseFolder),
             CaseFolderPath = Normalize(state.CaseFolderPath),

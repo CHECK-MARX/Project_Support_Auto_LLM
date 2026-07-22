@@ -18,6 +18,7 @@ public sealed class DarkThemeTests
         AssertReadableState(styles, "ComboBoxItem", "IsSelected");
         AssertReadableState(styles, "ComboBoxItem", "IsMouseOver");
         AssertReadableState(styles, "DataGridRow", "IsSelected");
+        AssertReadableState(styles, "Button", "IsEnabled", "False");
     }
 
     [Fact]
@@ -40,6 +41,7 @@ public sealed class DarkThemeTests
     [InlineData("TabItem", "TabBorder", "TabHeader", "IsSelected")]
     [InlineData("ComboBox", "ComboBorder", "SelectedContent", "IsDropDownOpen")]
     [InlineData("ComboBoxItem", "ItemBorder", "ItemContent", "IsSelected")]
+    [InlineData("Button", "ButtonBorder", "ButtonContent", "IsEnabled")]
     public void DarkTheme_CustomTemplatesPaintVisibleBackgroundAndForeground(
         string targetType,
         string backgroundTarget,
@@ -77,14 +79,16 @@ public sealed class DarkThemeTests
     private static void AssertReadableState(
         IReadOnlyList<XElement> styles,
         string targetType,
-        string triggerProperty)
+        string triggerProperty,
+        string triggerValue = "True")
     {
         var style = Assert.Single(styles, element => TargetsType(element, targetType));
         var trigger = Assert.Single(style.Elements()
             .Where(element => element.Name.LocalName == "Style.Triggers")
             .SelectMany(static element => element.Elements()), element =>
             element.Name.LocalName == "Trigger" &&
-            string.Equals(element.Attribute("Property")?.Value, triggerProperty, StringComparison.Ordinal));
+            string.Equals(element.Attribute("Property")?.Value, triggerProperty, StringComparison.Ordinal) &&
+            string.Equals(element.Attribute("Value")?.Value, triggerValue, StringComparison.Ordinal));
         var setters = trigger.Elements()
             .Where(element => element.Name.LocalName == "Setter")
             .ToDictionary(

@@ -43,6 +43,7 @@ public sealed class AiAnswerService : IAiAnswerService
         var parsed = AnswerDraftResultParser.Parse(response, request.Sources);
         var result = parsed.Result;
         var warnings = new List<string>();
+        warnings.AddRange(request.InstructionWarnings);
         warnings.AddRange(parsed.Warnings);
         warnings.AddRange(result.Warnings);
         warnings.AddRange(generation.Diagnostics);

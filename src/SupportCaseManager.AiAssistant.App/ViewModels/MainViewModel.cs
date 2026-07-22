@@ -8,6 +8,7 @@ using System.Windows;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Cases;
+using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Ai.Core.Diagnostics;
 using SupportCaseManager.Ai.Core.Drafts;
 using SupportCaseManager.Ai.Core.Evidence;
@@ -23,6 +24,7 @@ using SupportCaseManager.Ai.Core.Settings;
 using SupportCaseManager.AiAssistant.App.Appearance;
 using SupportCaseManager.AiAssistant.App.Launch;
 using SupportCaseManager.AiAssistant.App.Llm;
+using SupportCaseManager.Core.Config;
 using WinForms = System.Windows.Forms;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
@@ -39,6 +41,7 @@ public sealed class MainViewModel : ObservableObject
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
+        nameof(CodexExecutablePath),
     ];
     private const int ProductionMiniTestMinTimeoutSeconds = 60;
     private const int ProductionMiniTestMaxTimeoutSeconds = 60;
@@ -188,6 +191,10 @@ public sealed class MainViewModel : ObservableObject
     private int operationProgressPercent = 100;
     private string operationStage = "Ready";
     private bool isUpdatingPromptSummary;
+    private string codexExecutablePath = string.Empty;
+    private string? codexReplyUndo;
+    private string? codexMemoUndo;
+    private CodexChatViewModel? codex;
 
     public MainViewModel(
         IAiSettingsStore settingsStore,
@@ -242,6 +249,7 @@ public sealed class MainViewModel : ObservableObject
         SelectCloseFolderCommand = new RelayCommand(() => SelectFolder(value => CloseFolder = value));
         SelectManualFolderCommand = new RelayCommand(() => SelectFolder(value => ManualFolder = value));
         SelectSupportToolSettingsFileCommand = new RelayCommand(SelectSupportToolSettingsFile);
+        SelectCodexExecutableCommand = new RelayCommand(SelectCodexExecutable);
         LoadSupportToolSettingsCommand = new AsyncRelayCommand(LoadSupportToolSettingsAsync);
         AddProductManualFolderCommand = new RelayCommand(AddProductManualFolder);
         RemoveProductManualFolderCommand = new RelayCommand(RemoveProductManualFolder);
@@ -309,6 +317,14 @@ public sealed class MainViewModel : ObservableObject
 
     public ObservableCollection<string> AvailableModels { get; } = [];
 
+    public CodexChatViewModel? Codex => codex;
+
+    public string CodexExecutablePath
+    {
+        get => codexExecutablePath;
+        set => SetProperty(ref codexExecutablePath, value?.Trim() ?? string.Empty);
+    }
+
     public IReadOnlyList<string> QualityModes { get; } =
     [
         SupportCaseManager.Ai.Contracts.AnswerQualityModes.Fast,
@@ -316,6 +332,113 @@ public sealed class MainViewModel : ObservableObject
         SupportCaseManager.Ai.Contracts.AnswerQualityModes.Quality,
         SupportCaseManager.Ai.Contracts.AnswerQualityModes.Custom,
     ];
+
+    public void AttachCodex(CodexChatViewModel codexViewModel)
+    {
+        codex = codexViewModel ?? throw new ArgumentNullException(nameof(codexViewModel));
+        OnPropertyChanged(nameof(Codex));
+    }
+
+    public CodexCaseSnapshot BuildCodexCaseSnapshot()
+    {
+        var product = SelectedProductKnowledge;
+        var selectedEvidence = SearchResults
+            .Where(static item => item.WillBeSentToLlm || item.IsSelected)
+            .OrderByDescending(static item =>
+                item.SourceType.Contains("Curated", StringComparison.OrdinalIgnoreCase)
+                || item.SourceType.Contains("Fact", StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static item => item.Score ?? 0)
+            .Select(static item => item.Source)
+            .ToArray();
+        return new CodexCaseSnapshot
+        {
+            ProductId = product?.ProductId is { } productId && productId != Guid.Empty ? productId : null,
+            ProductName = ProductName,
+            ProductPromptFilePath = product?.ProductPromptFilePath ?? string.Empty,
+            SupportToolSettingsFilePath = SupportToolSettingsFilePath,
+            SupportId = SupportNumber,
+            CompanyName = CompanyName,
+            CustomerName = CustomerName,
+            Status = Status,
+            ReceptionDate = ReceptionDate,
+            CaseFolder = CaseFolderPath,
+            InquiryFile = SelectedNote?.FileName ?? string.Empty,
+            InquiryText = InquiryText,
+            CustomerReplyDraft = CustomerReplyDraft,
+            InternalMemo = InternalMemo,
+            Evidence = selectedEvidence,
+        };
+    }
+
+    public bool ApplyCodexReply(string text)
+    {
+        return ApplyCodexText(text, isReply: true);
+    }
+
+    public bool ApplyCodexMemo(string text)
+    {
+        return ApplyCodexText(text, isReply: false);
+    }
+
+    public void UndoCodexApplication(bool isReply)
+    {
+        if (isReply && codexReplyUndo is not null)
+        {
+            (CustomerReplyDraft, codexReplyUndo) = (codexReplyUndo, CustomerReplyDraft);
+            StatusMessage = "返信案へのCodex反映を元に戻しました。ファイルは変更していません。";
+        }
+        else if (!isReply && codexMemoUndo is not null)
+        {
+            (InternalMemo, codexMemoUndo) = (codexMemoUndo, InternalMemo);
+            StatusMessage = "調査メモへのCodex反映を元に戻しました。ファイルは変更していません。";
+        }
+    }
+
+    private bool ApplyCodexText(string text, bool isReply)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var current = isReply ? CustomerReplyDraft : InternalMemo;
+        var hasExisting = !string.IsNullOrWhiteSpace(current)
+            && !string.Equals(current.Trim(), "まだ生成されていません。", StringComparison.Ordinal);
+        var append = false;
+        if (hasExisting)
+        {
+            var target = isReply ? "お客様への返信案" : "調査メモ";
+            var result = System.Windows.MessageBox.Show(
+                $"{target}に既存の文章があります。\n\nはい: 上書き\nいいえ: 末尾へ追加\nキャンセル: 反映しない",
+                "Codex回答の反映",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+            if (result == MessageBoxResult.Cancel)
+            {
+                return false;
+            }
+
+            append = result == MessageBoxResult.No;
+        }
+
+        var next = CodexDraftTextApplicator.Apply(
+            current,
+            text,
+            append ? CodexDraftApplyMode.Append : CodexDraftApplyMode.Overwrite);
+        if (isReply)
+        {
+            codexReplyUndo = current;
+            CustomerReplyDraft = next;
+        }
+        else
+        {
+            codexMemoUndo = current;
+            InternalMemo = next;
+        }
+
+        StatusMessage = "Codex回答を編集欄へ反映しました。まだ案件ファイルには保存していません。";
+        return true;
+    }
 
     public string AiDataFolder
     {
@@ -747,13 +870,13 @@ public sealed class MainViewModel : ObservableObject
     public string CustomerReplyDraft
     {
         get => customerReplyDraft;
-        private set => SetProperty(ref customerReplyDraft, value);
+        set => SetProperty(ref customerReplyDraft, value);
     }
 
     public string InternalMemo
     {
         get => internalMemo;
-        private set => SetProperty(ref internalMemo, value);
+        set => SetProperty(ref internalMemo, value);
     }
 
     public string NeedConfirmationsText
@@ -1089,6 +1212,7 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand SaveDraftCommand { get; }
     public AsyncRelayCommand WriteTestLogCommand { get; }
     public RelayCommand OpenLogCommand { get; }
+    public RelayCommand SelectCodexExecutableCommand { get; }
 
     public async Task InitializeFromCommandLineAsync(CommandLineOptions options)
     {
@@ -1123,6 +1247,30 @@ public sealed class MainViewModel : ObservableObject
             if (!string.IsNullOrWhiteSpace(options.ContextFilePath))
             {
                 var context = await launchContextReader.ReadAsync(options.ContextFilePath);
+                if (!string.IsNullOrWhiteSpace(context.SupportToolSettingsFilePath)
+                    && File.Exists(context.SupportToolSettingsFilePath))
+                {
+                    try
+                    {
+                        var supportProducts = await supportToolSettingsReader.ReadProductsAsync(context.SupportToolSettingsFilePath);
+                        var synchronized = productSettingsSynchronizer.Synchronize(
+                            BuildSettings() with { SupportToolSettingsFilePath = context.SupportToolSettingsFilePath },
+                            supportProducts);
+                        ApplySettings(synchronized);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+                    {
+                        ProductKnowledgeStatusText = $"製品設定を同期できませんでした。起動情報だけで続行します: {ex.Message}";
+                    }
+                }
+
+                var suppliedCaseFolder = context.CaseFolderPath;
+                context = LaunchContextCaseFolderResolver.Resolve(context);
+                var caseFolderRecovered = !string.Equals(
+                    suppliedCaseFolder,
+                    context.CaseFolderPath,
+                    StringComparison.OrdinalIgnoreCase);
+
                 ApplyLaunchContext(context);
 
                 var caseFolderExists = !string.IsNullOrWhiteSpace(context.CaseFolderPath)
@@ -1146,13 +1294,19 @@ public sealed class MainViewModel : ObservableObject
                 }
 
                 LastOperationResult = FormatLaunchContextDiagnostic(context, caseFolderExists, noteFileExists);
+                if (caseFolderRecovered)
+                {
+                    LastOperationResult += $"案件フォルダ自動補正: {suppliedCaseFolder} -> {context.CaseFolderPath}{Environment.NewLine}";
+                }
                 ProductKnowledgeStatusText = string.IsNullOrWhiteSpace(context.ProductName)
                     ? ProductKnowledgeStatusText
                     : $"外部コンテキスト製品: {context.ProductName}";
-                StatusMessage = "設定と案件情報を自動読込みしました。";
+                StatusMessage = caseFolderRecovered
+                    ? "製品フォルダから案件を再検出し、案件情報を自動読込みしました。"
+                    : "設定と案件情報を自動読込みしました。";
 
                 await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
-                    $"Launch context loaded. Source={SanitizeLogToken(context.Source)}; ProductName={SanitizeLogToken(context.ProductName)}; CaseFolderExists={caseFolderExists}; NoteFileExists={noteFileExists}");
+                    $"Launch context loaded. Source={SanitizeLogToken(context.Source)}; ProductName={SanitizeLogToken(context.ProductName)}; CaseFolderExists={caseFolderExists}; NoteFileExists={noteFileExists}; CaseFolderRecovered={caseFolderRecovered}");
             }
 
             SetOperationProgress(75, "ナレッジ状態を確認しています");
@@ -1166,6 +1320,11 @@ public sealed class MainViewModel : ObservableObject
     public void ApplyLaunchContext(AiAssistantLaunchContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
+
+        if (!string.IsNullOrWhiteSpace(context.SupportToolSettingsFilePath))
+        {
+            SupportToolSettingsFilePath = context.SupportToolSettingsFilePath;
+        }
 
         if (!string.IsNullOrWhiteSpace(context.ProductName))
         {
@@ -2466,6 +2625,7 @@ public sealed class MainViewModel : ObservableObject
         modelCapabilityProfiles = settings.ModelCapabilityProfiles.Count > 0
             ? settings.ModelCapabilityProfiles
             : ModelCapabilityProfiles.GetDefaults();
+        CodexExecutablePath = settings.CodexExecutablePath;
         RefreshProductContextComputedProperties();
         }
         finally
@@ -2658,6 +2818,7 @@ public sealed class MainViewModel : ObservableObject
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
                 : ModelCapabilityProfiles.GetDefaults(),
+            CodexExecutablePath = CodexExecutablePath,
             LlmProvider = new LlmProviderSettings
             {
                 Provider = string.IsNullOrWhiteSpace(this.LlmProvider) ? "Fake" : this.LlmProvider,
@@ -2797,14 +2958,21 @@ public sealed class MainViewModel : ObservableObject
 
         var productNameFromContext = context.ProductName.Trim();
         var product = Products.FirstOrDefault(item =>
-            string.Equals(item.ProductName, productNameFromContext, StringComparison.OrdinalIgnoreCase));
+                context.ProductId.HasValue
+                && context.ProductId.Value != Guid.Empty
+                && item.ProductId == context.ProductId.Value)
+            ?? Products.FirstOrDefault(item =>
+                string.Equals(item.ProductName, productNameFromContext, StringComparison.OrdinalIgnoreCase)
+                || item.Aliases.Any(alias => string.Equals(alias, productNameFromContext, StringComparison.OrdinalIgnoreCase)));
         if (product is null)
         {
             product = new ProductKnowledgeViewModel
             {
+                ProductId = context.ProductId ?? Guid.NewGuid(),
                 ProductName = productNameFromContext,
                 BaseFolder = context.BaseFolder ?? string.Empty,
                 CloseFolder = context.CloseFolder ?? string.Empty,
+                ProductPromptFilePath = context.ProductPromptFilePath ?? string.Empty,
                 IsEnabled = true,
             };
             AddProduct(product);
@@ -2812,6 +2980,17 @@ public sealed class MainViewModel : ObservableObject
         }
         else
         {
+            if (product.ProductId == Guid.Empty && context.ProductId.HasValue)
+            {
+                product.ProductId = context.ProductId.Value;
+            }
+
+            if (string.IsNullOrWhiteSpace(product.ProductPromptFilePath)
+                && !string.IsNullOrWhiteSpace(context.ProductPromptFilePath))
+            {
+                product.ProductPromptFilePath = context.ProductPromptFilePath;
+            }
+
             ProductKnowledgeStatusText = $"外部Context製品を検索対象にしました: {productNameFromContext}";
         }
 
@@ -2974,20 +3153,21 @@ public sealed class MainViewModel : ObservableObject
                 string.Equals(product.ProductName, ProductName.Trim(), StringComparison.OrdinalIgnoreCase));
         }
 
-        resolved ??= enabledProducts.FirstOrDefault(product => InquiryMentionsProduct(InquiryText, product.ProductName));
+        resolved ??= enabledProducts.FirstOrDefault(product => InquiryMentionsProduct(InquiryText, product));
         return resolved?.ToSettings();
     }
 
-    private static bool InquiryMentionsProduct(string inquiry, string productName)
+    private static bool InquiryMentionsProduct(string inquiry, ProductKnowledgeViewModel product)
     {
-        if (inquiry.Contains(productName, StringComparison.OrdinalIgnoreCase))
+        if (inquiry.Contains(product.ProductName, StringComparison.OrdinalIgnoreCase)
+            || product.Aliases.Any(alias => inquiry.Contains(alias, StringComparison.OrdinalIgnoreCase)))
         {
             return true;
         }
 
-        return string.Equals(productName, "Checkmarx", StringComparison.OrdinalIgnoreCase)
+        return string.Equals(product.ProductName, "Checkmarx", StringComparison.OrdinalIgnoreCase)
             ? inquiry.Contains("CxSAST", StringComparison.OrdinalIgnoreCase) || inquiry.Contains("SAST", StringComparison.OrdinalIgnoreCase)
-            : string.Equals(productName, "HelixQAC", StringComparison.OrdinalIgnoreCase)
+            : string.Equals(product.ProductName, "HelixQAC", StringComparison.OrdinalIgnoreCase)
                 && (inquiry.Contains("Helix QAC", StringComparison.OrdinalIgnoreCase) || inquiry.Contains("QAC", StringComparison.OrdinalIgnoreCase));
     }
 
@@ -3420,10 +3600,19 @@ public sealed class MainViewModel : ObservableObject
             factResolution,
             settings.MaxEvidenceItems,
             settings.MaxPromptChars);
+        var selectedProduct = Products.FirstOrDefault(product =>
+            string.Equals(product.ProductName, effectiveProductName, StringComparison.OrdinalIgnoreCase));
+        var promptInstructions = SupportPromptFileLoader.Load(
+            selectedProduct?.ProductPromptFilePath,
+            SupportToolSettingsFilePath);
         return new AnswerDraftRequest
         {
             Case = caseContext,
             InquiryText = InquiryText,
+            CommonInstruction = promptInstructions.CommonInstruction,
+            ProductInstruction = promptInstructions.ProductInstruction,
+            AttachmentFileNames = CollectAttachmentFileNames(caseContext.CaseFolderPath),
+            InstructionWarnings = promptInstructions.Warnings,
             InquiryFocus = inquiryFocus,
             UserInstruction = pastAnswerPolishRequested
                 ? $"以下は同一またはほぼ同一の問い合わせに対して過去に実際に使用した回答です。技術的内容を変更せず、今回のお客様向けに必要な範囲だけ整えてください。{Environment.NewLine}{AdditionalInstruction}"
@@ -3433,6 +3622,27 @@ public sealed class MainViewModel : ObservableObject
             Settings = settings,
             RequestedAt = DateTimeOffset.Now,
         };
+    }
+
+    private static IReadOnlyList<string> CollectAttachmentFileNames(string? caseFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(caseFolderPath) || !Directory.Exists(caseFolderPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            return Directory.EnumerateFiles(caseFolderPath, "*", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(caseFolderPath, path))
+                .OrderBy(static path => path, StringComparer.CurrentCultureIgnoreCase)
+                .Take(200)
+                .ToList();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return [];
+        }
     }
 
     private AiAssistantSettings ApplyAutomaticGenerationRoute(
@@ -4759,6 +4969,22 @@ public sealed class MainViewModel : ObservableObject
         {
             System.Windows.Clipboard.SetText(text);
             StatusMessage = "クリップボードにコピーしました。";
+        }
+    }
+
+    private void SelectCodexExecutable()
+    {
+        using var dialog = new WinForms.OpenFileDialog
+        {
+            Title = "Codex実行ファイルを選択",
+            Filter = "Codex実行ファイル (codex.exe)|codex.exe|実行ファイル (*.exe)|*.exe|すべてのファイル (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog() == WinForms.DialogResult.OK)
+        {
+            CodexExecutablePath = dialog.FileName;
+            StatusMessage = "Codex実行ファイルを設定しました。接続テストで確認してください。";
         }
     }
 

@@ -9,6 +9,8 @@
     <SolidColorBrush x:Key="AppReadOnlyBackgroundBrush" Color="#1B222C" />
     <SolidColorBrush x:Key="AppButtonBackgroundBrush" Color="#0B63CE" />
     <SolidColorBrush x:Key="AppButtonHoverBrush" Color="#1479F2" />
+    <SolidColorBrush x:Key="AppDisabledBackgroundBrush" Color="#252D36" />
+    <SolidColorBrush x:Key="AppDisabledForegroundBrush" Color="#A6B3C2" />
     <SolidColorBrush x:Key="AppTabBackgroundBrush" Color="#1B222C" />
     <SolidColorBrush x:Key="AppHoverBrush" Color="#174E8C" />
     <SolidColorBrush x:Key="AppSelectionBrush" Color="#1F6FEB" />
@@ -46,6 +48,54 @@
         <Setter Property="Margin" Value="0,0,8,8" />
         <Setter Property="MinHeight" Value="30" />
         <Setter Property="Padding" Value="12,4" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type Button}">
+                    <Border x:Name="ButtonBorder"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="2"
+                            Padding="{TemplateBinding Padding}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter x:Name="ButtonContent"
+                                          HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                          RecognizesAccessKey="True"
+                                          SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource AppButtonHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource AppSelectionBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{DynamicResource AppSelectionForegroundBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="ButtonBorder" Property="Background" Value="{DynamicResource AppDisabledBackgroundBrush}" />
+                            <Setter TargetName="ButtonBorder" Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+                            <Setter TargetName="ButtonContent" Property="TextElement.Foreground" Value="{DynamicResource AppDisabledForegroundBrush}" />
+                            <Setter Property="Opacity" Value="1" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Background" Value="{DynamicResource AppButtonHoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter Property="Background" Value="{DynamicResource AppDisabledBackgroundBrush}" />
+                <Setter Property="Foreground" Value="{DynamicResource AppDisabledForegroundBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource AppBorderBrush}" />
+                <Setter Property="Opacity" Value="1" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <Style TargetType="{x:Type CheckBox}">

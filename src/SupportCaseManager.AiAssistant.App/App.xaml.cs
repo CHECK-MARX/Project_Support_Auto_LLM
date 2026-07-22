@@ -14,5 +14,9 @@ public partial class App : System.Windows.Application
 
         var options = new CommandLineArgsParser().Parse(e.Args);
         await mainWindow.ViewModel.InitializeFromCommandLineAsync(options);
+        if (mainWindow.ViewModel.Codex is not null)
+        {
+            await mainWindow.ViewModel.Codex.InitializeAsync();
+        }
     }
 }

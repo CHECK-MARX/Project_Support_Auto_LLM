@@ -4,7 +4,13 @@ namespace SupportCaseManager.App.AiHandoff;
 
 public sealed record class AiAssistantCurrentState
 {
+    public Guid? ProductId { get; init; }
+
     public string ProductName { get; init; } = string.Empty;
+
+    public string ProductPromptFilePath { get; init; } = string.Empty;
+
+    public string SupportToolSettingsFilePath { get; init; } = string.Empty;
 
     public string BaseFolder { get; init; } = string.Empty;
 

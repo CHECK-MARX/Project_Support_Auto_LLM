@@ -314,9 +314,14 @@ public partial class MainWindow : Window
         {
             _productEntries.Add(new ProductEntry
             {
+                Id = product.Id,
                 Name = product.Name,
+                Aliases = product.Aliases?.ToList() ?? new List<string>(),
                 BasePath = product.BasePath,
                 ClosedPath = product.ClosedPath,
+                ProductPromptFilePath = product.ProductPromptFilePath,
+                IsEnabled = product.IsEnabled,
+                SortOrder = product.SortOrder,
                 NoteTemplates = NormalizeTemplates(product.NoteTemplates ?? new List<Dictionary<string, string>>()),
             });
         }
@@ -387,7 +392,11 @@ public partial class MainWindow : Window
         try
         {
             MainTabControl.Items.Clear();
-            var products = _settings.Products;
+            var products = _settings.Products
+                .Where(product => product.IsEnabled)
+                .OrderBy(product => product.SortOrder)
+                .ThenBy(product => product.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
             if (products.Count == 0)
             {
                 SetBasePathEditingEnabled(true);
@@ -425,7 +434,10 @@ public partial class MainWindow : Window
             var activeName = _settings.ActiveProduct;
             var activeTab = MainTabControl.Items.OfType<TabItem>()
                 .FirstOrDefault(item => item.Tag is ProductProfile profile &&
-                                        string.Equals(profile.Name, activeName, StringComparison.Ordinal));
+                                        profile.Id == _settings.ActiveProductId)
+                ?? MainTabControl.Items.OfType<TabItem>()
+                    .FirstOrDefault(item => item.Tag is ProductProfile profile &&
+                                            string.Equals(profile.Name, activeName, StringComparison.OrdinalIgnoreCase));
 
             MainTabControl.SelectedItem = activeTab ?? MainTabControl.Items.OfType<TabItem>()
                 .FirstOrDefault(item => item.Tag is ProductProfile);
@@ -517,6 +529,7 @@ public partial class MainWindow : Window
     {
         _activeProduct = product;
         _settings.ActiveProduct = product.Name;
+        _settings.ActiveProductId = product.Id;
         BasePathTextBox.Text = product.BasePath;
         SetBasePathEditingEnabled(false);
         EnsureActiveProductTemplates();
@@ -533,7 +546,13 @@ public partial class MainWindow : Window
 
     private void OnProductAdd(object sender, RoutedEventArgs e)
     {
-        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, BasePathTextBox.Text.Trim(), string.Empty)
+        var dialog = new ProductEditorDialog("製品追加", new ProductDefinition
+        {
+            Id = Guid.NewGuid(),
+            BaseFolder = BasePathTextBox.Text.Trim(),
+            IsEnabled = true,
+            SortOrder = _productEntries.Count,
+        })
         {
             Owner = this
         };
@@ -545,9 +564,14 @@ public partial class MainWindow : Window
 
         _productEntries.Add(new ProductEntry
         {
+            Id = dialog.ProductId,
             Name = dialog.ProductName,
+            Aliases = dialog.Aliases.ToList(),
             BasePath = dialog.BasePath,
             ClosedPath = dialog.ClosedPath,
+            ProductPromptFilePath = dialog.ProductPromptFilePath,
+            IsEnabled = dialog.IsProductEnabled,
+            SortOrder = dialog.SortOrder,
             NoteTemplates = new List<Dictionary<string, string>>(),
         });
     }
@@ -556,7 +580,19 @@ public partial class MainWindow : Window
     {
         if (ProductGrid.SelectedItem is ProductEntry entry)
         {
+            var result = MessageBox.Show(
+                this,
+                $"製品設定「{entry.Name}」を一覧から削除しますか？\nベースフォルダ、クローズフォルダ、案件ファイル、指示ファイルは削除されません。",
+                "製品設定の削除確認",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+
             _productEntries.Remove(entry);
+            NormalizeProductSortOrders();
         }
     }
 
@@ -568,7 +604,17 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ProductEditorDialog("プロダクト編集", entry.Name, entry.BasePath, entry.ClosedPath)
+        var dialog = new ProductEditorDialog("製品編集", new ProductDefinition
+        {
+            Id = entry.Id,
+            DisplayName = entry.Name,
+            Aliases = entry.Aliases.ToList(),
+            BaseFolder = entry.BasePath,
+            ClosedFolder = entry.ClosedPath,
+            ProductPromptFilePath = entry.ProductPromptFilePath,
+            IsEnabled = entry.IsEnabled,
+            SortOrder = entry.SortOrder,
+        })
         {
             Owner = this
         };
@@ -579,8 +625,12 @@ public partial class MainWindow : Window
         }
 
         entry.Name = dialog.ProductName;
+        entry.Aliases = dialog.Aliases.ToList();
         entry.BasePath = dialog.BasePath;
         entry.ClosedPath = dialog.ClosedPath;
+        entry.ProductPromptFilePath = dialog.ProductPromptFilePath;
+        entry.IsEnabled = dialog.IsProductEnabled;
+        entry.SortOrder = dialog.SortOrder;
         ProductGrid.Items.Refresh();
     }
 
@@ -615,6 +665,7 @@ public partial class MainWindow : Window
         }
 
         _productEntries.Move(index, targetIndex);
+        NormalizeProductSortOrders();
         ProductGrid.SelectedItem = entry;
         ProductGrid.ScrollIntoView(entry);
     }
@@ -652,7 +703,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        var dialog = new ProductEditorDialog("プロダクト追加", string.Empty, basePath, string.Empty)
+        var dialog = new ProductEditorDialog("製品追加", new ProductDefinition
+        {
+            Id = Guid.NewGuid(),
+            BaseFolder = basePath,
+            IsEnabled = true,
+            SortOrder = _productEntries.Count,
+        })
         {
             Owner = this
         };
@@ -664,9 +721,14 @@ public partial class MainWindow : Window
 
         _productEntries.Add(new ProductEntry
         {
+            Id = dialog.ProductId,
             Name = dialog.ProductName,
+            Aliases = dialog.Aliases.ToList(),
             BasePath = dialog.BasePath,
             ClosedPath = dialog.ClosedPath,
+            ProductPromptFilePath = dialog.ProductPromptFilePath,
+            IsEnabled = dialog.IsProductEnabled,
+            SortOrder = dialog.SortOrder,
             NoteTemplates = new List<Dictionary<string, string>>(),
         });
     }
@@ -678,44 +740,55 @@ public partial class MainWindow : Window
         var cleaned = _productEntries
             .Select(entry => new ProductEntry
             {
+                Id = entry.Id == Guid.Empty ? Guid.NewGuid() : entry.Id,
                 Name = entry.Name?.Trim() ?? string.Empty,
+                Aliases = entry.Aliases
+                    .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                    .Select(alias => alias.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
                 BasePath = entry.BasePath?.Trim() ?? string.Empty,
                 ClosedPath = entry.ClosedPath?.Trim() ?? string.Empty,
+                ProductPromptFilePath = entry.ProductPromptFilePath?.Trim() ?? string.Empty,
+                IsEnabled = entry.IsEnabled,
+                SortOrder = entry.SortOrder,
                 NoteTemplates = NormalizeTemplates(entry.NoteTemplates ?? new List<Dictionary<string, string>>()),
             })
-            .Where(entry => !string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(entry.BasePath))
             .ToList();
 
-        var duplicates = cleaned
-            .GroupBy(entry => entry.Name, StringComparer.Ordinal)
-            .Where(group => group.Count() > 1)
-            .Select(group => group.Key)
-            .ToList();
-
-        if (duplicates.Count > 0)
+        var validationErrors = ProductDefinitionValidator.ValidateAll(cleaned.Select(entry => entry.ToDefinition()));
+        if (validationErrors.Count > 0)
         {
-            MessageBox.Show(this, $"同名のプロダクトがあります: {string.Join(", ", duplicates)}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, string.Join(Environment.NewLine, validationErrors), "製品設定エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
 
         _settings.Products = cleaned
             .Select(entry => new ProductProfile
             {
+                Id = entry.Id,
                 Name = entry.Name,
+                Aliases = entry.Aliases.ToList(),
                 BasePath = entry.BasePath,
                 ClosedPath = entry.ClosedPath,
+                ProductPromptFilePath = entry.ProductPromptFilePath,
+                IsEnabled = entry.IsEnabled,
+                SortOrder = entry.SortOrder,
                 NoteTemplates = entry.NoteTemplates ?? new List<Dictionary<string, string>>(),
             })
+            .OrderBy(product => product.SortOrder)
             .ToList();
 
         if (_settings.Products.Count == 0)
         {
             _settings.ActiveProduct = string.Empty;
+            _settings.ActiveProductId = null;
         }
-        else if (string.IsNullOrWhiteSpace(_settings.ActiveProduct) ||
-                 !_settings.Products.Any(item => item.Name == _settings.ActiveProduct))
+        else if (!_settings.Products.Any(item => item.Id == _settings.ActiveProductId && item.IsEnabled))
         {
-            _settings.ActiveProduct = _settings.Products[0].Name;
+            var firstEnabled = _settings.Products.FirstOrDefault(item => item.IsEnabled);
+            _settings.ActiveProduct = firstEnabled?.Name ?? string.Empty;
+            _settings.ActiveProductId = firstEnabled?.Id;
         }
 
         _config.Save(_settings);
@@ -723,7 +796,20 @@ public partial class MainWindow : Window
         InitializeProductSettings();
         MarkAllDataDirty(refreshIfVisible: true);
         StartCaseTabPreload();
-        _viewModel.StatusMessage = "プロダクト設定を保存しました。";
+        var warnings = ProductDefinitionValidator.GetWarnings(_settings.Products);
+        _viewModel.StatusMessage = warnings.Count == 0
+            ? "製品設定を保存し、画面へ反映しました。"
+            : $"製品設定を保存しました。警告: {string.Join(" / ", warnings)}";
+    }
+
+    private void NormalizeProductSortOrders()
+    {
+        for (var index = 0; index < _productEntries.Count; index++)
+        {
+            _productEntries[index].SortOrder = index;
+        }
+
+        ProductGrid.Items.Refresh();
     }
 
     private void OnStatusRefresh(object sender, RoutedEventArgs e)
@@ -5008,6 +5094,20 @@ public partial class MainWindow : Window
 
         try
         {
+            var promptLoad = SupportPromptFileLoader.Load(
+                _activeProduct?.ProductPromptFilePath,
+                _config.SettingsPath,
+                _settings.CommonPromptFilePath);
+            if (promptLoad.Warnings.Count > 0)
+            {
+                MessageBox.Show(
+                    this,
+                    string.Join(Environment.NewLine, promptLoad.Warnings) + Environment.NewLine + "不足した指示は省略してAI回答支援を起動します。",
+                    "Codex指示ファイルの警告",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+
             var context = _aiLaunchContextBuilder.BuildFromCurrentState(BuildAiAssistantCurrentState());
             var contextFilePath = await _aiHandoffFileWriter.WriteAsync(context);
             await _aiProcessLauncher.LaunchAsync(contextFilePath);
@@ -5029,7 +5129,10 @@ public partial class MainWindow : Window
         var selectedDate = CreatedDatePicker.SelectedDate;
         return new AiAssistantCurrentState
         {
+            ProductId = _activeProduct?.Id ?? _settings.ActiveProductId,
             ProductName = _activeProduct?.Name ?? _settings.ActiveProduct ?? string.Empty,
+            ProductPromptFilePath = _activeProduct?.ProductPromptFilePath ?? string.Empty,
+            SupportToolSettingsFilePath = _config.SettingsPath,
             BaseFolder = FirstNonEmpty(_activeProduct?.BasePath, BasePathTextBox.Text, _viewModel.BasePath),
             CloseFolder = _activeProduct?.ClosedPath ?? string.Empty,
             CaseFolderPath = _currentCase?.FolderPath ?? string.Empty,
@@ -5747,10 +5850,31 @@ public partial class MainWindow : Window
 
     private sealed class ProductEntry
     {
+        public Guid Id { get; set; }
         public string Name { get; set; } = string.Empty;
+        public List<string> Aliases { get; set; } = new();
+        public string AliasesDisplay => string.Join(", ", Aliases);
         public string BasePath { get; set; } = string.Empty;
         public string ClosedPath { get; set; } = string.Empty;
+        public string ProductPromptFilePath { get; set; } = string.Empty;
+        public bool IsEnabled { get; set; } = true;
+        public int SortOrder { get; set; }
         public List<Dictionary<string, string>> NoteTemplates { get; set; } = new();
+
+        public ProductDefinition ToDefinition()
+        {
+            return new ProductDefinition
+            {
+                Id = Id,
+                DisplayName = Name,
+                Aliases = Aliases.ToList(),
+                BaseFolder = BasePath,
+                ClosedFolder = ClosedPath,
+                ProductPromptFilePath = ProductPromptFilePath,
+                IsEnabled = IsEnabled,
+                SortOrder = SortOrder,
+            };
+        }
     }
 
     private sealed class ProductSummaryEntry

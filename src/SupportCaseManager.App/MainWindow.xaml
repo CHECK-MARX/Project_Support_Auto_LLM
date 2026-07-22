@@ -182,7 +182,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Text="プロダクト名がタブ名になります。追加/編集はダイアログから行ってください。" Margin="0,0,0,8" />
+                    <TextBlock Text="有効な製品が表示順にタブへ反映されます。無効化しても既存案件と設定は保持されます。" Margin="0,0,0,8" />
                     <DataGrid x:Name="ProductGrid"
                               Grid.Row="1"
                               AutoGenerateColumns="False"
@@ -192,9 +192,13 @@
                               HeadersVisibility="Column"
                               Margin="0,0,0,8">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Header="プロダクト名" Binding="{Binding Name}" Width="200" />
+                            <DataGridTextColumn Header="製品名" Binding="{Binding Name}" Width="170" />
+                            <DataGridTextColumn Header="エイリアス" Binding="{Binding AliasesDisplay}" Width="180" />
                             <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BasePath}" Width="2*" />
-                            <DataGridTextColumn Header="クローズフォルダ" Binding="{Binding ClosedPath}" Width="*" />
+                            <DataGridTextColumn Header="クローズフォルダ" Binding="{Binding ClosedPath}" Width="2*" />
+                            <DataGridTextColumn Header="Codex指示ファイル" Binding="{Binding ProductPromptFilePath}" Width="2*" />
+                            <DataGridCheckBoxColumn Header="有効" Binding="{Binding IsEnabled}" Width="70" />
+                            <DataGridTextColumn Header="表示順" Binding="{Binding SortOrder}" Width="80" />
                         </DataGrid.Columns>
                     </DataGrid>
 

@@ -8,6 +8,9 @@
         MinHeight="640"
         Background="{DynamicResource AppBackgroundBrush}"
         Foreground="{DynamicResource AppForegroundBrush}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Window.Resources>
     <DockPanel Margin="12" Background="{DynamicResource AppBackgroundBrush}">
         <Border DockPanel.Dock="Bottom"
                 BorderBrush="{DynamicResource AppBorderBrush}"
@@ -56,6 +59,7 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
@@ -129,6 +133,54 @@
                                         VerticalAlignment="Top"
                                         Content="ナレッジを更新"
                                         Command="{Binding UpdateKnowledgeCommand}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="Codex App Server">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Codex実行ファイル" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding CodexExecutablePath, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2"
+                                        Content="参照"
+                                        Command="{Binding SelectCodexExecutableCommand}" />
+
+                                <TextBlock Grid.Row="1" Text="接続テスト" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Left"
+                                        Content="Codexへ接続"
+                                        Command="{Binding Codex.ConnectCommand}" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="2"
+                                        Content="再接続"
+                                        Command="{Binding Codex.ReconnectCommand}" />
+
+                                <TextBlock Grid.Row="2" Text="Codexバージョン" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.Version, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="3" Text="App Server" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.ConnectionDetails, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="4" Text="ChatGPT認証" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.AccountStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="5" Text="既定モデル" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.Model, Mode=OneWay}" TextWrapping="Wrap" />
                             </Grid>
                         </GroupBox>
 
@@ -828,6 +880,207 @@
                 </ScrollViewer>
             </TabItem>
 
+            <TabItem Header="Codex調査">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="案件と接続状態">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="サポートID" />
+                                <TextBlock Grid.Column="1" Text="{Binding SupportNumber}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="2" Text="会社名" />
+                                <TextBlock Grid.Column="3" Text="{Binding CompanyName}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="1" Text="製品名" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ProductName}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="問い合わせファイル" />
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding SelectedNote.FileName}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="2" Text="案件フォルダ" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
+                                           Text="{Binding CaseFolderPath}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="3" Text="接続状態" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Codex.ConnectionStateText, Mode=OneWay}" />
+                                <TextBlock Grid.Row="3" Grid.Column="2" Text="Codex Thread ID" />
+                                <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding Codex.ThreadId, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="4" Text="Codex / モデル" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3">
+                                    <Run Text="{Binding Codex.Version, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Codex.Model, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <TextBlock Grid.Row="5" Text="処理状態" />
+                                <Grid Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ProgressBar Height="10" Minimum="0" Maximum="100"
+                                                 Value="{Binding Codex.ProgressPercent, Mode=OneWay}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" Text="{Binding Codex.ProgressText, Mode=OneWay}" />
+                                </Grid>
+                            </Grid>
+                        </GroupBox>
+
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}" />
+                            <Button Content="新しい調査" Command="{Binding Codex.StartNewCommand}" />
+                            <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}" />
+                            <Button Content="再接続" Command="{Binding Codex.ReconnectCommand}" />
+                            <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}" />
+                        </WrapPanel>
+
+                        <TextBlock Text="{Binding Codex.PreviousSessionStatus, Mode=OneWay}" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource AppMutedForegroundBrush}" />
+
+                        <GroupBox Header="案件ファイル">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top">
+                                    <TextBlock Text="{Binding Codex.FileScanStatus, Mode=OneWay}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Codex.CaseFolderSendStatus, Mode=OneWay}"
+                                               Foreground="{DynamicResource AppWarningBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding Codex.Files}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          IsReadOnly="False"
+                                          MaxHeight="240"
+                                          SelectionMode="Single">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="使用" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="55" />
+                                        <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="180" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="相対パス" Binding="{Binding RelativePath}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="種類" Binding="{Binding KindText}" Width="100" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="サイズ" Binding="{Binding SizeText}" Width="90" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="更新日時" Binding="{Binding LastModifiedText}" Width="145" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Codex確認" Binding="{Binding ConfirmationStatus}" Width="190" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="除外理由・警告" Binding="{Binding ExclusionReason}" Width="260" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="チャット">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="260" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="120" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ListBox ItemsSource="{Binding Codex.Messages}"
+                                         HorizontalContentAlignment="Stretch"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{DynamicResource AppBorderBrush}"
+                                                    BorderThickness="0,0,0,1"
+                                                    Padding="8">
+                                                <StackPanel>
+                                                    <TextBlock Foreground="{DynamicResource AppMutedForegroundBrush}">
+                                                        <Run Text="{Binding RoleDisplay, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding CreatedAtText, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBox Text="{Binding Text, Mode=OneWay}"
+                                                             IsReadOnly="True"
+                                                             BorderThickness="0"
+                                                             TextWrapping="Wrap"
+                                                             AcceptsReturn="True" />
+                                                    <TextBlock Text="処理中..." Visibility="{Binding IsStreaming, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                               Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Grid Grid.Row="1" Margin="0,8,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="定型プロンプト" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding Codex.PromptPresets}"
+                                              SelectedItem="{Binding Codex.SelectedPreset}"
+                                              DisplayMemberPath="Name" />
+                                </Grid>
+
+                                <TextBox Grid.Row="2"
+                                         Text="{Binding Codex.PromptInput, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto">
+                                    <TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding Codex.SendCommand}" />
+                                    </TextBox.InputBindings>
+                                </TextBox>
+
+                                <TextBlock Grid.Row="3"
+                                           Margin="0,6,0,0"
+                                           Text="{Binding Codex.ErrorText, Mode=OneWay}"
+                                           Foreground="{DynamicResource AppWarningBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <WrapPanel Grid.Row="4" Margin="0,8,0,0">
+                                    <Button Content="送信" Command="{Binding Codex.SendCommand}" />
+                                    <Button Content="中止" Command="{Binding Codex.StopCommand}" />
+                                    <Button Content="回答をコピー" Command="{Binding Codex.CopyAnswerCommand}" />
+                                    <Button Content="この回答を返信案へ反映" Command="{Binding Codex.ApplyReplyCommand}" />
+                                    <Button Content="この回答を調査メモへ反映" Command="{Binding Codex.ApplyMemoCommand}" />
+                                    <Button Content="返信案反映を元に戻す" Command="{Binding Codex.UndoReplyCommand}" />
+                                    <Button Content="メモ反映を元に戻す" Command="{Binding Codex.UndoMemoCommand}" />
+                                    <Button Content="Codexで最終レビュー" Command="{Binding Codex.FinalReviewCommand}" />
+                                </WrapPanel>
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="Codex技術回答案">
+                            <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=OneWay}"
+                                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />
+                        </GroupBox>
+                        <GroupBox Header="レビュー後の回答案">
+                            <TextBox Text="{Binding Codex.ReviewAnswer, Mode=OneWay}"
+                                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />
+                        </GroupBox>
+                        <GroupBox Header="レビュー変更点・要確認事項・警告">
+                            <StackPanel>
+                                <TextBox Text="{Binding Codex.ReviewChanges, Mode=OneWay}"
+                                         IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
+                                <TextBlock Text="{Binding Codex.ReviewWarnings, Mode=OneWay}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="警告・エラー">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Codex.WarningText, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Codex.ErrorText, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Foreground="{DynamicResource AppMutedForegroundBrush}">
+                                    <Run Text="診断ログ: " /><Run Text="{Binding Codex.DiagnosticsPath, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </GroupBox>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
             <TabItem Header="{DynamicResource DraftResultTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
@@ -841,9 +1094,9 @@
                         </Expander>
 
                         <GroupBox Header="{DynamicResource CustomerReplyDraftHeader}">
-                            <TextBox Text="{Binding CustomerReplyDraft, Mode=OneWay}"
+                            <TextBox Text="{Binding CustomerReplyDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
-                                     IsReadOnly="True"
+                                     IsReadOnly="False"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="150" />
@@ -910,9 +1163,9 @@
                         </Expander>
 
                         <Expander Header="{DynamicResource InternalMemoHeader}" IsExpanded="False">
-                            <TextBox Text="{Binding InternalMemo, Mode=OneWay}"
+                            <TextBox Text="{Binding InternalMemo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
-                                     IsReadOnly="True"
+                                     IsReadOnly="False"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="90" />
