@@ -93,6 +93,15 @@ def test_runner_writes_three_redacted_comparison_reports(tmp_path: Path) -> None
     output = run_evaluation(tmp_path, config_path=config_path)
 
     assert len(output.report["summary"]) == 16
+    assert output.report["quality_gate"]["status"] in {"passed", "failed"}
+    assert len(output.report["input_fingerprints"]) == 2
+    assert all(
+        set(item) == {"file_name", "size_bytes", "sha256"}
+        for item in output.report["input_fingerprints"]
+    )
+    assert all(
+        len(item["sha256"]) == 64 for item in output.report["input_fingerprints"]
+    )
     assert set(output.files) == {"json", "csv", "markdown"}
     assert all(path.is_file() for path in output.files.values())
     json_text = output.files["json"].read_text(encoding="utf-8")

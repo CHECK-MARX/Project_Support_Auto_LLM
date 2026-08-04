@@ -25,8 +25,11 @@ _SUMMARY_COLUMNS = (
     "mrr",
     "mean_ndcg_at_k",
     "mean_search_time_ms",
+    "mean_required_term_coverage_at_k",
+    "excluded_term_hit_count",
     "product_confusion_count",
     "version_mismatch_count",
+    "quality_gate_passed",
 )
 
 
@@ -63,8 +66,11 @@ def _markdown_text(rows: list[dict[str, Any]], report_name: str) -> str:
         "mrr",
         "mean_ndcg_at_k",
         "mean_search_time_ms",
+        "mean_required_term_coverage_at_k",
+        "excluded_term_hit_count",
         "product_confusion_count",
         "version_mismatch_count",
+        "quality_gate_passed",
     )
     lines = [
         f"# RAG evaluation: {report_name}",

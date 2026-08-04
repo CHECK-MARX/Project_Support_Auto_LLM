@@ -149,9 +149,9 @@ class EvaluationCase:
         def string_tuple(name: str) -> tuple[str, ...]:
             value = data.get(name, [])
             if not isinstance(value, list) or not all(
-                isinstance(item, str) for item in value
+                isinstance(item, str) and item.strip() for item in value
             ):
-                raise ValueError(f"{name} must be an array of strings")
+                raise ValueError(f"{name} must be an array of non-empty strings")
             return tuple(value)
 
         return cls(

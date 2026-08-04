@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import hashlib
 from pathlib import Path
 import re
 from time import perf_counter
@@ -13,6 +14,7 @@ from .evaluation import aggregate_evaluations, evaluate_results
 from .io import LabPaths, load_documents, load_evaluation_cases, read_json
 from .models import Document, EvaluationCase
 from .normalization import NormalizationOptions
+from .quality import QualityGateThresholds, apply_quality_gate
 from .reporting import write_comparison_reports
 from .reranking import RerankerMethod, apply_reranker
 from .search import SearchFilters, SearchMethod, build_search_index
@@ -44,9 +46,12 @@ class LoadedLabConfiguration:
     rerankers: list[RerankerMethod]
     filter_modes: list[str]
     top_ks: list[int]
+    quality_thresholds: QualityGateThresholds
+    preferred_top_k: int
     report_name: str
     documents_file_name: str
     cases_file_name: str
+    input_fingerprints: list[dict[str, Any]]
 
 
 def _object(value: Any, name: str) -> Mapping[str, Any]:
@@ -96,6 +101,18 @@ def _filters(mode: str, product: str, target_version: str | None) -> SearchFilte
     raise ValueError(f"unsupported filter mode: {mode}")
 
 
+def _fingerprint(path: Path) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return {
+        "file_name": path.name,
+        "size_bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
+
+
 def load_lab_configuration(
     lab_root: str | Path,
     *,
@@ -118,6 +135,8 @@ def load_lab_configuration(
         raise ValueError("documentsFile and evaluationCasesFile must be strings")
     documents = load_documents(paths, documents_file)
     cases = load_evaluation_cases(paths, cases_file)
+    documents_path = paths.resolve_input(documents_file)
+    cases_path = paths.resolve_input(cases_file)
     normalization = _normalization_options(
         _object(config.get("normalization", {}), "normalization")
     )
@@ -158,6 +177,14 @@ def load_lab_configuration(
     top_ks = _positive_int_list(
         evaluation_config.get("topK", [1, 3, 5]), "evaluation.topK"
     )
+    quality_config = _object(config.get("qualityGate", {}), "qualityGate")
+    quality_thresholds = QualityGateThresholds.from_mapping(quality_config)
+    default_preferred_top_k = 3 if 3 in top_ks else top_ks[0]
+    preferred_top_k = int(
+        quality_config.get("preferredTopK", default_preferred_top_k)
+    )
+    if preferred_top_k not in top_ks:
+        raise ValueError("qualityGate.preferredTopK must be included in evaluation.topK")
     selected_report_name = report_name or config.get("reportName", "rag-comparison")
     if not isinstance(selected_report_name, str):
         raise ValueError("reportName must be a string")
@@ -174,9 +201,15 @@ def load_lab_configuration(
         rerankers=rerankers,
         filter_modes=filter_modes,
         top_ks=top_ks,
+        quality_thresholds=quality_thresholds,
+        preferred_top_k=preferred_top_k,
         report_name=selected_report_name,
         documents_file_name=Path(documents_file).name,
         cases_file_name=Path(cases_file).name,
+        input_fingerprints=[
+            _fingerprint(documents_path),
+            _fingerprint(cases_path),
+        ],
     )
 
 
@@ -291,8 +324,13 @@ def run_evaluation(
                         }
                     )
 
+    summary, quality_gate = apply_quality_gate(
+        summary,
+        loaded.quality_thresholds,
+        preferred_top_k=loaded.preferred_top_k,
+    )
     report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "data_classification": "synthetic",
         "report_name": selected_report_name,
@@ -305,6 +343,8 @@ def run_evaluation(
             "filter_modes": filter_modes,
             "top_k": top_ks,
         },
+        "input_fingerprints": loaded.input_fingerprints,
+        "quality_gate": quality_gate,
         "summary": summary,
         "details": details,
     }

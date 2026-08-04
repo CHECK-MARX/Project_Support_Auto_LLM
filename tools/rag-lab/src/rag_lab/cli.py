@@ -16,6 +16,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--config", default="config.example.json")
     evaluate.add_argument("--report-name")
+    verify = subcommands.add_parser(
+        "verify", help="run evaluation and return nonzero when the quality gate fails"
+    )
+    verify.add_argument("--config", default="config.example.json")
+    verify.add_argument("--report-name")
     evidence = subcommands.add_parser(
         "evidence", help="write top evidence in the future Codex input shape"
     )
@@ -72,4 +77,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Selected evidence: {len(output.payload['selectedEvidence'])}")
         print(f"json: {output.file.relative_to(lab_root)}")
         return 0
+    if args.command == "verify":
+        output = run_evaluation(
+            lab_root,
+            config_path=args.config,
+            report_name=args.report_name,
+        )
+        gate = output.report["quality_gate"]
+        recommendation = gate["recommended_configuration"]
+        print(f"Quality gate: {gate['status']}")
+        print(
+            "Recommended: "
+            f"chunk={recommendation['chunk_strategy']}, "
+            f"search={recommendation['search_method']}, "
+            f"reranker={recommendation['reranker']}, "
+            f"filter={recommendation['filter_mode']}, "
+            f"top_k={recommendation['top_k']}"
+        )
+        return 0 if gate["status"] == "passed" else 1
     return 2

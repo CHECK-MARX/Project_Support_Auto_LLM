@@ -11,6 +11,7 @@ from .normalization import (
 from .embedding import EmbeddingProvider, HashingEmbeddingProvider
 from .evidence import EvidenceSelectionOptions, build_codex_evidence
 from .reranking import Reranker, RerankerMethod, apply_reranker
+from .quality import QualityGateThresholds, apply_quality_gate
 from .search import SearchFilters, SearchMethod, SearchResult, build_search_index
 
 __all__ = [
@@ -28,11 +29,13 @@ __all__ = [
     "HashingEmbeddingProvider",
     "Reranker",
     "RerankerMethod",
+    "QualityGateThresholds",
     "SearchFilters",
     "SearchMethod",
     "SearchResult",
     "build_search_index",
     "apply_reranker",
+    "apply_quality_gate",
     "build_codex_evidence",
     "chunk_document",
     "normalize_text",

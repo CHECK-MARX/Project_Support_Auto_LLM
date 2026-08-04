@@ -123,3 +123,35 @@ def test_aggregate_calculates_mrr_and_confusion_totals() -> None:
     assert aggregate["query_count"] == 2
     assert aggregate["mrr"] == 0.5
     assert aggregate["product_confusion_count"] == 1
+
+
+def test_required_and_excluded_terms_are_checked_in_top_k_text() -> None:
+    case = EvaluationCase(
+        query_id="q-terms",
+        product="Product",
+        query="質問",
+        expected_document_ids=("doc",),
+        required_terms=("Canonical Path", "allow list"),
+        excluded_terms=("HelixQAC",),
+    )
+    result = _result(
+        "doc", 1, product="Product", version="1", support_id="SYN"
+    )
+    result = SearchResult(
+        chunk=Chunk(
+            chunk_id=result.chunk.chunk_id,
+            document_id=result.chunk.document_id,
+            chunk_index=0,
+            strategy="test",
+            text="Canonical Pathを確認します。HelixQACは対象外です。",
+            metadata=result.chunk.metadata,
+        ),
+        score=1.0,
+        rank=1,
+    )
+
+    metrics = evaluate_results(case, [result], top_k=1)
+
+    assert metrics.required_term_coverage_at_k == 0.5
+    assert metrics.required_terms_missing == ("allow list",)
+    assert metrics.excluded_terms_found == ("HelixQAC",)

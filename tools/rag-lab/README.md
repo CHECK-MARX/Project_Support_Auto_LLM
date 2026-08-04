@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 4)
+## Implemented scope (Phases 2 through 5)
 
 Implemented in this phase:
 
@@ -20,12 +20,16 @@ Implemented in this phase:
 - Exact product and target-version metadata filters
 - Precision@K, Recall@K, MRR, nDCG@K, correct-document rank, timing,
   product-confusion, and version-mismatch measurements
+- Required-term coverage and excluded-term hit measurements
 - JSON, CSV, and Markdown comparison reports
 - Replaceable `EmbeddingProvider` and `Reranker` protocols
 - Deterministic offline token-hash vector baseline
 - BM25 plus vector retrieval with reciprocal-rank fusion
 - Optional offline lexical reranking
 - Top 1-5 Codex evidence JSON with match reasons and warnings
+- Configurable quality gates with a deterministic recommended configuration
+- SHA-256 input fingerprints for repeatable evaluation runs
+- A `verify` command suitable for a local quality check or CI job
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -66,7 +70,8 @@ The tests cover Japanese UTF-8 input, normalization, all four chunking strategie
 metadata retention, keyword/BM25/vector/hybrid ranking, replaceable providers,
 reranking, product/version filters, evaluation metrics, Codex evidence generation,
 stable chunk IDs, invalid JSON, read-only source handling, path traversal rejection,
-and output-root restrictions.
+output-root restrictions, required/excluded terms, quality-gate decisions,
+recommended-configuration selection, and input fingerprints.
 
 ## Configuration
 
@@ -118,9 +123,30 @@ and Top-K values. Reports are written only to:
 tools/rag-lab/reports/generated/
 ```
 
-Open `phase4-comparison.md` for the compact comparison table, CSV for spreadsheet
+Open `phase5-comparison.md` for the compact comparison table, CSV for spreadsheet
 analysis, or JSON for query-level metrics and redacted result details. Generated
 reports are local artifacts and are not committed.
+
+Each JSON report records the configured quality thresholds, pass/fail result,
+violations, the recommended passing configuration for the preferred Top-K, and
+SHA-256 fingerprints of the synthetic input files. Fingerprints contain only the
+file name, byte size, and digest; absolute paths and source content are omitted.
+
+Run the quality gate as a command-line verification step:
+
+```powershell
+python run_rag_lab.py verify
+```
+
+`verify` performs the complete comparison, prints the gate result and recommended
+configuration, and returns exit code `0` when at least one preferred-Top-K
+configuration passes. It returns exit code `1` when the gate fails. Thresholds and
+`preferredTopK` are configured in the `qualityGate` object in
+`config.example.json`.
+
+The included thresholds and results apply only to synthetic sample data. Passing
+the gate is a regression signal for this lab and is not proof of production RAG
+quality.
 
 ## Codex evidence JSON
 

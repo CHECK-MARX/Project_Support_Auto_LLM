@@ -21,6 +21,9 @@ class QueryEvaluation:
     first_relevant_rank: int | None
     product_confusion_count: int
     version_mismatch_count: int
+    required_term_coverage_at_k: float
+    required_terms_missing: tuple[str, ...]
+    excluded_terms_found: tuple[str, ...]
     returned_document_count: int
     search_time_ms: float
 
@@ -104,6 +107,23 @@ def evaluate_results(
         if expected_version is not None
         and _normalized(result.chunk.metadata.target_version) != expected_version
     )
+    combined_text = _normalized("\n".join(result.chunk.text for result in top_results)) or ""
+    missing_required_terms = tuple(
+        term
+        for term in case.required_terms
+        if (_normalized(term) or "") not in combined_text
+    )
+    required_coverage = (
+        (len(case.required_terms) - len(missing_required_terms))
+        / len(case.required_terms)
+        if case.required_terms
+        else 1.0
+    )
+    found_excluded_terms = tuple(
+        term
+        for term in case.excluded_terms
+        if (_normalized(term) or "") in combined_text
+    )
     return QueryEvaluation(
         query_id=case.query_id,
         top_k=top_k,
@@ -114,6 +134,9 @@ def evaluate_results(
         first_relevant_rank=first_relevant_rank,
         product_confusion_count=product_confusions,
         version_mismatch_count=version_mismatches,
+        required_term_coverage_at_k=required_coverage,
+        required_terms_missing=missing_required_terms,
+        excluded_terms_found=found_excluded_terms,
         returned_document_count=len(top_results),
         search_time_ms=search_time_ms,
     )
@@ -133,6 +156,9 @@ def aggregate_evaluations(
             "mean_search_time_ms": 0.0,
             "product_confusion_count": 0,
             "version_mismatch_count": 0,
+            "mean_required_term_coverage_at_k": 0.0,
+            "excluded_term_hit_count": 0,
+            "required_terms_pass_query_count": 0,
         }
     return {
         "query_count": len(items),
@@ -146,5 +172,14 @@ def aggregate_evaluations(
         ),
         "version_mismatch_count": sum(
             item.version_mismatch_count for item in items
+        ),
+        "mean_required_term_coverage_at_k": fmean(
+            item.required_term_coverage_at_k for item in items
+        ),
+        "excluded_term_hit_count": sum(
+            len(item.excluded_terms_found) for item in items
+        ),
+        "required_terms_pass_query_count": sum(
+            not item.required_terms_missing for item in items
         ),
     }

@@ -58,6 +58,22 @@ def test_evaluation_case_requires_string_arrays() -> None:
     assert case.required_terms == ("質問",)
 
 
+def test_evaluation_case_rejects_empty_term() -> None:
+    try:
+        EvaluationCase.from_dict(
+            {
+                "query_id": "q1",
+                "product": "SyntheticProduct",
+                "query": "質問",
+                "excluded_terms": ["  "],
+            }
+        )
+    except ValueError as error:
+        assert "non-empty strings" in str(error)
+    else:
+        raise AssertionError("an empty evaluation term was accepted")
+
+
 def test_confidence_outside_unit_interval_is_rejected() -> None:
     try:
         DocumentMetadata(confidence=1.1)
