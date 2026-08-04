@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 5)
+## Implemented scope (Phases 2 through 6)
 
 Implemented in this phase:
 
@@ -30,6 +30,7 @@ Implemented in this phase:
 - Configurable quality gates with a deterministic recommended configuration
 - SHA-256 input fingerprints for repeatable evaluation runs
 - A `verify` command suitable for a local quality check or CI job
+- A path-filtered GitHub Actions workflow for tests and the synthetic quality gate
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -147,6 +148,18 @@ configuration passes. It returns exit code `1` when the gate fails. Thresholds a
 The included thresholds and results apply only to synthetic sample data. Passing
 the gate is a regression signal for this lab and is not proof of production RAG
 quality.
+
+## Continuous integration
+
+`.github/workflows/rag-lab.yml` runs on Windows with Python 3.13 when files below
+`tools/rag-lab/`, its workflow definition, or the related `.gitignore` rules are
+changed. It installs only `requirements.txt`, runs all unit tests, and then runs
+`python run_rag_lab.py verify` against synthetic data. It can also be started
+manually with `workflow_dispatch`.
+
+The existing .NET CI workflow remains separate and unchanged. The RAG workflow
+does not load customer data, call a network API from the evaluation tool, publish
+generated reports, or modify WPF projects and production indexes.
 
 ## Codex evidence JSON
 
