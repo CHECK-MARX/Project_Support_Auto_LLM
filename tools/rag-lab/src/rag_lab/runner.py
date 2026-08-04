@@ -3,14 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import re
 from time import perf_counter
 from typing import Any, Mapping
 
 from .chunking import ChunkingOptions, ChunkingStrategy, chunk_document
+from .evidence import EvidenceSelectionOptions, build_codex_evidence, write_codex_evidence
 from .evaluation import aggregate_evaluations, evaluate_results
 from .io import LabPaths, load_documents, load_evaluation_cases, read_json
+from .models import Document, EvaluationCase
 from .normalization import NormalizationOptions
 from .reporting import write_comparison_reports
+from .reranking import RerankerMethod, apply_reranker
 from .search import SearchFilters, SearchMethod, build_search_index
 
 
@@ -18,6 +22,31 @@ from .search import SearchFilters, SearchMethod, build_search_index
 class EvaluationRunOutput:
     report: dict[str, Any]
     files: dict[str, Path]
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceRunOutput:
+    payload: dict[str, object]
+    file: Path
+
+
+@dataclass(frozen=True, slots=True)
+class LoadedLabConfiguration:
+    root: Path
+    paths: LabPaths
+    documents: list[Document]
+    cases: list[EvaluationCase]
+    normalization: NormalizationOptions
+    max_characters: int
+    overlap_characters: int
+    strategies: list[ChunkingStrategy]
+    methods: list[SearchMethod]
+    rerankers: list[RerankerMethod]
+    filter_modes: list[str]
+    top_ks: list[int]
+    report_name: str
+    documents_file_name: str
+    cases_file_name: str
 
 
 def _object(value: Any, name: str) -> Mapping[str, Any]:
@@ -67,12 +96,12 @@ def _filters(mode: str, product: str, target_version: str | None) -> SearchFilte
     raise ValueError(f"unsupported filter mode: {mode}")
 
 
-def run_evaluation(
+def load_lab_configuration(
     lab_root: str | Path,
     *,
     config_path: str | Path = "config.example.json",
     report_name: str | None = None,
-) -> EvaluationRunOutput:
+) -> LoadedLabConfiguration:
     root = Path(lab_root).resolve(strict=True)
     config_paths = LabPaths.create(root, input_roots=(".",))
     raw_config = read_json(config_paths, config_path)
@@ -83,14 +112,12 @@ def run_evaluation(
     if not isinstance(output_root, str):
         raise ValueError("outputRoot must be a string")
     paths = LabPaths.create(root, input_roots=input_roots, output_root=output_root)
-
     documents_file = config.get("documentsFile", "samples/documents.json")
     cases_file = config.get("evaluationCasesFile", "samples/evaluation_cases.json")
     if not isinstance(documents_file, str) or not isinstance(cases_file, str):
         raise ValueError("documentsFile and evaluationCasesFile must be strings")
     documents = load_documents(paths, documents_file)
     cases = load_evaluation_cases(paths, cases_file)
-
     normalization = _normalization_options(
         _object(config.get("normalization", {}), "normalization")
     )
@@ -112,6 +139,13 @@ def run_evaluation(
             "evaluation.searchMethods",
         )
     ]
+    rerankers = [
+        RerankerMethod(value)
+        for value in _string_list(
+            evaluation_config.get("rerankers", ["none"]),
+            "evaluation.rerankers",
+        )
+    ]
     filter_modes = _string_list(
         evaluation_config.get("filterModes", ["none", "product"]),
         "evaluation.filterModes",
@@ -124,9 +158,48 @@ def run_evaluation(
     top_ks = _positive_int_list(
         evaluation_config.get("topK", [1, 3, 5]), "evaluation.topK"
     )
-    selected_report_name = report_name or config.get("reportName", "phase3-comparison")
+    selected_report_name = report_name or config.get("reportName", "rag-comparison")
     if not isinstance(selected_report_name, str):
         raise ValueError("reportName must be a string")
+    return LoadedLabConfiguration(
+        root=root,
+        paths=paths,
+        documents=documents,
+        cases=cases,
+        normalization=normalization,
+        max_characters=maximum,
+        overlap_characters=overlap,
+        strategies=strategies,
+        methods=methods,
+        rerankers=rerankers,
+        filter_modes=filter_modes,
+        top_ks=top_ks,
+        report_name=selected_report_name,
+        documents_file_name=Path(documents_file).name,
+        cases_file_name=Path(cases_file).name,
+    )
+
+
+def run_evaluation(
+    lab_root: str | Path,
+    *,
+    config_path: str | Path = "config.example.json",
+    report_name: str | None = None,
+) -> EvaluationRunOutput:
+    loaded = load_lab_configuration(
+        lab_root, config_path=config_path, report_name=report_name
+    )
+    documents = loaded.documents
+    cases = loaded.cases
+    normalization = loaded.normalization
+    maximum = loaded.max_characters
+    overlap = loaded.overlap_characters
+    strategies = loaded.strategies
+    methods = loaded.methods
+    rerankers = loaded.rerankers
+    filter_modes = loaded.filter_modes
+    top_ks = loaded.top_ks
+    selected_report_name = loaded.report_name
 
     summary: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
@@ -148,85 +221,151 @@ def run_evaluation(
         chunk_time_ms = (perf_counter() - chunk_started) * 1000.0
         for method in methods:
             index_started = perf_counter()
-            index = build_search_index(chunks, method)
+            base_index = build_search_index(chunks, method)
             index_time_ms = (perf_counter() - index_started) * 1000.0
-            for filter_mode in filter_modes:
-                query_runs: list[dict[str, Any]] = []
-                evaluations_by_k: dict[int, list[Any]] = {value: [] for value in top_ks}
-                for case in cases:
-                    search_started = perf_counter()
-                    results = index.search(
-                        case.query,
-                        top_k=max(1, len(chunks)),
-                        filters=_filters(
-                            filter_mode, case.product, case.target_version
-                        ),
-                    )
-                    search_time_ms = (perf_counter() - search_started) * 1000.0
-                    query_metrics: dict[str, Any] = {}
-                    for top_k in top_ks:
-                        evaluated = evaluate_results(
-                            case,
-                            results,
-                            top_k=top_k,
-                            search_time_ms=search_time_ms,
+            for reranker in rerankers:
+                index = apply_reranker(base_index, reranker)
+                for filter_mode in filter_modes:
+                    query_runs: list[dict[str, Any]] = []
+                    evaluations_by_k: dict[int, list[Any]] = {
+                        value: [] for value in top_ks
+                    }
+                    for case in cases:
+                        search_started = perf_counter()
+                        results = index.search(
+                            case.query,
+                            top_k=max(1, len(chunks)),
+                            filters=_filters(
+                                filter_mode, case.product, case.target_version
+                            ),
                         )
-                        evaluations_by_k[top_k].append(evaluated)
-                        query_metrics[str(top_k)] = evaluated.to_dict()
-                    query_runs.append(
-                        {
-                            "query_id": case.query_id,
-                            "product": case.product,
-                            "target_version": case.target_version,
-                            "query": case.query,
-                            "search_time_ms": search_time_ms,
-                            "metrics": query_metrics,
-                            "results": [
-                                result.to_public_dict()
-                                for result in results[: max(top_ks)]
-                            ],
-                        }
-                    )
+                        search_time_ms = (perf_counter() - search_started) * 1000.0
+                        query_metrics: dict[str, Any] = {}
+                        for top_k in top_ks:
+                            evaluated = evaluate_results(
+                                case,
+                                results,
+                                top_k=top_k,
+                                search_time_ms=search_time_ms,
+                            )
+                            evaluations_by_k[top_k].append(evaluated)
+                            query_metrics[str(top_k)] = evaluated.to_dict()
+                        query_runs.append(
+                            {
+                                "query_id": case.query_id,
+                                "product": case.product,
+                                "target_version": case.target_version,
+                                "query": case.query,
+                                "search_time_ms": search_time_ms,
+                                "metrics": query_metrics,
+                                "results": [
+                                    result.to_public_dict()
+                                    for result in results[: max(top_ks)]
+                                ],
+                            }
+                        )
 
-                for top_k, evaluations in evaluations_by_k.items():
-                    aggregate = aggregate_evaluations(evaluations)
-                    summary.append(
+                    for top_k, evaluations in evaluations_by_k.items():
+                        aggregate = aggregate_evaluations(evaluations)
+                        summary.append(
+                            {
+                                "chunk_strategy": strategy.value,
+                                "search_method": method.value,
+                                "reranker": reranker.value,
+                                "filter_mode": filter_mode,
+                                "top_k": top_k,
+                                "document_count": len(documents),
+                                "chunk_count": len(chunks),
+                                "chunk_generation_time_ms": chunk_time_ms,
+                                "index_build_time_ms": index_time_ms,
+                                **aggregate,
+                            }
+                        )
+                    details.append(
                         {
                             "chunk_strategy": strategy.value,
                             "search_method": method.value,
+                            "reranker": reranker.value,
                             "filter_mode": filter_mode,
-                            "top_k": top_k,
-                            "document_count": len(documents),
-                            "chunk_count": len(chunks),
-                            "chunk_generation_time_ms": chunk_time_ms,
-                            "index_build_time_ms": index_time_ms,
-                            **aggregate,
+                            "queries": query_runs,
                         }
                     )
-                details.append(
-                    {
-                        "chunk_strategy": strategy.value,
-                        "search_method": method.value,
-                        "filter_mode": filter_mode,
-                        "queries": query_runs,
-                    }
-                )
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "data_classification": "synthetic",
         "report_name": selected_report_name,
         "configuration": {
-            "documents_file": Path(documents_file).name,
-            "evaluation_cases_file": Path(cases_file).name,
+            "documents_file": loaded.documents_file_name,
+            "evaluation_cases_file": loaded.cases_file_name,
             "chunk_strategies": [item.value for item in strategies],
             "search_methods": [item.value for item in methods],
+            "rerankers": [item.value for item in rerankers],
             "filter_modes": filter_modes,
             "top_k": top_ks,
         },
         "summary": summary,
         "details": details,
     }
-    files = write_comparison_reports(paths, selected_report_name, report)
+    files = write_comparison_reports(loaded.paths, selected_report_name, report)
     return EvaluationRunOutput(report, files)
+
+
+_SAFE_OUTPUT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+
+
+def run_evidence(
+    lab_root: str | Path,
+    *,
+    query_id: str,
+    config_path: str | Path = "config.example.json",
+    chunk_strategy: ChunkingStrategy | str = ChunkingStrategy.HEADING,
+    search_method: SearchMethod | str = SearchMethod.HYBRID,
+    reranker: RerankerMethod | str = RerankerMethod.LEXICAL,
+    filter_mode: str = "product_and_version",
+    top_k: int = 3,
+    output_name: str | None = None,
+) -> EvidenceRunOutput:
+    loaded = load_lab_configuration(lab_root, config_path=config_path)
+    case = next((item for item in loaded.cases if item.query_id == query_id), None)
+    if case is None:
+        raise ValueError(f"evaluation query_id was not found: {query_id}")
+    strategy = ChunkingStrategy(chunk_strategy)
+    chunks = [
+        chunk
+        for document in loaded.documents
+        for chunk in chunk_document(
+            document,
+            ChunkingOptions(
+                strategy=strategy,
+                max_characters=loaded.max_characters,
+                overlap_characters=loaded.overlap_characters,
+                normalization=loaded.normalization,
+            ),
+        )
+    ]
+    index = apply_reranker(
+        build_search_index(chunks, SearchMethod(search_method)),
+        RerankerMethod(reranker),
+    )
+    results = index.search(
+        case.query,
+        top_k=top_k,
+        filters=_filters(filter_mode, case.product, case.target_version),
+    )
+    payload = build_codex_evidence(
+        case.query,
+        results,
+        product=case.product,
+        target_version=case.target_version,
+        options=EvidenceSelectionOptions(top_k=top_k),
+    )
+    safe_query_id = re.sub(r"[^A-Za-z0-9_.-]", "_", query_id)[:60] or "query"
+    selected_name = output_name or f"codex-evidence-{safe_query_id}"
+    if not _SAFE_OUTPUT_NAME.fullmatch(selected_name):
+        raise ValueError("evidence output name contains unsupported characters")
+    output_file = write_codex_evidence(
+        loaded.paths, f"{selected_name}.json", payload
+    )
+    return EvidenceRunOutput(payload=payload, file=output_file)

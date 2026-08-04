@@ -1,6 +1,7 @@
 # Reports
 
-Phase 3 writes generated JSON, CSV, and Markdown comparison reports under
-`reports/generated/`. That directory is intentionally excluded from Git.
+Phases 3 and 4 write generated JSON, CSV, and Markdown comparison reports and
+Codex evidence JSON under `reports/generated/`. That directory is intentionally
+excluded from Git.
 
 No report writer may write outside `reports/generated/`.

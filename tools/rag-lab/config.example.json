@@ -5,7 +5,7 @@
   "outputRoot": "reports/generated",
   "documentsFile": "samples/documents.json",
   "evaluationCasesFile": "samples/evaluation_cases.json",
-  "reportName": "phase3-comparison",
+  "reportName": "phase4-comparison",
   "normalization": {
     "unicodeNfkc": true,
     "trimTrailingWhitespace": true,
@@ -28,7 +28,13 @@
     ],
     "searchMethods": [
       "keyword",
-      "bm25"
+      "bm25",
+      "hash_embedding",
+      "hybrid"
+    ],
+    "rerankers": [
+      "none",
+      "lexical"
     ],
     "filterModes": [
       "none",

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from rag_lab.runner import run_evaluation
+from rag_lab.runner import run_evaluation, run_evidence
 
 
 def _write_synthetic_lab(root: Path) -> Path:
@@ -112,3 +112,48 @@ def test_runner_rejects_report_name_path_traversal(tmp_path: Path) -> None:
         run_evaluation(
             tmp_path, config_path=config_path, report_name="../outside"
         )
+
+
+def test_phase4_runner_compares_embedding_hybrid_and_reranking(tmp_path: Path) -> None:
+    config_path = _write_synthetic_lab(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["evaluation"] = {
+        "chunkStrategies": ["heading"],
+        "searchMethods": ["hash_embedding", "hybrid"],
+        "rerankers": ["none", "lexical"],
+        "filterModes": ["product_and_version"],
+        "topK": [1],
+    }
+    config_path.write_text(
+        json.dumps(config, ensure_ascii=False), encoding="utf-8"
+    )
+
+    output = run_evaluation(tmp_path, config_path=config_path)
+
+    assert len(output.report["summary"]) == 4
+    assert {row["reranker"] for row in output.report["summary"]} == {
+        "none",
+        "lexical",
+    }
+    assert {row["search_method"] for row in output.report["summary"]} == {
+        "hash_embedding",
+        "hybrid",
+    }
+
+
+def test_evidence_runner_writes_future_codex_shape_without_paths(tmp_path: Path) -> None:
+    config_path = _write_synthetic_lab(tmp_path)
+
+    output = run_evidence(
+        tmp_path,
+        query_id="q1",
+        config_path=config_path,
+        top_k=3,
+    )
+
+    assert output.file.is_file()
+    assert set(output.payload) == {"query", "selectedEvidence"}
+    assert output.payload["selectedEvidence"]
+    text = output.file.read_text(encoding="utf-8")
+    assert "source_path" not in text
+    assert "C:\\\\private" not in text

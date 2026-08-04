@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 and 3)
+## Implemented scope (Phases 2 through 4)
 
 Implemented in this phase:
 
@@ -21,10 +21,16 @@ Implemented in this phase:
 - Precision@K, Recall@K, MRR, nDCG@K, correct-document rank, timing,
   product-confusion, and version-mismatch measurements
 - JSON, CSV, and Markdown comparison reports
+- Replaceable `EmbeddingProvider` and `Reranker` protocols
+- Deterministic offline token-hash vector baseline
+- BM25 plus vector retrieval with reciprocal-rank fusion
+- Optional offline lexical reranking
+- Top 1-5 Codex evidence JSON with match reasons and warnings
 
-Embeddings, reranking, and Codex evidence JSON are not implemented yet. They belong
-to Phase 4. This package is not referenced by any C# project and is not part of the
-WPF runtime path.
+The token-hash vector baseline verifies the embedding integration path but is not a
+semantic language model. No model is downloaded. A local semantic model can be
+added later by implementing `EmbeddingProvider`. This package is not referenced by
+any C# project and is not part of the WPF runtime path.
 
 ## Safety boundary
 
@@ -57,15 +63,16 @@ python -m pytest
 ```
 
 The tests cover Japanese UTF-8 input, normalization, all four chunking strategies,
-metadata retention, keyword/BM25 ranking, product/version filters, evaluation
-metrics, stable chunk IDs, invalid JSON, read-only source handling, path traversal
-rejection, and output-root restrictions.
+metadata retention, keyword/BM25/vector/hybrid ranking, replaceable providers,
+reranking, product/version filters, evaluation metrics, Codex evidence generation,
+stable chunk IDs, invalid JSON, read-only source handling, path traversal rejection,
+and output-root restrictions.
 
 ## Configuration
 
 Copy `config.example.json` only when a local evaluation configuration is needed.
 Relative paths are resolved from the `rag-lab` directory. Do not configure
-`outputRoot` outside `reports/generated/` when adding the Phase 3 runner.
+`outputRoot` outside `reports/generated/`.
 
 Normalization categories are:
 
@@ -86,8 +93,8 @@ It does not infer missing facts.
 ## Samples
 
 - `samples/documents.json`: synthetic documents with no real customer information
-- `samples/evaluation_cases.json`: synthetic expected-result definitions reserved
-  for the Phase 3 evaluator
+- `samples/evaluation_cases.json`: synthetic expected-result definitions for the
+  comparison evaluator and evidence generator
 
 ## Evaluation
 
@@ -103,13 +110,38 @@ To select a different configuration or safe report name:
 python run_rag_lab.py evaluate --config config.example.json --report-name local-comparison
 ```
 
-The evaluation compares both search methods, all configured chunking strategies,
-metadata filter modes, and Top-K values. Reports are written only to:
+The evaluation compares keyword, BM25, offline hash-vector, and hybrid search;
+configured rerankers; all configured chunking strategies; metadata filter modes;
+and Top-K values. Reports are written only to:
 
 ```text
 tools/rag-lab/reports/generated/
 ```
 
-Open `phase3-comparison.md` for the compact comparison table, CSV for spreadsheet
+Open `phase4-comparison.md` for the compact comparison table, CSV for spreadsheet
 analysis, or JSON for query-level metrics and redacted result details. Generated
 reports are local artifacts and are not committed.
+
+## Codex evidence JSON
+
+Generate a future Codex-input payload for a synthetic evaluation query:
+
+```powershell
+python run_rag_lab.py evidence --query-id q001
+```
+
+The default uses heading chunks, hybrid retrieval, lexical reranking, product and
+version filters, and at most three evidence documents. `--top-k` accepts 1 through
+5. The output contains `query` and `selectedEvidence`, including selection reason,
+product/version matches, keyword matches, source type, stale/conflict warnings, and
+unverified fields. It does not contain the source absolute path.
+
+This JSON is preparation for future integration only. It is not sent to Codex and
+does not alter the current App Server or WPF behavior.
+
+## Extension interfaces
+
+- Implement `EmbeddingProvider.embed()` to connect another local embedding model.
+- Implement `Reranker.rerank()` to connect another local reranker.
+- Keep implementations offline unless a separately reviewed policy explicitly
+  permits another execution model.

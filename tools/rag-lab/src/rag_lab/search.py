@@ -14,6 +14,8 @@ from .models import Chunk
 class SearchMethod(StrEnum):
     KEYWORD = "keyword"
     BM25 = "bm25"
+    HASH_EMBEDDING = "hash_embedding"
+    HYBRID = "hybrid"
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,7 +80,7 @@ def _normalized_value(value: str | None) -> str | None:
     return unicodedata.normalize("NFKC", value).strip().casefold()
 
 
-def _matches_filters(chunk: Chunk, filters: SearchFilters | None) -> bool:
+def matches_filters(chunk: Chunk, filters: SearchFilters | None) -> bool:
     if filters is None:
         return True
     if filters.product_name is not None and _normalized_value(
@@ -92,7 +94,7 @@ def _matches_filters(chunk: Chunk, filters: SearchFilters | None) -> bool:
     return True
 
 
-def _searchable_text(chunk: Chunk) -> str:
+def searchable_text(chunk: Chunk) -> str:
     metadata_values = (
         chunk.metadata.product_name,
         chunk.metadata.support_id,
@@ -122,7 +124,7 @@ class _BaseSearchIndex:
         self._documents = tuple(
             _IndexedChunk(
                 chunk=chunk,
-                searchable_text=(searchable := _searchable_text(chunk)),
+                searchable_text=(searchable := searchable_text(chunk)),
                 term_counts=(counts := Counter(tokenize(searchable))),
                 length=sum(counts.values()),
             )
@@ -149,7 +151,7 @@ class _BaseSearchIndex:
 
         scored: list[tuple[float, _IndexedChunk, tuple[str, ...]]] = []
         for document in self._documents:
-            if not _matches_filters(document.chunk, filters):
+            if not matches_filters(document.chunk, filters):
                 continue
             score = self._score(query, query_counts, document)
             if score <= 0:
@@ -253,8 +255,17 @@ def build_search_index(
     chunks: Iterable[Chunk], method: SearchMethod | str
 ) -> SearchIndex:
     selected = SearchMethod(method)
+    materialized = tuple(chunks)
     if selected is SearchMethod.KEYWORD:
-        return KeywordSearchIndex(chunks)
+        return KeywordSearchIndex(materialized)
     if selected is SearchMethod.BM25:
-        return BM25SearchIndex(chunks)
+        return BM25SearchIndex(materialized)
+    if selected is SearchMethod.HASH_EMBEDDING:
+        from .embedding import EmbeddingSearchIndex, HashingEmbeddingProvider
+
+        return EmbeddingSearchIndex(materialized, HashingEmbeddingProvider())
+    if selected is SearchMethod.HYBRID:
+        from .embedding import HybridSearchIndex
+
+        return HybridSearchIndex(materialized)
     raise ValueError(f"unsupported search method: {selected}")

@@ -13,6 +13,7 @@ _SAFE_REPORT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _SUMMARY_COLUMNS = (
     "chunk_strategy",
     "search_method",
+    "reranker",
     "filter_mode",
     "top_k",
     "document_count",
@@ -54,6 +55,7 @@ def _markdown_text(rows: list[dict[str, Any]], report_name: str) -> str:
     compact_columns = (
         "chunk_strategy",
         "search_method",
+        "reranker",
         "filter_mode",
         "top_k",
         "mean_precision_at_k",
