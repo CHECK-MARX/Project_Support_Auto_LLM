@@ -1,4 +1,5 @@
 using System.Text;
+using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.AiAssistant.App.ViewModels;
 
@@ -171,6 +172,80 @@ public sealed class CodexChatViewModelTests
         Assert.Contains("チャット履歴を復元しました", viewModel.PreviousSessionStatus);
     }
 
+    [Fact]
+    public async Task ArtifactCommands_RequirePlanThenCreateExcelAndManufacturerMail()
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        await File.WriteAllBytesAsync(source, [1, 2, 3]);
+        var fakeClient = new FakeClient();
+        var fakeArtifactService = new FakeExcelTranslationService();
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "Checkmarx",
+                SupportId = "00018290",
+                CompanyName = "Test Company",
+                CaseFolder = temp.Path,
+                InquiryText = "問い合わせ",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            excelTranslationService: fakeArtifactService,
+            artifactPromptComposer: new ArtifactPromptComposer(temp.Path));
+        viewModel.PromptInput = "問い合わせ内容.xlsxを英語に翻訳して別名で保存してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, fakeArtifactService.CreateCount);
+        Assert.False(File.Exists(Path.Combine(temp.Path, "Inquiry_Details_EN.xlsx")));
+        Assert.Equal("Inquiry_Details_EN.xlsx", viewModel.ArtifactOutputFileName);
+        Assert.Single(viewModel.ArtifactTranslationPreview);
+        Assert.True(viewModel.CreateExcelArtifactCommand.CanExecute(null));
+
+        viewModel.ArtifactOutputFileName = "Inquiry_Details_EN_2.xlsx";
+
+        Assert.Equal("再確認待ち", viewModel.ArtifactStateText);
+        Assert.False(viewModel.CreateExcelArtifactCommand.CanExecute(null));
+
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+
+        Assert.True(viewModel.CreateExcelArtifactCommand.CanExecute(null));
+
+        fakeClient.EnqueueResponse(
+            """[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"}]""");
+        fakeClient.EnqueueResponse(
+            """
+            Hello Support Team,
+
+            Please review the attached Inquiry_Details_EN.xlsx.
+
+            Best regards,
+            Ken Ito
+            Toyo Corporation
+            """);
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeArtifactService.CreateCount);
+        Assert.True(File.Exists(viewModel.CreatedArtifactPath));
+        Assert.Contains("Hello Support Team,", viewModel.ManufacturerMailDraft);
+        Assert.Contains("Best regards,", viewModel.ManufacturerMailDraft);
+        Assert.Equal("English", viewModel.ArtifactTranslationPreview.Single().TranslatedText);
+        Assert.False(viewModel.CreateExcelArtifactCommand.CanExecute(null));
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
     {
         var started = DateTime.UtcNow;
@@ -205,6 +280,7 @@ public sealed class CodexChatViewModelTests
 
     private sealed class FakeClient : ICodexAppServerClient
     {
+        private readonly Queue<string> responses = new();
         public event EventHandler<CodexConnectionState>? StateChanged;
         public event EventHandler<CodexAgentMessageDeltaEventArgs>? AgentMessageDelta;
         public event EventHandler<CodexTurnCompletedEventArgs>? TurnCompleted;
@@ -220,6 +296,11 @@ public sealed class CodexChatViewModelTests
         public string? WorkingDirectory { get; private set; }
         public string LastTurnText { get; private set; } = string.Empty;
         public IReadOnlyList<string> LastImagePaths { get; private set; } = [];
+
+        public void EnqueueResponse(string response)
+        {
+            responses.Enqueue(response);
+        }
 
         public Task<CodexConnectionInfo> ConnectAsync(string? configuredExecutablePath, CancellationToken cancellationToken = default)
         {
@@ -260,8 +341,8 @@ public sealed class CodexChatViewModelTests
             LastTurnText = text;
             LastImagePaths = localImagePaths?.ToArray() ?? [];
             CurrentTurnId = "turn-1";
-            AgentMessageDelta?.Invoke(this, new CodexAgentMessageDeltaEventArgs("thread-1", "turn-1", "item-1", "回答"));
-            AgentMessageDelta?.Invoke(this, new CodexAgentMessageDeltaEventArgs("thread-1", "turn-1", "item-1", "です。"));
+            var response = responses.Count > 0 ? responses.Dequeue() : "回答です。";
+            AgentMessageDelta?.Invoke(this, new CodexAgentMessageDeltaEventArgs("thread-1", "turn-1", "item-1", response));
             CurrentTurnId = null;
             TurnCompleted?.Invoke(this, new CodexTurnCompletedEventArgs("thread-1", "turn-1", "completed", null));
             return Task.FromResult(new CodexTurnStartResult("turn-1"));
@@ -275,6 +356,56 @@ public sealed class CodexChatViewModelTests
     {
         public string LogDirectory { get; } = path;
         public Task WriteAsync(string category, string message, Exception? exception = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FakeExcelTranslationService : IExcelTranslationService
+    {
+        public int CreateCount { get; private set; }
+
+        public Task<ArtifactCreationPlan> CreatePlanAsync(
+            ArtifactCreationRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var destination = string.IsNullOrWhiteSpace(request.DestinationFolder)
+                ? request.CaseFolder
+                : request.DestinationFolder;
+            var entry = new ExcelTranslationEntry
+            {
+                Sheet = "Sheet1",
+                Cell = "A1",
+                SourceText = "日本語",
+                ShouldTranslate = true,
+                NumberFormat = "General",
+            };
+            return Task.FromResult(new ArtifactCreationPlan
+            {
+                Request = request,
+                CaseFolderFullPath = request.CaseFolder,
+                SourceFullPath = request.SourceFilePath,
+                DestinationFullPath = destination,
+                OutputFullPath = Path.Combine(destination, request.OutputFileName),
+                SourceSha256 = "fake",
+                DestinationFolderWillBeCreated = !Directory.Exists(destination),
+                Excel = new ExcelTranslationPlan { Entries = [entry] },
+            });
+        }
+
+        public async Task<ArtifactCreationResult> CreateArtifactAsync(
+            ArtifactCreationPlan plan,
+            IReadOnlyList<ExcelTranslationValue> translations,
+            CancellationToken cancellationToken = default)
+        {
+            CreateCount++;
+            Directory.CreateDirectory(plan.DestinationFullPath);
+            await File.WriteAllTextAsync(plan.OutputFullPath, "created", cancellationToken);
+            return new ArtifactCreationResult
+            {
+                Succeeded = true,
+                OutputFilePath = plan.OutputFullPath,
+                TranslationTargetCount = translations.Count,
+                TranslatedCount = translations.Count,
+            };
+        }
     }
 
     private sealed class TempDirectory : IDisposable

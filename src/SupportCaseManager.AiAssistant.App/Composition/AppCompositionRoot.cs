@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Core.Answers;
+using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Cases;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Ai.Core.Diagnostics;
@@ -95,7 +96,9 @@ public static class AppCompositionRoot
             () => viewModel.CodexExecutablePath,
             viewModel.ApplyCodexReply,
             viewModel.ApplyCodexMemo,
-            viewModel.UndoCodexApplication);
+            viewModel.UndoCodexApplication,
+            excelTranslationService: new ExcelTranslationService(),
+            artifactPromptComposer: new ArtifactPromptComposer());
         viewModel.AttachCodex(codexViewModel);
 
         return new MainWindow(viewModel);

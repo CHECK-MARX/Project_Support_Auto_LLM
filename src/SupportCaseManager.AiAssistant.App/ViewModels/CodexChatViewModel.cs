@@ -2,13 +2,14 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
+using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using WpfApplication = System.Windows.Application;
 using WpfClipboard = System.Windows.Clipboard;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
-public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
+public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposable
 {
     private readonly ICodexAppServerClient client;
     private readonly ICodexCaseFileScanner fileScanner;
@@ -22,6 +23,11 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
     private readonly Func<string, bool> applyReply;
     private readonly Func<string, bool> applyMemo;
     private readonly Action<bool> undoApplication;
+    private readonly IExcelTranslationService excelTranslationService;
+    private readonly IArtifactPromptComposer artifactPromptComposer;
+    private readonly ArtifactRequestDetector artifactRequestDetector;
+    private readonly ExcelTranslationJsonParser translationJsonParser;
+    private readonly CaseArtifactPathPolicy artifactPathPolicy;
     private CodexConnectionState connectionState = CodexConnectionState.Disconnected;
     private string connectionDetails = "Codexへ接続してください。";
     private string version = "-";
@@ -64,7 +70,12 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
         Func<string, bool> applyReply,
         Func<string, bool> applyMemo,
         Action<bool> undoApplication,
-        ICodexAttachmentContentReader? attachmentContentReader = null)
+        ICodexAttachmentContentReader? attachmentContentReader = null,
+        IExcelTranslationService? excelTranslationService = null,
+        IArtifactPromptComposer? artifactPromptComposer = null,
+        ArtifactRequestDetector? artifactRequestDetector = null,
+        ExcelTranslationJsonParser? translationJsonParser = null,
+        CaseArtifactPathPolicy? artifactPathPolicy = null)
     {
         this.client = client;
         this.fileScanner = fileScanner;
@@ -78,6 +89,11 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
         this.applyReply = applyReply;
         this.applyMemo = applyMemo;
         this.undoApplication = undoApplication;
+        this.excelTranslationService = excelTranslationService ?? new ExcelTranslationService();
+        this.artifactPromptComposer = artifactPromptComposer ?? new ArtifactPromptComposer();
+        this.artifactRequestDetector = artifactRequestDetector ?? new ArtifactRequestDetector();
+        this.translationJsonParser = translationJsonParser ?? new ExcelTranslationJsonParser();
+        this.artifactPathPolicy = artifactPathPolicy ?? new CaseArtifactPathPolicy();
 
         ConnectCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ConnectAsync), () => !turnActive);
         ReconnectCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ReconnectAsync), () => !turnActive);
@@ -92,6 +108,7 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
         UndoMemoCommand = new RelayCommand(() => undoApplication(false));
         CopyAnswerCommand = new RelayCommand(CopyLatestAnswer, HasLatestAnswer);
         FinalReviewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(FinalReviewAsync), () => !turnActive && HasLatestAnswer());
+        InitializeArtifactCommands();
 
         client.StateChanged += OnStateChanged;
         client.AgentMessageDelta += OnAgentMessageDelta;
@@ -438,6 +455,14 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
             return;
         }
 
+        if (artifactRequestDetector.IsExplicitExcelTranslationRequest(instruction))
+        {
+            await PrepareArtifactPlanAsync(instruction).ConfigureAwait(false);
+            instruction += Environment.NewLine
+                + "ファイルへの書込みはWPF成果物機能がユーザー確認後に行います。"
+                + "読み取り専用を理由に拒否せず、調査上の注意点とメーカー確認論点を回答してください。";
+        }
+
         if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
         {
             await StartNewAsync().ConfigureAwait(false);
@@ -563,11 +588,17 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
     private async Task RefreshFilesAsync()
     {
         var snapshot = caseProvider();
+        var caseFolderChanged = !string.Equals(scannedCaseFolder, snapshot.CaseFolder, StringComparison.OrdinalIgnoreCase);
         var folderReady = !string.IsNullOrWhiteSpace(snapshot.CaseFolder)
             && Directory.Exists(snapshot.CaseFolder);
         var result = await fileScanner.ScanAsync(snapshot.CaseFolder).ConfigureAwait(false);
         RunOnUi(() =>
         {
+            if (caseFolderChanged)
+            {
+                ResetArtifactForCaseChange();
+            }
+
             foreach (var existing in Files)
             {
                 existing.PropertyChanged -= OnCaseFilePropertyChanged;
@@ -670,6 +701,8 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
 
     private void OnTurnCompleted(object? sender, CodexTurnCompletedEventArgs eventArgs)
     {
+        var artifactCompletion = artifactTurnCompletion;
+        var artifactResponse = string.Empty;
         if (currentSession is not null)
         {
             currentSession = currentSession with { LastTurnId = eventArgs.TurnId };
@@ -681,7 +714,11 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
             if (currentAssistantMessage is not null)
             {
                 currentAssistantMessage.IsStreaming = false;
-                if (isReviewTurn)
+                if (artifactCompletion is not null)
+                {
+                    artifactResponse = currentAssistantMessage.Text;
+                }
+                else if (isReviewTurn)
                 {
                     ReviewAnswer = currentAssistantMessage.Text;
                     var diff = diffDetector.Compare(reviewBaseline, ReviewAnswer, [currentSnapshot?.ProductName ?? string.Empty]);
@@ -712,6 +749,18 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
                 : $"CodexのTurnが終了しました: {eventArgs.Status} {eventArgs.ErrorMessage}";
             RaiseCommandStates();
         });
+        if (artifactCompletion is not null)
+        {
+            if (eventArgs.Status.Equals("completed", StringComparison.OrdinalIgnoreCase))
+            {
+                artifactCompletion.TrySetResult(artifactResponse);
+            }
+            else
+            {
+                artifactCompletion.TrySetException(
+                    new InvalidOperationException($"Codex成果物Turnが完了しませんでした: {eventArgs.Status} {eventArgs.ErrorMessage}"));
+            }
+        }
         _ = PersistSessionAsync(eventArgs.Status);
     }
 
@@ -761,6 +810,7 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
 
     private void OnError(object? sender, string error)
     {
+        artifactTurnCompletion?.TrySetException(new InvalidOperationException(error));
         RunOnUi(() =>
         {
             ErrorText = $"{error}{Environment.NewLine}現在の状態: {ConnectionStateText}{Environment.NewLine}再接続または再試行してください。{Environment.NewLine}診断ログ: {DiagnosticsPath}";
@@ -943,6 +993,7 @@ public sealed class CodexChatViewModel : ObservableObject, IAsyncDisposable
         ApplyMemoCommand.RaiseCanExecuteChanged();
         CopyAnswerCommand.RaiseCanExecuteChanged();
         FinalReviewCommand.RaiseCanExecuteChanged();
+        RaiseArtifactCommandStates();
         OnPropertyChanged(nameof(SelectedFilesSummary));
     }
 

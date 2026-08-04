@@ -61,6 +61,29 @@ public sealed class ProgressBindingTests
         }
     }
 
+    [Fact]
+    public void MainWindow_ArtifactPlanRequiresExplicitCommandAndKeepsMailEditable()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+
+        AssertEditableTextBox(document, "Codex.ArtifactDestinationFolder");
+        AssertEditableTextBox(document, "Codex.ArtifactOutputFileName");
+        AssertEditableTextBox(document, "Codex.ManufacturerMailDraft");
+        foreach (var commandName in new[]
+                 {
+                     "Codex.PrepareArtifactPlanCommand",
+                     "Codex.CreateExcelArtifactCommand",
+                     "Codex.CancelArtifactCommand",
+                     "Codex.GenerateManufacturerMailCommand",
+                     "Codex.CopyManufacturerMailCommand",
+                 })
+        {
+            Assert.Contains(
+                document.Descendants().SelectMany(static element => element.Attributes()),
+                attribute => attribute.Value.Contains(commandName, StringComparison.Ordinal));
+        }
+    }
+
     private static XElement FindProgressBar(XDocument document, string bindingText)
     {
         return Assert.Single(

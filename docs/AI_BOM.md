@@ -112,6 +112,7 @@ TopN fallback:
 | Artifact | Path | Notes |
 | --- | --- | --- |
 | Generated answer drafts | `ai-data/drafts/` | AI-only draft storage; existing case notes are not modified |
+| User-confirmed translated Excel | Current case folder, user-selected child folder | Created by the WPF Open XML service only after plan review; Codex remains read-only and the source file is not modified |
 | Diagnostic log | `ai-data/logs/AiAssistant.log` | AI assistant diagnostic log |
 | Settings | `ai-data/settings.json` | AI assistant settings; existing `user-settings.json` is not modified |
 
@@ -122,6 +123,9 @@ TopN fallback:
 | Local-first LLM default | Enabled |
 | Cloud LLM default | Disabled |
 | Existing notes write-back | Disabled |
+| Artifact write without explicit confirmation | Disabled |
+| Artifact destination outside current case | Blocked |
+| Artifact source overwrite | Blocked |
 | Automatic customer email | Disabled |
 | Automatic reply | Disabled |
 | Automatic close | Disabled |

@@ -1052,6 +1052,182 @@
                             </Grid>
                         </GroupBox>
 
+                        <Expander Header="成果物（ユーザー確認後に作成）"
+                                  IsExpanded="True"
+                                  Margin="0,0,0,8">
+                            <StackPanel>
+                                <GroupBox Header="成果物作成計画">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Text="処理状態" />
+                                        <Grid Grid.Column="1" Grid.ColumnSpan="2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ProgressBar Height="10"
+                                                         Minimum="0"
+                                                         Maximum="100"
+                                                         Value="{Binding Codex.ArtifactProgressPercent, Mode=OneWay}"
+                                                         VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Margin="12,0,0,0"
+                                                       Text="{Binding Codex.ArtifactStateText, Mode=OneWay}" />
+                                        </Grid>
+
+                                        <TextBlock Grid.Row="1" Text="元ファイル" />
+                                        <TextBox Grid.Row="1"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactSourceFullPath, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap" />
+                                        <Button Grid.Row="1"
+                                                Grid.Column="2"
+                                                Content="元ファイルを開く"
+                                                Command="{Binding Codex.OpenArtifactSourceCommand}" />
+
+                                        <TextBlock Grid.Row="2" Text="成果物の種類" />
+                                        <TextBlock Grid.Row="2"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactKindText, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="3" Text="処理内容" />
+                                        <TextBlock Grid.Row="3"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactProcessDescription, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+
+                                        <TextBlock Grid.Row="4" Text="保存先フォルダ" />
+                                        <TextBox Grid.Row="4"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactDestinationFolder, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 IsReadOnly="False"
+                                                 TextWrapping="Wrap" />
+                                        <WrapPanel Grid.Row="4" Grid.Column="2">
+                                            <Button Content="保存先を変更"
+                                                    Command="{Binding Codex.ChooseArtifactDestinationCommand}" />
+                                            <Button Content="保存先を開く"
+                                                    Command="{Binding Codex.OpenArtifactDestinationCommand}" />
+                                        </WrapPanel>
+
+                                        <TextBlock Grid.Row="5" Text="出力ファイル名" />
+                                        <TextBox Grid.Row="5"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactOutputFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 IsReadOnly="False" />
+                                        <WrapPanel Grid.Row="5" Grid.Column="2">
+                                            <Button Content="既定名"
+                                                    Command="{Binding Codex.ResetArtifactOutputNameCommand}" />
+                                            <Button Content="連番で保存"
+                                                    Command="{Binding Codex.UseNumberedArtifactNameCommand}" />
+                                        </WrapPanel>
+
+                                        <TextBlock Grid.Row="6" Text="上書き／原本" />
+                                        <StackPanel Grid.Row="6"
+                                                    Grid.Column="1"
+                                                    Grid.ColumnSpan="2"
+                                                    Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Codex.ArtifactOverwriteText, Mode=OneWay}" />
+                                            <TextBlock Text=" ／ " />
+                                            <TextBlock Text="{Binding Codex.ArtifactSourceProtectionText, Mode=OneWay}" />
+                                            <TextBlock Text=" ／ 保存先: " />
+                                            <TextBlock Text="{Binding Codex.ArtifactDestinationCreationText, Mode=OneWay}" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="7" Text="対象要素" />
+                                        <TextBlock Grid.Row="7"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactTranslationSummary, Mode=OneWay}" />
+                                    </Grid>
+                                </GroupBox>
+
+                                <WrapPanel Margin="0,0,0,8">
+                                    <Button Content="実行内容を確認"
+                                            Command="{Binding Codex.PrepareArtifactPlanCommand}" />
+                                    <Button Content="英訳Excelを作成"
+                                            Command="{Binding Codex.CreateExcelArtifactCommand}" />
+                                    <Button Content="キャンセル"
+                                            Command="{Binding Codex.CancelArtifactCommand}" />
+                                    <Button Content="作成ファイルを開く"
+                                            Command="{Binding Codex.OpenCreatedArtifactCommand}" />
+                                </WrapPanel>
+
+                                <GroupBox Header="翻訳プレビュー（原文と英訳）">
+                                    <DataGrid ItemsSource="{Binding Codex.ArtifactTranslationPreview}"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              IsReadOnly="True"
+                                              MaxHeight="280"
+                                              SelectionMode="Single">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="種類" Binding="{Binding TargetKindText}" Width="110" />
+                                            <DataGridTextColumn Header="シート" Binding="{Binding Sheet}" Width="130" />
+                                            <DataGridTextColumn Header="対象" Binding="{Binding Cell}" Width="110" />
+                                            <DataGridTextColumn Header="原文" Binding="{Binding SourceText}" Width="*" />
+                                            <DataGridTextColumn Header="英訳" Binding="{Binding TranslatedText}" Width="*" />
+                                            <DataGridTextColumn Header="判定" Binding="{Binding TargetText}" Width="150" />
+                                            <DataGridTextColumn Header="表示形式" Binding="{Binding NumberFormat}" Width="120" />
+                                            <DataGridTextColumn Header="数式" Binding="{Binding FormulaText}" Width="65" />
+                                            <DataGridTextColumn Header="コメント" Binding="{Binding CommentText}" Width="75" />
+                                            <DataGridTextColumn Header="結合セル" Binding="{Binding MergedRange}" Width="100" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </GroupBox>
+
+                                <GroupBox Header="警告・処理結果">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding Codex.ArtifactWarnings, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="55" />
+                                        <TextBox Text="{Binding Codex.ArtifactResultText, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="80" />
+                                        <TextBlock Text="{Binding Codex.CreatedArtifactPath, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="メーカー向け確認案（編集可能・自動送信しません）">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding Codex.ManufacturerMailDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 AcceptsReturn="True"
+                                                 IsReadOnly="False"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 MinHeight="180" />
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Content="メーカー確認メール案を作成"
+                                                    Command="{Binding Codex.GenerateManufacturerMailCommand}" />
+                                            <Button Content="メール案をコピー"
+                                                    Command="{Binding Codex.CopyManufacturerMailCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </Expander>
+
                         <GroupBox Header="Codex技術回答案">
                             <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=OneWay}"
                                      IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />

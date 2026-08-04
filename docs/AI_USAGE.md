@@ -94,6 +94,8 @@ Sensitive values such as API keys, phone numbers, and email addresses are masked
 
 Generated drafts are assistance outputs. A support engineer must review the customer reply draft, internal memo, required checks, evidence, confidence, and warnings before using the result.
 
+Explicit Excel translation requests use a separate artifact workflow. Codex remains in a `read-only` sandbox and returns structured translation JSON plus an editable manufacturer-mail draft. The WPF Open XML service displays a plan first and writes only after the user presses the execution button. It limits destinations to the current case folder, never overwrites or renames the source workbook, rejects existing output names, and does not send email or append the mail draft to case notes automatically.
+
 ## AI-BOM / AI Supply Chain Review
 
 For AI-BOM and AI Supply Chain review, use:
