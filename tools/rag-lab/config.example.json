@@ -1,0 +1,44 @@
+{
+  "inputRoots": [
+    "samples"
+  ],
+  "outputRoot": "reports/generated",
+  "documentsFile": "samples/documents.json",
+  "evaluationCasesFile": "samples/evaluation_cases.json",
+  "reportName": "phase3-comparison",
+  "normalization": {
+    "unicodeNfkc": true,
+    "trimTrailingWhitespace": true,
+    "maxConsecutiveBlankLines": 1,
+    "excludeCategories": [
+      "separator",
+      "generated_header"
+    ]
+  },
+  "chunking": {
+    "maxCharacters": 1200,
+    "overlapCharacters": 120
+  },
+  "evaluation": {
+    "chunkStrategies": [
+      "fixed",
+      "paragraph",
+      "heading",
+      "structured"
+    ],
+    "searchMethods": [
+      "keyword",
+      "bm25"
+    ],
+    "filterModes": [
+      "none",
+      "product",
+      "product_and_version"
+    ],
+    "topK": [
+      1,
+      3,
+      5
+    ]
+  }
+}

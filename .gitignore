@@ -46,3 +46,9 @@ _verify_build/
 docs/*.docx
 docs/assets/
 docs/SupportCaseManager_UserGuide_ja_updated*.docx
+
+# RAG lab generated data (the evaluation source and tests remain tracked)
+tools/rag-lab/.cache/
+tools/rag-lab/.pytest_cache/
+tools/rag-lab/models/
+tools/rag-lab/reports/generated/
