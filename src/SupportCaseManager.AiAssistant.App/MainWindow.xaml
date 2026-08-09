@@ -542,6 +542,26 @@
                             <TextBox Width="42"
                                      Text="{Binding CoverageAwareMaxEvidenceItems, UpdateSourceTrigger=PropertyChanged}"
                                      IsEnabled="{Binding UseCoverageAwareEvidenceSelection}" />
+                            <CheckBox Content="{DynamicResource UseRustEvidenceSelectorLabel}"
+                                      IsChecked="{Binding UseRustEvidenceSelector}"
+                                      IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource EnableRustSelectorShadowModeLabel}"
+                                      IsChecked="{Binding EnableRustSelectorShadowMode}"
+                                      IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource RustEvidenceSelectorTimeoutLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="72"
+                                     Text="{Binding RustEvidenceSelectorTimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UseCoverageAwareEvidenceSelection}" />
+                            <TextBlock Text="{DynamicResource ShadowMinimumRunsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="58"
+                                     Text="{Binding ShadowMinimumRunsForReadiness, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding EnableRustSelectorShadowMode}" />
+                            <TextBlock Text="{DynamicResource ShadowMaxRecordsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="64"
+                                     Text="{Binding ShadowMaxStoredRecords, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding EnableRustSelectorShadowMode}" />
                             <TextBlock Text="ランキング方式" Margin="12,4,4,0" />
                             <ComboBox Width="100"
                                       IsEnabled="{Binding UseQuestionAwareEvidenceSelection}"

@@ -73,6 +73,24 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("coverageAwareMaxEvidenceItems")]
     public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
 
+    [JsonPropertyName("useRustEvidenceSelector")]
+    public bool UseRustEvidenceSelector { get; init; }
+
+    [JsonPropertyName("enableRustSelectorShadowMode")]
+    public bool EnableRustSelectorShadowMode { get; init; }
+
+    [JsonPropertyName("rustEvidenceSelectorTimeoutMs")]
+    public int RustEvidenceSelectorTimeoutMs { get; init; } = 2000;
+
+    [JsonPropertyName("rustEvidenceSelectorExecutablePath")]
+    public string RustEvidenceSelectorExecutablePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("shadowMinimumRunsForReadiness")]
+    public int ShadowMinimumRunsForReadiness { get; init; } = 50;
+
+    [JsonPropertyName("shadowMaxStoredRecords")]
+    public int ShadowMaxStoredRecords { get; init; } = 500;
+
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();
 

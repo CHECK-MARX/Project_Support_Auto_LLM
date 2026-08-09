@@ -28,6 +28,11 @@
     <sys:String x:Key="UsePhase175QualityControlsLabel">否定指定と回答Coverageを検証する (Phase 17.5)</sys:String>
     <sys:String x:Key="UseCoverageAwareEvidenceSelectionLabel">Coverage重視の根拠集合選定 (Phase 18)</sys:String>
     <sys:String x:Key="CoverageAwareMaxEvidenceItemsLabel">不足時の最大件数 (3-5)</sys:String>
+    <sys:String x:Key="UseRustEvidenceSelectorLabel">Rust Evidence Selectorを使用</sys:String>
+    <sys:String x:Key="EnableRustSelectorShadowModeLabel">Rust Shadow比較</sys:String>
+    <sys:String x:Key="RustEvidenceSelectorTimeoutLabel">Rust timeout (ms)</sys:String>
+    <sys:String x:Key="ShadowMinimumRunsLabel">Shadow最低実運用件数</sys:String>
+    <sys:String x:Key="ShadowMaxRecordsLabel">Shadow最大保持件数</sys:String>
     <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
     <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
     <sys:String x:Key="RagLabEvidenceMaxItemsLabel">最大追加件数（1～5）</sys:String>

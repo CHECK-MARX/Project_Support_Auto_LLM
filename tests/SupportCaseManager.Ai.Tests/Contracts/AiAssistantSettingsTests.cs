@@ -18,7 +18,42 @@ public sealed class AiAssistantSettingsTests
         Assert.False(settings.UsePhase175QualityControls);
         Assert.False(settings.UseCoverageAwareEvidenceSelection);
         Assert.Equal(5, settings.CoverageAwareMaxEvidenceItems);
+        Assert.False(settings.UseRustEvidenceSelector);
+        Assert.False(settings.EnableRustSelectorShadowMode);
+        Assert.Equal(2000, settings.RustEvidenceSelectorTimeoutMs);
+        Assert.Empty(settings.RustEvidenceSelectorExecutablePath);
+        Assert.Equal(50, settings.ShadowMinimumRunsForReadiness);
+        Assert.Equal(500, settings.ShadowMaxStoredRecords);
         Assert.Equal(EvidenceRankingModes.Phase15, settings.EvidenceRankingMode);
+    }
+
+    [Fact]
+    public void RustSelectorSettings_OldJsonDefaultsOffAndRoundTrips()
+    {
+        var oldSettings = JsonSerializer.Deserialize<AiAssistantSettings>("{}");
+        var restored = JsonSerializer.Deserialize<AiAssistantSettings>(JsonSerializer.Serialize(new AiAssistantSettings
+        {
+            UseRustEvidenceSelector = true,
+            EnableRustSelectorShadowMode = true,
+            RustEvidenceSelectorTimeoutMs = 1200,
+            RustEvidenceSelectorExecutablePath = @"C:\tools\rag-selector-rs.exe",
+            ShadowMinimumRunsForReadiness = 75,
+            ShadowMaxStoredRecords = 700,
+        }));
+
+        Assert.NotNull(oldSettings);
+        Assert.False(oldSettings.UseRustEvidenceSelector);
+        Assert.False(oldSettings.EnableRustSelectorShadowMode);
+        Assert.Equal(2000, oldSettings.RustEvidenceSelectorTimeoutMs);
+        Assert.Equal(50, oldSettings.ShadowMinimumRunsForReadiness);
+        Assert.Equal(500, oldSettings.ShadowMaxStoredRecords);
+        Assert.NotNull(restored);
+        Assert.True(restored.UseRustEvidenceSelector);
+        Assert.True(restored.EnableRustSelectorShadowMode);
+        Assert.Equal(1200, restored.RustEvidenceSelectorTimeoutMs);
+        Assert.Equal(@"C:\tools\rag-selector-rs.exe", restored.RustEvidenceSelectorExecutablePath);
+        Assert.Equal(75, restored.ShadowMinimumRunsForReadiness);
+        Assert.Equal(700, restored.ShadowMaxStoredRecords);
     }
 
     [Fact]

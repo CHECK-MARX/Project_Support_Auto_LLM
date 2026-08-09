@@ -1,0 +1,74 @@
+name: RAG Selector Rust
+
+on:
+  push:
+    paths:
+      - "tools/rag-selector-rs/**"
+      - "tools/rag-lab/src/rag_lab/coverage_set_selection.py"
+      - "tools/rag-lab/tests/test_rust_selector_parity.py"
+      - "tools/rag-lab/samples/phase18_coverage_selection_cases.json"
+      - "src/SupportCaseManager.Ai.Core/Evidence/**"
+      - "tests/SupportCaseManager.Ai.Tests/Evidence/**"
+      - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase20RustShadowE2ETests.cs"
+      - ".github/workflows/rag-selector-rust.yml"
+  pull_request:
+    paths:
+      - "tools/rag-selector-rs/**"
+      - "tools/rag-lab/src/rag_lab/coverage_set_selection.py"
+      - "tools/rag-lab/tests/test_rust_selector_parity.py"
+      - "tools/rag-lab/samples/phase18_coverage_selection_cases.json"
+      - "src/SupportCaseManager.Ai.Core/Evidence/**"
+      - "tests/SupportCaseManager.Ai.Tests/Evidence/**"
+      - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase20RustShadowE2ETests.cs"
+      - ".github/workflows/rag-selector-rust.yml"
+  workflow_dispatch:
+
+jobs:
+  rust-selector:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Format
+        working-directory: tools/rag-selector-rs
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: tools/rag-selector-rs
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        working-directory: tools/rag-selector-rs
+        run: cargo test
+      - name: Release build
+        working-directory: tools/rag-selector-rs
+        run: cargo build --release
+      - name: Python to Rust parity
+        env:
+          RAG_SELECTOR_RS_EXE: ${{ github.workspace }}\tools\rag-selector-rs\target\release\rag-selector-rs.exe
+        run: python -m pytest tools/rag-lab/tests/test_rust_selector_parity.py -q
+      - name: C# to Rust parity
+        env:
+          RAG_SELECTOR_RS_EXE: ${{ github.workspace }}\tools\rag-selector-rs\target\release\rag-selector-rs.exe
+        run: >-
+          dotnet test tests/SupportCaseManager.Ai.Tests/SupportCaseManager.Ai.Tests.csproj
+          -c Release
+          --filter "FullyQualifiedName~RustEvidenceSelectorRealCliTests|FullyQualifiedName~Phase20RustShadowRealCliTests"
+      - name: WPF selection shadow E2E
+        env:
+          RAG_SELECTOR_RS_EXE: ${{ github.workspace }}\tools\rag-selector-rs\target\release\rag-selector-rs.exe
+        run: >-
+          dotnet test tests/SupportCaseManager.AiAssistant.App.Tests/SupportCaseManager.AiAssistant.App.Tests.csproj
+          -c Release
+          --filter FullyQualifiedName~Phase20RustShadowE2ETests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rag-selector-rs-win-x64
+          path: tools/rag-selector-rs/target/release/rag-selector-rs.exe
+          if-no-files-found: error

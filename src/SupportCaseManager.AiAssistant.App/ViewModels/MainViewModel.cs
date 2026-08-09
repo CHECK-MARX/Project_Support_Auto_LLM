@@ -42,6 +42,9 @@ public sealed class MainViewModel : ObservableObject
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate), nameof(UsePhase175QualityControls),
         nameof(UseCoverageAwareEvidenceSelection), nameof(CoverageAwareMaxEvidenceItems),
+        nameof(UseRustEvidenceSelector), nameof(EnableRustSelectorShadowMode),
+        nameof(RustEvidenceSelectorTimeoutMs), nameof(RustEvidenceSelectorExecutablePath),
+        nameof(ShadowMinimumRunsForReadiness), nameof(ShadowMaxStoredRecords),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
     ];
@@ -83,6 +86,7 @@ public sealed class MainViewModel : ObservableObject
     private bool isApplyingSettings;
     private bool ollamaModelsLoaded;
     private IReadOnlyList<ModelCapabilityProfile> modelCapabilityProfiles = [];
+    private RustSelectorShadowStatistics? lastRustShadowStatistics;
 
     private CaseContext? currentCaseContext;
     private AnswerDraftRequest? lastRequest;
@@ -124,6 +128,12 @@ public sealed class MainViewModel : ObservableObject
     private bool usePhase175QualityControls;
     private bool useCoverageAwareEvidenceSelection;
     private int coverageAwareMaxEvidenceItems = 5;
+    private bool useRustEvidenceSelector;
+    private bool enableRustSelectorShadowMode;
+    private int rustEvidenceSelectorTimeoutMs = 2000;
+    private string rustEvidenceSelectorExecutablePath = string.Empty;
+    private int shadowMinimumRunsForReadiness = 50;
+    private int shadowMaxStoredRecords = 500;
     private bool useRagLabEvidence;
     private string ragLabEvidenceFilePath = string.Empty;
     private string ragLabBaselineReadinessFilePath = string.Empty;
@@ -816,6 +826,42 @@ public sealed class MainViewModel : ObservableObject
                 UpdatePromptSummary();
             }
         }
+    }
+
+    public bool UseRustEvidenceSelector
+    {
+        get => useRustEvidenceSelector;
+        set => SetProperty(ref useRustEvidenceSelector, value);
+    }
+
+    public bool EnableRustSelectorShadowMode
+    {
+        get => enableRustSelectorShadowMode;
+        set => SetProperty(ref enableRustSelectorShadowMode, value);
+    }
+
+    public int RustEvidenceSelectorTimeoutMs
+    {
+        get => rustEvidenceSelectorTimeoutMs;
+        set => SetProperty(ref rustEvidenceSelectorTimeoutMs, Math.Clamp(value, 100, 30_000));
+    }
+
+    public string RustEvidenceSelectorExecutablePath
+    {
+        get => rustEvidenceSelectorExecutablePath;
+        set => SetProperty(ref rustEvidenceSelectorExecutablePath, value?.Trim() ?? string.Empty);
+    }
+
+    public int ShadowMinimumRunsForReadiness
+    {
+        get => shadowMinimumRunsForReadiness;
+        set => SetProperty(ref shadowMinimumRunsForReadiness, Math.Clamp(value, 10, 10_000));
+    }
+
+    public int ShadowMaxStoredRecords
+    {
+        get => shadowMaxStoredRecords;
+        set => SetProperty(ref shadowMaxStoredRecords, Math.Clamp(value, 50, 10_000));
     }
 
     public bool UseRagLabEvidence
@@ -2751,6 +2797,12 @@ public sealed class MainViewModel : ObservableObject
         UsePhase175QualityControls = settings.UsePhase175QualityControls;
         UseCoverageAwareEvidenceSelection = settings.UseCoverageAwareEvidenceSelection;
         CoverageAwareMaxEvidenceItems = settings.CoverageAwareMaxEvidenceItems;
+        UseRustEvidenceSelector = settings.UseRustEvidenceSelector;
+        EnableRustSelectorShadowMode = settings.EnableRustSelectorShadowMode;
+        RustEvidenceSelectorTimeoutMs = settings.RustEvidenceSelectorTimeoutMs;
+        RustEvidenceSelectorExecutablePath = settings.RustEvidenceSelectorExecutablePath;
+        ShadowMinimumRunsForReadiness = settings.ShadowMinimumRunsForReadiness;
+        ShadowMaxStoredRecords = settings.ShadowMaxStoredRecords;
         UseRagLabEvidence = settings.UseRagLabEvidence;
         RagLabEvidenceFilePath = settings.RagLabEvidenceFilePath;
         RagLabBaselineReadinessFilePath = settings.RagLabBaselineReadinessFilePath;
@@ -2949,6 +3001,12 @@ public sealed class MainViewModel : ObservableObject
             UsePhase175QualityControls = UsePhase175QualityControls,
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
             CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
+            UseRustEvidenceSelector = UseRustEvidenceSelector,
+            EnableRustSelectorShadowMode = EnableRustSelectorShadowMode,
+            RustEvidenceSelectorTimeoutMs = RustEvidenceSelectorTimeoutMs,
+            RustEvidenceSelectorExecutablePath = RustEvidenceSelectorExecutablePath,
+            ShadowMinimumRunsForReadiness = ShadowMinimumRunsForReadiness,
+            ShadowMaxStoredRecords = ShadowMaxStoredRecords,
             AnswerQualityMode = AnswerQualityMode,
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
@@ -3573,6 +3631,12 @@ public sealed class MainViewModel : ObservableObject
             $"Index last updated: {lastUpdated}",
             $"Generation state: {GenerationState}",
             $"Generation skipped reason: {ValueOrUnset(GenerationSkippedReason)}",
+            $"Rust Shadow runs: {lastRustShadowStatistics?.ProductionRuns ?? 0}",
+            $"Rust Shadow exact order: {lastRustShadowStatistics?.ExactOrderMatchRate ?? 0:P1}",
+            $"Rust Shadow coverage: {lastRustShadowStatistics?.CoverageMatchRate ?? 0:P1}",
+            $"Rust Shadow fallback/timeout: {lastRustShadowStatistics?.FallbackCount ?? 0}/{lastRustShadowStatistics?.TimeoutCount ?? 0}",
+            $"Rust Shadow median/p95: {lastRustShadowStatistics?.RustMedianElapsedMilliseconds ?? 0:0.000}/{lastRustShadowStatistics?.RustP95ElapsedMilliseconds ?? 0:0.000} ms",
+            $"Rust Shadow readiness: {lastRustShadowStatistics?.Readiness.ToString() ?? RustAdoptionReadiness.NotEnoughData.ToString()}",
         ]);
     }
 
@@ -3952,6 +4016,14 @@ public sealed class MainViewModel : ObservableObject
             UsePhase175QualityControls = UsePhase175QualityControls,
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
             CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
+            UseRustEvidenceSelector = UseRustEvidenceSelector,
+            EnableRustSelectorShadowMode = EnableRustSelectorShadowMode,
+            RustEvidenceSelectorTimeoutMs = RustEvidenceSelectorTimeoutMs,
+            RustEvidenceSelectorExecutablePath = RustEvidenceSelectorExecutablePath,
+            ShadowMinimumRunsForReadiness = ShadowMinimumRunsForReadiness,
+            ShadowMaxStoredRecords = ShadowMaxStoredRecords,
+            RustShadowObservationFilePath = Path.Combine(
+                EffectiveAiDataFolder(), "diagnostics", "rust-selector-shadow.json"),
             MaxPromptChars = MaxPromptChars,
         };
     }
@@ -4031,6 +4103,11 @@ public sealed class MainViewModel : ObservableObject
         ExcludedByLimitCount = selection.ExcludedSelectedCount;
         EvidenceLimitWarningText = selection.Warning;
         EvidenceSummaryText = FormatEvidenceSummary(summary);
+        if (selection.RustShadowStatistics is not null)
+        {
+            lastRustShadowStatistics = selection.RustShadowStatistics;
+            UpdateRagDiagnostics();
+        }
     }
 
     private static string FormatOllamaConnectionResult(OllamaConnectionCheckResult result)
@@ -4922,6 +4999,24 @@ public sealed class MainViewModel : ObservableObject
                 builder.AppendLine($"BudgetLimited: {selection.SelectionBudgetLimited.ToString().ToLowerInvariant()}");
                 builder.AppendLine($"EstimatedEvidenceChars: {selection.EstimatedEvidenceChars}");
                 builder.AppendLine($"SelectionMode: {selection.SelectionMode}");
+                builder.AppendLine($"Selector engine: {selection.SelectorEngine}");
+                builder.AppendLine($"Rust elapsed: {selection.RustSelectorElapsedMilliseconds} ms");
+                builder.AppendLine($"Rust selector reported: {selection.RustSelectorReportedElapsedMilliseconds:0.000} ms");
+                builder.AppendLine($"C# selector elapsed: {selection.CSharpSelectorElapsedMilliseconds:0.000} ms");
+                builder.AppendLine($"Fallback reason: {(string.IsNullOrWhiteSpace(selection.RustSelectorFallbackReason) ? "(none)" : selection.RustSelectorFallbackReason)}");
+                builder.AppendLine($"Parity validation: {selection.RustSelectorParityValidation}");
+                if (selection.RustShadowStatistics is { } shadow)
+                {
+                    builder.AppendLine("Rust Selector Shadow summary:");
+                    builder.AppendLine($"- Runs: {shadow.ProductionRuns} production / {shadow.SyntheticRuns} synthetic");
+                    builder.AppendLine($"- Exact order: {shadow.ExactOrderMatchCount}/{Math.Max(1, shadow.ProductionRuns)} ({shadow.ExactOrderMatchRate:P1})");
+                    builder.AppendLine($"- Set match: {shadow.SetMatchRate:P1}; Coverage match: {shadow.CoverageMatchRate:P1}");
+                    builder.AppendLine($"- Fallback: {shadow.FallbackCount} ({shadow.FallbackRate:P1}); Timeout: {shadow.TimeoutCount}");
+                    builder.AppendLine($"- Rust median/p95: {shadow.RustMedianElapsedMilliseconds:0.000}/{shadow.RustP95ElapsedMilliseconds:0.000} ms");
+                    builder.AppendLine($"- C# median/p95: {shadow.CSharpMedianElapsedMilliseconds:0.000}/{shadow.CSharpP95ElapsedMilliseconds:0.000} ms");
+                    builder.AppendLine($"- Process overhead estimate: {shadow.EstimatedProcessOverheadMilliseconds:0.000} ms");
+                    builder.AppendLine($"- Readiness: {shadow.Readiness}");
+                }
             }
         }
         if (lastInquiryFocus?.IsFreshnessSensitive == true)

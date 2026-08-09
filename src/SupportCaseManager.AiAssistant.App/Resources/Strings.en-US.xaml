@@ -28,6 +28,11 @@
     <sys:String x:Key="UsePhase175QualityControlsLabel">Validate exclusions and answer coverage (Phase 17.5)</sys:String>
     <sys:String x:Key="UseCoverageAwareEvidenceSelectionLabel">Coverage-aware evidence set selection (Phase 18)</sys:String>
     <sys:String x:Key="CoverageAwareMaxEvidenceItemsLabel">Max items when coverage is missing (3-5)</sys:String>
+    <sys:String x:Key="UseRustEvidenceSelectorLabel">Use Rust evidence selector</sys:String>
+    <sys:String x:Key="EnableRustSelectorShadowModeLabel">Rust shadow comparison</sys:String>
+    <sys:String x:Key="RustEvidenceSelectorTimeoutLabel">Rust timeout (ms)</sys:String>
+    <sys:String x:Key="ShadowMinimumRunsLabel">Shadow minimum production runs</sys:String>
+    <sys:String x:Key="ShadowMaxRecordsLabel">Shadow maximum stored records</sys:String>
     <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
     <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
     <sys:String x:Key="RagLabEvidenceMaxItemsLabel">Maximum additional items (1-5)</sys:String>

@@ -70,7 +70,7 @@ public static partial class NegationAwareTopicAnalyzer
     {
         for (var index = markerIndex - 1; index >= 0; index--)
         {
-            if (text[index] is '。' or '！' or '？' or '!' or '?' or '\n' or '\r' or ';' or '；')
+            if (text[index] is '。' or '.' or '！' or '？' or '!' or '?' or '\n' or '\r' or ';' or '；')
             {
                 return index + 1;
             }
@@ -104,6 +104,6 @@ public static partial class NegationAwareTopicAnalyzer
         return left.Any(value => normalized.Contains(TopicEntityAnalyzer.NormalizeText(value)));
     }
 
-    [GeneratedRegex("ではなく(?:て)?|ではない|ではありません|以外(?:は|の)?|を除く", RegexOptions.CultureInvariant)]
+    [GeneratedRegex("ではなく(?:て)?|ではない|ではありません|以外(?:は|の)?|を除く|対象外(?:です|とする)?|(?:is|are)\\s+excluded|excluding|except(?:\\s+for)?", RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex ExclusionMarkerRegex();
 }

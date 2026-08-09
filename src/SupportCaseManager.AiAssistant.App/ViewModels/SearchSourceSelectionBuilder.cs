@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Search;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
@@ -333,6 +334,20 @@ public sealed record class SearchSourceSelectionResult
     public bool SelectionBudgetLimited { get; init; }
 
     public int EstimatedEvidenceChars { get; init; }
+
+    public string SelectorEngine { get; init; } = "CSharp";
+
+    public long RustSelectorElapsedMilliseconds { get; init; }
+
+    public double RustSelectorReportedElapsedMilliseconds { get; init; }
+
+    public double CSharpSelectorElapsedMilliseconds { get; init; }
+
+    public string RustSelectorFallbackReason { get; init; } = string.Empty;
+
+    public string RustSelectorParityValidation { get; init; } = "not applicable";
+
+    public RustSelectorShadowStatistics? RustShadowStatistics { get; init; }
 
     public IReadOnlyList<string> InsufficientEvidenceReasons { get; init; } = [];
 

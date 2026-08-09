@@ -25,6 +25,20 @@ public sealed record class QuestionAwareEvidenceSelectionContext
 
     public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
 
+    public bool UseRustEvidenceSelector { get; init; }
+
+    public bool EnableRustSelectorShadowMode { get; init; }
+
+    public int RustEvidenceSelectorTimeoutMs { get; init; } = 2000;
+
+    public string RustEvidenceSelectorExecutablePath { get; init; } = string.Empty;
+
+    public int ShadowMinimumRunsForReadiness { get; init; } = 50;
+
+    public int ShadowMaxStoredRecords { get; init; } = 500;
+
+    public string RustShadowObservationFilePath { get; init; } = string.Empty;
+
     public int MaxPromptChars { get; init; } = 6000;
 }
 

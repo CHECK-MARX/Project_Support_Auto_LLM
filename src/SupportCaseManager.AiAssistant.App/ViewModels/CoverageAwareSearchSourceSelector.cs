@@ -88,7 +88,7 @@ public static class CoverageAwareSearchSourceSelector
             };
         }).ToList();
 
-        var selection = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        var request = new CoverageEvidenceSelectionRequest
         {
             RequiredCoverage = requiredCoverage,
             Candidates = candidates,
@@ -96,7 +96,19 @@ public static class CoverageAwareSearchSourceSelector
             ExpansionMaxItems = Math.Clamp(context.CoverageAwareMaxEvidenceItems, 1, 5),
             CharacterBudget = Math.Max(600, context.MaxPromptChars / 2),
             MinimumQualityScore = Math.Clamp(minimumScore, 0, 1),
+        };
+        var execution = CoverageEvidenceSelectorCoordinator.Select(request, new RustEvidenceSelectorOptions
+        {
+            UseRustEvidenceSelector = context.UseRustEvidenceSelector,
+            EnableRustSelectorShadowMode = context.EnableRustSelectorShadowMode,
+            TimeoutMs = context.RustEvidenceSelectorTimeoutMs,
+            ExecutablePath = context.RustEvidenceSelectorExecutablePath,
+            RankingMode = context.RankingMode,
+            ShadowMinimumRunsForReadiness = context.ShadowMinimumRunsForReadiness,
+            ShadowMaxStoredRecords = context.ShadowMaxStoredRecords,
+            ShadowObservationFilePath = context.RustShadowObservationFilePath,
         });
+        var selection = execution.Selection;
         var selectedIds = selection.Selected.Select(static item => item.CandidateId).ToHashSet(StringComparer.Ordinal);
         var selectedViewModels = items
             .Select((item, index) => (Item: item, Id: CandidateId(item, index)))
@@ -112,7 +124,8 @@ public static class CoverageAwareSearchSourceSelector
             selection,
             Math.Clamp(baseMaxItems, 1, 5),
             minimumScore,
-            new QuestionClassifier().Classify(context.InquiryText).QuestionTypes);
+            new QuestionClassifier().Classify(context.InquiryText).QuestionTypes,
+            execution);
     }
 
     private static SearchSourceSelectionResult BuildResult(
@@ -122,7 +135,8 @@ public static class CoverageAwareSearchSourceSelector
         CoverageEvidenceSelectionResult selection,
         int baseMaxItems,
         double minimumScore,
-        IReadOnlyList<string> questionTypes)
+        IReadOnlyList<string> questionTypes,
+        CoverageEvidenceSelectorExecution? execution = null)
     {
         var sources = selected.Select(static item => item.Source).ToList();
         var selectedIds = selected.ToHashSet();
@@ -170,6 +184,13 @@ public static class CoverageAwareSearchSourceSelector
             RedundantCandidatesSkipped = selection.RedundantCandidatesSkipped,
             SelectionBudgetLimited = selection.BudgetLimited,
             EstimatedEvidenceChars = selection.EstimatedChars,
+            SelectorEngine = execution?.Engine ?? "CSharp",
+            RustSelectorElapsedMilliseconds = execution?.RustElapsedMilliseconds ?? 0,
+            RustSelectorReportedElapsedMilliseconds = execution?.RustSelectorElapsedMilliseconds ?? 0,
+            CSharpSelectorElapsedMilliseconds = execution?.CSharpElapsedMilliseconds ?? 0,
+            RustSelectorFallbackReason = execution?.FallbackReason ?? string.Empty,
+            RustSelectorParityValidation = execution?.ParityValidation ?? "not applicable",
+            RustShadowStatistics = execution?.ShadowStatistics,
             Warning = string.Join("; ", warningParts),
         };
     }

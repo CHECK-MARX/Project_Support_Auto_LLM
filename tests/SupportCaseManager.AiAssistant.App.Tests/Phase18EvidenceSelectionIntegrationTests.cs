@@ -1,10 +1,21 @@
+using System.Diagnostics;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Quality;
+using SupportCaseManager.Ai.Core.Ranking;
 using SupportCaseManager.AiAssistant.App.ViewModels;
+using Xunit.Abstractions;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class Phase18EvidenceSelectionIntegrationTests
 {
+    private readonly ITestOutputHelper output;
+
+    public Phase18EvidenceSelectionIntegrationTests(ITestOutputHelper output)
+    {
+        this.output = output;
+    }
+
     [Fact]
     public void FeatureOff_PreservesLegacySelection()
     {
@@ -96,6 +107,99 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
         Assert.Contains(result.Sources, static source => source.SourceId == "stream");
     }
 
+    [Fact]
+    public void E2eA_QacToValidateCli_CoverageDoesNotRegressFromPhase175()
+    {
+        const string question = "QAC解析結果をCLIからValidateへアップロードするため、auth、接続、プロジェクト関連付け、build-name、incremental build、確認方法、エラー対処を知りたい。";
+        var items = new[]
+        {
+            Item("upload", 0.95, "Perforce QAC Validate qacli validate build --qaf-project . --build-name BUILD upload option"),
+            Item("upload-copy", 0.94, "Perforce QAC Validate qacli validate build --qaf-project . --build-name BUILD upload option"),
+            Item("auth", 0.90, "Perforce QAC Validate qacli auth token, qacli validate connect server URL, project association"),
+            Item("incremental", 0.70, "Perforce QAC Validate qacli validate ibuild incremental build"),
+            Item("verify", 0.65, "Perforce QAC Validate portal build verification, failed upload error log troubleshooting"),
+        };
+
+        var phase175Watch = Stopwatch.StartNew();
+        var phase175 = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.10,
+            questionAwareContext: Phase175Context(question));
+        phase175Watch.Stop();
+        var phase18Watch = Stopwatch.StartNew();
+        var phase18 = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.10,
+            questionAwareContext: Phase18Context(question, 5));
+        phase18Watch.Stop();
+
+        var required = RequiredCoverage(question);
+        var phase175Coverage = RequiredCoverageObserved(phase175.Sources, required);
+        var phase18Coverage = RequiredCoverageObserved(phase18.Sources, required);
+        var phase175Missing = required.Except(phase175Coverage, StringComparer.Ordinal).ToList();
+        var phase18Missing = required.Except(phase18Coverage, StringComparer.Ordinal).ToList();
+        var answer = "qacli authで認証し、qacli validate connectで接続してValidateプロジェクトを関連付けます。qacli validate build --qaf-project . --build-name BUILDで登録し、増分時はqacli validate ibuildを実行します。Validate portalでBuildを確認し、失敗時はエラーログを確認します。";
+        var phase175Quality = EvaluateAnswer(question, answer, phase175.Sources);
+        var phase18Quality = EvaluateAnswer(question, answer, phase18.Sources);
+
+        output.WriteLine(ComparisonLine("E2E-A Phase17.5", phase175, required, phase175Coverage, phase175Missing, phase175Watch.Elapsed, phase175Quality.Decision));
+        output.WriteLine(ComparisonLine("E2E-A Phase18", phase18, required, phase18Coverage, phase18Missing, phase18Watch.Elapsed, phase18Quality.Decision));
+
+        Assert.True(phase18Coverage.Count >= phase175Coverage.Count);
+        Assert.True(phase18Missing.Count <= phase175Missing.Count);
+        Assert.Empty(phase18Missing);
+        Assert.Equal(4, phase18.Sources.Count);
+        Assert.DoesNotContain(phase18.Sources, static source => source.SourceId == "upload-copy");
+        Assert.True(RedundancyCount(phase18.Sources) <= RedundancyCount(phase175.Sources));
+        Assert.True(DecisionSeverity(phase18Quality.Decision) <= DecisionSeverity(phase175Quality.Decision));
+    }
+
+    [Fact]
+    public void E2eB_ValidateStream_CoversRequiredTopicsWithoutExcludedEvidence()
+    {
+        const string question = "Validate Streamの概要、目的、作成、設定、QAC関連付け、確認方法を教えてください。ライセンスとIDEプラグインは対象外です。";
+        var items = new[]
+        {
+            Item("license", 0.99, "Validate Stream license ライセンス configuration verification"),
+            Item("ide", 0.98, "Validate Stream IDE Plugin Eclipse プラグイン configuration"),
+            Item("overview", 0.82, "Validate Streamの概要 overview、目的 purpose、利用方法"),
+            Item("creation", 0.78, "Validate Streamを作成 createし、設定 configurationを行います"),
+            Item("association", 0.74, "Validate StreamとPerforce QACを関連付け associationし、確認 verificationします"),
+        };
+
+        var phase175Watch = Stopwatch.StartNew();
+        var phase175 = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.10,
+            questionAwareContext: Phase175Context(question));
+        phase175Watch.Stop();
+        var phase18Watch = Stopwatch.StartNew();
+        var phase18 = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.10,
+            questionAwareContext: Phase18Context(question, 5));
+        phase18Watch.Stop();
+
+        var required = RequiredCoverage(question);
+        var phase175Coverage = RequiredCoverageObserved(phase175.Sources, required);
+        var phase18Coverage = RequiredCoverageObserved(phase18.Sources, required);
+        var phase175Missing = required.Except(phase175Coverage, StringComparer.Ordinal).ToList();
+        var phase18Missing = required.Except(phase18Coverage, StringComparer.Ordinal).ToList();
+
+        output.WriteLine(ComparisonLine("E2E-B Phase17.5", phase175, required, phase175Coverage, phase175Missing, phase175Watch.Elapsed, "not-evaluated"));
+        output.WriteLine(ComparisonLine("E2E-B Phase18", phase18, required, phase18Coverage, phase18Missing, phase18Watch.Elapsed, "not-evaluated"));
+
+        Assert.Empty(phase18Missing);
+        Assert.Equal(6, phase18Coverage.Count);
+        Assert.DoesNotContain(phase18.Sources, static source => source.SourceId is "license" or "ide");
+        Assert.True(phase18Coverage.Count >= phase175Coverage.Count);
+        Assert.True(phase18Missing.Count <= phase175Missing.Count);
+    }
+
     private static QuestionAwareEvidenceSelectionContext Context(int maxItems) => new()
     {
         Enabled = true,
@@ -106,6 +210,99 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
         CoverageAwareMaxEvidenceItems = maxItems,
         MaxPromptChars = 12000,
     };
+
+    private static QuestionAwareEvidenceSelectionContext Phase175Context(string question) => new()
+    {
+        Enabled = true,
+        InquiryText = question,
+        ProductName = "HelixQAC",
+        RankingMode = EvidenceRankingModes.Phase16,
+        UsePhase175QualityControls = true,
+        UseCoverageAwareEvidenceSelection = false,
+        MaxPromptChars = 12000,
+    };
+
+    private static QuestionAwareEvidenceSelectionContext Phase18Context(string question, int maxItems) =>
+        Phase175Context(question) with
+        {
+            UseCoverageAwareEvidenceSelection = true,
+            CoverageAwareMaxEvidenceItems = maxItems,
+        };
+
+    private static IReadOnlyList<string> RequiredCoverage(string question)
+    {
+        var catalog = SupportTopicCatalog.Create("HelixQAC");
+        var profile = NegationAwareTopicAnalyzer.Analyze(question, catalog).PrimaryProfile;
+        return CoverageAnalyzer.RequiredForCoverageSelection(question, profile);
+    }
+
+    private static IReadOnlySet<string> ExactCoverage(IEnumerable<SearchSource> sources)
+    {
+        var coverage = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var source in sources)
+        {
+            coverage.UnionWith(CoverageAnalyzer.ObserveForCoverageSelection($"{source.Title}\n{source.Text}"));
+        }
+
+        return coverage;
+    }
+
+    private static IReadOnlySet<string> RequiredCoverageObserved(
+        IEnumerable<SearchSource> sources,
+        IReadOnlyList<string> required) =>
+        ExactCoverage(sources)
+            .Intersect(required, StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+
+    private static int DecisionSeverity(string decision) => decision switch
+    {
+        AnswerQualityDecisions.CustomerReady => 0,
+        AnswerQualityDecisions.NeedsReview => 1,
+        AnswerQualityDecisions.InsufficientEvidence => 2,
+        AnswerQualityDecisions.Blocked => 3,
+        _ => 4,
+    };
+
+    private static AnswerQualityEvaluationResult EvaluateAnswer(
+        string question,
+        string answer,
+        IReadOnlyList<SearchSource> sources) =>
+        AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
+        {
+            Question = question,
+            Answer = answer,
+            ProductName = "HelixQAC",
+            Evidence = sources.Select(static source => new AnswerQualityEvidence
+            {
+                SourceId = source.SourceId,
+                SourceType = source.SourceType,
+                Text = source.Text,
+                ProductName = source.ProductName,
+            }).ToList(),
+            Catalog = AnswerQualityEvaluator.CreateSupportCatalog("HelixQAC"),
+            UseSeparatedCoverage = true,
+        });
+
+    private static string ComparisonLine(
+        string name,
+        SearchSourceSelectionResult result,
+        IReadOnlyList<string> required,
+        IReadOnlySet<string> coverage,
+        IReadOnlyList<string> missing,
+        TimeSpan elapsed,
+        string decision) =>
+        $"{name}: evidence={result.Sources.Count}; coverage={coverage.Count}/{required.Count}; " +
+        $"missing={string.Join(',', missing)}; redundancy={RedundancyCount(result.Sources)}; " +
+        $"chars={EstimatedChars(result.Sources)}; elapsedMs={elapsed.TotalMilliseconds:0.###}; decision={decision}";
+
+    private static int RedundancyCount(IReadOnlyList<SearchSource> sources) =>
+        sources.Count - sources
+            .Select(static source => source.Text.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+    private static int EstimatedChars(IEnumerable<SearchSource> sources) =>
+        sources.Sum(static source => source.Title.Length + source.Text.Length);
 
     private static SearchSourceViewModel Item(string id, double score, string text) => new(
         new SearchSource

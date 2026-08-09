@@ -70,4 +70,30 @@ public sealed class NegationAwareTopicAnalyzerTests
         Assert.Empty(result.ExcludedProfile.Products);
         Assert.Empty(result.ExcludedProfile.Features);
     }
+
+    [Fact]
+    public void Analyze_TargetOutClause_ExcludesLicenseAndIdePlugin()
+    {
+        var result = NegationAwareTopicAnalyzer.Analyze(
+            "Validate Streamの作成と設定を説明してください。ライセンスとIDEプラグインは対象外です。",
+            Catalog);
+
+        Assert.Contains("Stream", result.PrimaryProfile.Features);
+        Assert.Contains("License", result.ExcludedProfile.Features);
+        Assert.Contains("IDE Plugin", result.ExcludedProfile.Features);
+        Assert.DoesNotContain("License", result.PrimaryProfile.Features);
+        Assert.DoesNotContain("IDE Plugin", result.PrimaryProfile.Features);
+    }
+
+    [Fact]
+    public void Analyze_EnglishExcludedClause_ExcludesLicenseAndIdePlugin()
+    {
+        var result = NegationAwareTopicAnalyzer.Analyze(
+            "Explain Validate Stream creation and configuration. License and IDE Plugin are excluded.",
+            Catalog);
+
+        Assert.Contains("Stream", result.PrimaryProfile.Features);
+        Assert.Contains("License", result.ExcludedProfile.Features);
+        Assert.Contains("IDE Plugin", result.ExcludedProfile.Features);
+    }
 }
