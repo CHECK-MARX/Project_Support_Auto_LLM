@@ -5,7 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from rag_lab.runner import _fingerprint, run_evaluation, run_evidence
+from rag_lab.runner import (
+    _fingerprint,
+    run_evaluation,
+    run_evidence,
+    run_topic_ranking_comparison,
+)
 
 
 def _write_synthetic_lab(root: Path) -> Path:
@@ -123,6 +128,27 @@ def test_input_fingerprint_is_independent_of_line_ending_style(
     source.write_bytes(b'{\r\n  "value": 1\r\n}\r\n')
 
     assert _fingerprint(source) == lf_fingerprint
+
+
+def test_phase16_runner_writes_safe_abc_report_with_stream_gate() -> None:
+    lab_root = Path(__file__).resolve().parents[1]
+
+    output = run_topic_ranking_comparison(
+        lab_root,
+        config_path="config.phase16.json",
+        query_id="phase16-stream-overview-setup",
+        top_k=3,
+        output_name="test-phase16-topic-ranking-abc",
+    )
+
+    assert set(("phase14", "phase15", "phase16")).issubset(output.report)
+    assert output.report["qualityGate"]["status"] == "passed"
+    condition = output.report["qualityConditions"][0]
+    assert condition["name"] == "StreamEvidenceRanksAboveLicenseEvidence"
+    assert condition["passed"] is True
+    assert output.report["phase16"]["topIds"][0].startswith("phase16-stream")
+    assert "document_name" not in str(output.report)
+    assert output.file.is_file()
 
 
 def test_runner_rejects_report_name_path_traversal(tmp_path: Path) -> None:

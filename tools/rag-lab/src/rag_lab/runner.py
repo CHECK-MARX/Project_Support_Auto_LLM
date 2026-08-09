@@ -15,10 +15,18 @@ from .io import LabPaths, load_documents, load_evaluation_cases, read_json, writ
 from .models import Document, EvaluationCase
 from .normalization import NormalizationOptions
 from .quality import QualityGateThresholds, apply_quality_gate
-from .question_relevance import comparison_report, select_question_aware_evidence
+from .question_relevance import (
+    build_topic_entity_ranking_request,
+    comparison_report,
+    select_question_aware_evidence,
+)
 from .reporting import write_comparison_reports
 from .reranking import RerankerMethod, apply_reranker
 from .search import SearchFilters, SearchMethod, build_search_index
+from .topic_entity_ranking import (
+    build_topic_entity_comparison_section,
+    rank_topic_entity_candidates,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,5 +471,86 @@ def run_question_ranking_comparison(
     report = comparison_report(case.query, results, selection, top_k=top_k)
     report["queryId"] = case.query_id
     report["topK"] = top_k
+    file = write_json_report(loaded.paths, f"{output_name}.json", report)
+    return QuestionRankingComparisonOutput(report=report, file=file)
+
+
+def run_topic_ranking_comparison(
+    lab_root: str | Path,
+    *,
+    query_id: str,
+    config_path: str | Path,
+    top_k: int = 3,
+    output_name: str = "phase16-topic-ranking-abc",
+) -> QuestionRankingComparisonOutput:
+    """Compare Phase 14, 15 and 16 with redacted synthetic diagnostics."""
+    loaded = load_lab_configuration(lab_root, config_path=config_path)
+    case = next((item for item in loaded.cases if item.query_id == query_id), None)
+    if case is None:
+        raise ValueError(f"evaluation query_id was not found: {query_id}")
+    if not 1 <= top_k <= 5:
+        raise ValueError("comparison top_k must be between 1 and 5")
+    if not _SAFE_OUTPUT_NAME.fullmatch(output_name):
+        raise ValueError("comparison output name contains unsupported characters")
+
+    chunks = [
+        chunk
+        for document in loaded.documents
+        for chunk in chunk_document(
+            document,
+            ChunkingOptions(
+                strategy=ChunkingStrategy.STRUCTURED,
+                max_characters=loaded.max_characters,
+                overlap_characters=loaded.overlap_characters,
+                normalization=loaded.normalization,
+            ),
+        )
+    ]
+    index = apply_reranker(
+        build_search_index(chunks, SearchMethod.HYBRID),
+        RerankerMethod.LEXICAL,
+    )
+    retrieval_started = perf_counter()
+    results = index.search(
+        case.query,
+        top_k=max(30, top_k),
+        filters=_filters("product", case.product, case.target_version),
+    )
+    retrieval_ms = (perf_counter() - retrieval_started) * 1000.0
+    phase15 = select_question_aware_evidence(
+        case.query, results, product=case.product, top_k=top_k
+    )
+    phase16_request = build_topic_entity_ranking_request(
+        case.query,
+        results,
+        product=case.product,
+        requested_version=case.target_version,
+        top_k=top_k,
+    )
+    phase16_started = perf_counter()
+    phase16_result = rank_topic_entity_candidates(phase16_request)
+    phase16_ms = (perf_counter() - phase16_started) * 1000.0
+
+    report = comparison_report(case.query, results, phase15, top_k=top_k)
+    phase16_section, stream_condition = build_topic_entity_comparison_section(
+        phase16_request,
+        phase16_result,
+        elapsed_ms=phase16_ms,
+    )
+    report["queryId"] = case.query_id
+    report["topK"] = top_k
+    report["phase16"] = phase16_section
+    report["qualityConditions"] = [stream_condition]
+    report["qualityGate"] = {
+        "status": "passed" if stream_condition["passed"] is True else "failed",
+        "violations": []
+        if stream_condition["passed"] is True
+        else [stream_condition["name"]],
+    }
+    report["timings"] = {
+        "retrievalSearchTimeMs": round(retrieval_ms, 3),
+        "phase15RankingTimeMs": round(phase15.elapsed_ms, 3),
+        "phase16RankingTimeMs": round(phase16_ms, 3),
+    }
     file = write_json_report(loaded.paths, f"{output_name}.json", report)
     return QuestionRankingComparisonOutput(report=report, file=file)

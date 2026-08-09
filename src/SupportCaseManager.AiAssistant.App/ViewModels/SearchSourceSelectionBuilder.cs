@@ -44,8 +44,10 @@ public static class SearchSourceSelectionBuilder
             var fallbackCandidates = allItems
                 .Where(static item => !item.IsManuallyExcluded);
             selectedCandidates = questionAwareContext?.Enabled == true
-                ? QuestionAwareEvidenceRanker.Rank(fallbackCandidates.ToList(), questionAwareContext, maxItems)
-                    .Ranked.Select(static item => item.Item).ToList()
+                ? IsPhase16(questionAwareContext)
+                    ? fallbackCandidates.ToList()
+                    : QuestionAwareEvidenceRanker.Rank(fallbackCandidates.ToList(), questionAwareContext, maxItems)
+                        .Ranked.Select(static item => item.Item).ToList()
                 : isFreshnessSensitive
                 ? fallbackCandidates
                     .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(item.SourceType, isFreshnessSensitive))
@@ -63,7 +65,9 @@ public static class SearchSourceSelectionBuilder
 
         if (questionAwareContext?.Enabled == true && selectedCandidates.Count > 0)
         {
-            questionAwareRanking = QuestionAwareEvidenceRanker.Rank(selectedCandidates, questionAwareContext, maxItems);
+            questionAwareRanking = IsPhase16(questionAwareContext)
+                ? TopicEntityEvidenceRanker.Rank(selectedCandidates, questionAwareContext, maxItems)
+                : QuestionAwareEvidenceRanker.Rank(selectedCandidates, questionAwareContext, maxItems);
         }
 
         List<SearchSourceViewModel> orderedSelectedItems = questionAwareRanking is not null
@@ -109,6 +113,12 @@ public static class SearchSourceSelectionBuilder
                 "MissingCommand" or
                 "MissingProcedure" or
                 "MissingVersionSpecificEvidence" or
+                "NoTopicMatch" or
+                "TopicConflict" or
+                "MissingOverview" or
+                "MissingSetupProcedure" or
+                "MissingVerification" or
+                "VersionMismatch" or
                 "ProductMismatch" or
                 "ConflictingEvidence");
         if (questionAwareBlockingReason)
@@ -150,6 +160,7 @@ public static class SearchSourceSelectionBuilder
             QuestionTypes = questionAwareRanking?.QuestionTypes ?? [],
             FinalCoverage = questionAwareRanking?.FinalCoverage.ToList() ?? [],
             InsufficientEvidenceReasons = questionAwareRanking?.InsufficientReasons ?? [],
+            RankingMode = questionAwareRanking?.RankingMode ?? string.Empty,
             Warning = BuildWarning(
                 selectedItems.Count,
                 sources.Count,
@@ -220,6 +231,12 @@ public static class SearchSourceSelectionBuilder
         return string.Equals(item.SourceType, sourceType, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static bool IsPhase16(QuestionAwareEvidenceSelectionContext context) =>
+        string.Equals(
+            EvidenceRankingModes.Normalize(context.RankingMode),
+            EvidenceRankingModes.Phase16,
+            StringComparison.Ordinal);
+
     private static bool IsSourceType(SearchSource source, string sourceType)
     {
         return string.Equals(source.SourceType, sourceType, StringComparison.OrdinalIgnoreCase);
@@ -271,6 +288,8 @@ public sealed record class SearchSourceSelectionResult
     public IReadOnlyList<string> FinalCoverage { get; init; } = [];
 
     public IReadOnlyList<string> InsufficientEvidenceReasons { get; init; } = [];
+
+    public string RankingMode { get; init; } = string.Empty;
 
     public string Warning { get; init; } = string.Empty;
 }

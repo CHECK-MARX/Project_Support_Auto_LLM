@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Facts;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
@@ -15,6 +16,8 @@ public sealed record class QuestionAwareEvidenceSelectionContext
     public string? ProductName { get; init; }
 
     public string? TargetVersion { get; init; }
+
+    public string RankingMode { get; init; } = EvidenceRankingModes.Phase15;
 }
 
 public sealed record class QuestionAwareEvidenceAssessment
@@ -38,6 +41,16 @@ public sealed record class QuestionAwareEvidenceAssessment
     public string VersionMatch { get; init; } = "not_requested";
 
     public string TextFingerprint { get; init; } = string.Empty;
+
+    public double TopicScore { get; init; }
+
+    public double EntityScore { get; init; }
+
+    public double ConflictPenalty { get; init; }
+
+    public bool TopicConflict { get; init; }
+
+    public string SelectionReason { get; init; } = string.Empty;
 }
 
 public sealed record class QuestionAwareEvidenceRankingResult
@@ -49,6 +62,8 @@ public sealed record class QuestionAwareEvidenceRankingResult
     public IReadOnlyList<string> QuestionTypes { get; init; } = [];
 
     public IReadOnlyList<string> InsufficientReasons { get; init; } = [];
+
+    public string RankingMode { get; init; } = EvidenceRankingModes.Phase15;
 }
 
 public static partial class QuestionAwareEvidenceRanker
@@ -117,6 +132,7 @@ public static partial class QuestionAwareEvidenceRanker
             FinalCoverage = coverage,
             QuestionTypes = classification.QuestionTypes,
             InsufficientReasons = reasons,
+            RankingMode = EvidenceRankingModes.Phase15,
         };
     }
 

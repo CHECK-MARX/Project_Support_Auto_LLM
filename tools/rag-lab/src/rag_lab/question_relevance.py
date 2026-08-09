@@ -390,3 +390,91 @@ def comparison_report(
             "searchTimeMs": round(question_aware.elapsed_ms, 3),
         },
     }
+
+
+def select_evidence_by_mode(
+    ranking_mode: str,
+    query: str,
+    results: Iterable[SearchResult],
+    *,
+    product: str | None = None,
+    top_k: int = 3,
+):
+    """Keep Phase 15 exact unless Phase 16 is explicitly requested."""
+    materialized = list(results)
+    if ranking_mode.casefold() != "phase16":
+        return select_question_aware_evidence(
+            query, materialized, product=product, top_k=top_k
+        )
+
+    from .topic_entity_ranking import rank_topic_entity_candidates
+
+    return rank_topic_entity_candidates(
+        build_topic_entity_ranking_request(
+            query,
+            materialized,
+            product=product,
+            top_k=top_k,
+        )
+    )
+
+
+def build_topic_entity_ranking_request(
+    query: str,
+    results: Iterable[SearchResult],
+    *,
+    product: str | None = None,
+    requested_version: str | None = None,
+    top_k: int = 3,
+):
+    """Adapt search output to the pure Phase 16 ranking input."""
+    from .topic_entity_ranking import (
+        AliasDefinition,
+        EntityAliasDefinition,
+        EntityKind,
+        TopicEntityCatalog,
+        TopicEntityRankingCandidate,
+        TopicEntityRankingRequest,
+        extract_topic_entity_profile,
+    )
+
+    catalog = TopicEntityCatalog(
+        products=(AliasDefinition(product),) if product else (),
+        components=(AliasDefinition("Validate", ("Perforce Validate",)),),
+        features=(
+            AliasDefinition("Stream", ("ストリーム",)),
+            AliasDefinition("License", ("ライセンス",)),
+            AliasDefinition("IDE Plugin", ("IDEプラグイン", "Eclipse Plugin")),
+            AliasDefinition("Build upload", ("validate build", "build upload")),
+        ),
+        objects=(AliasDefinition("Analysis result", ("解析結果",)),),
+        entities=(
+            EntityAliasDefinition(
+                EntityKind.COMMAND,
+                "qacli validate build",
+                ("validate build",),
+            ),
+        ),
+    )
+    candidates = tuple(
+        TopicEntityRankingCandidate(
+            candidate_index=index,
+            candidate_id=result.chunk.chunk_id,
+            text=(text := _document_text(result)),
+            source_type=result.chunk.metadata.source_type or "",
+            product_name=result.chunk.metadata.product_name,
+            version=result.chunk.metadata.target_version,
+            base_search_score=result.score,
+            original_rank=result.rank,
+            profile=extract_topic_entity_profile(text, catalog),
+        )
+        for index, result in enumerate(results)
+    )
+    return TopicEntityRankingRequest(
+        query_profile=extract_topic_entity_profile(query, catalog),
+        technical_tokens=extract_exact_technical_tokens(query),
+        requested_product=product,
+        requested_version=requested_version,
+        candidates=candidates,
+        max_items=top_k,
+    )

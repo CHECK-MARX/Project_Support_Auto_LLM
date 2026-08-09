@@ -13,7 +13,12 @@ from .regression import (
     run_regression_comparison,
     run_tracked_baseline_validation,
 )
-from .runner import run_evaluation, run_evidence, run_question_ranking_comparison
+from .runner import (
+    run_evaluation,
+    run_evidence,
+    run_question_ranking_comparison,
+    run_topic_ranking_comparison,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -93,6 +98,14 @@ def _parser() -> argparse.ArgumentParser:
     ranking_compare.add_argument("--query-id", required=True)
     ranking_compare.add_argument("--top-k", type=int, choices=range(1, 6), default=3)
     ranking_compare.add_argument("--output-name", default="phase15-question-ranking-ab")
+    topic_ranking_compare = subcommands.add_parser(
+        "compare-topic-ranking",
+        help="compare Phase 14, 15 and 16 topic/entity ranking using synthetic inputs",
+    )
+    topic_ranking_compare.add_argument("--config", required=True)
+    topic_ranking_compare.add_argument("--query-id", required=True)
+    topic_ranking_compare.add_argument("--top-k", type=int, choices=range(1, 6), default=3)
+    topic_ranking_compare.add_argument("--output-name", default="phase16-topic-ranking-abc")
     evidence.add_argument(
         "--search-method",
         choices=("keyword", "bm25", "hash_embedding", "hybrid"),
@@ -159,6 +172,22 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Insufficient: {phase15['insufficientReasons']}")
         print(f"json: {output.file.relative_to(lab_root)}")
         return 0
+    if args.command == "compare-topic-ranking":
+        output = run_topic_ranking_comparison(
+            lab_root,
+            query_id=args.query_id,
+            config_path=args.config,
+            top_k=args.top_k,
+            output_name=args.output_name,
+        )
+        phase16 = output.report["phase16"]
+        gate = output.report["qualityGate"]
+        print(f"Phase 16 selected: {len(phase16['topIds'])}")
+        print(f"Coverage: {len(phase16['finalCoverage'])}/5")
+        print(f"Insufficient: {phase16['insufficientReasons']}")
+        print(f"Topic quality gate: {gate['status']}")
+        print(f"json: {output.file.relative_to(lab_root)}")
+        return 0 if gate["status"] == "passed" else 1
     if args.command == "compare":
         output = run_regression_comparison(
             lab_root,

@@ -92,6 +92,62 @@ public class QuestionAwareEvidenceRankerTests
         Assert.Contains("MissingCommand", result.InsufficientEvidenceReasons);
     }
 
+    [Fact]
+    public void SelectionBuilder_Phase16PrefersStreamAndPhase15PathRemainsUnchanged()
+    {
+        var items = new List<SearchSourceViewModel>
+        {
+            Create("license", "Validate License configuration and setup", 0.99),
+            Create("stream", "Validate Stream overview, configuration steps, QAC project association and verification.", 0.45),
+        };
+        var phase15 = SearchSourceSelectionBuilder.Build(
+            items,
+            1,
+            enableTopNFallback: true,
+            questionAwareContext: new QuestionAwareEvidenceSelectionContext
+            {
+                Enabled = true,
+                InquiryText = "Validate Streamの概要と設定方法",
+                ProductName = "HelixQAC",
+                RankingMode = EvidenceRankingModes.Phase15,
+            });
+        var phase16 = SearchSourceSelectionBuilder.Build(
+            items,
+            1,
+            enableTopNFallback: true,
+            questionAwareContext: new QuestionAwareEvidenceSelectionContext
+            {
+                Enabled = true,
+                InquiryText = "Validate Streamの概要と設定方法",
+                ProductName = "HelixQAC",
+                RankingMode = EvidenceRankingModes.Phase16,
+            });
+
+        Assert.Equal("license", phase15.Sources[0].SourceId);
+        Assert.Equal(EvidenceRankingModes.Phase15, phase15.RankingMode);
+        Assert.Equal("stream", phase16.Sources[0].SourceId);
+        Assert.Equal(EvidenceRankingModes.Phase16, phase16.RankingMode);
+    }
+
+    [Fact]
+    public void SelectionBuilder_Phase16OffMatchesExistingPhase15Exactly()
+    {
+        var items = RepresentativeItems();
+        var existing = SearchSourceSelectionBuilder.Build(
+            items, 3, enableTopNFallback: true, questionAwareContext: Context());
+        var explicitPhase15 = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            enableTopNFallback: true,
+            questionAwareContext: Context() with { RankingMode = EvidenceRankingModes.Phase15 });
+
+        Assert.Equal(
+            existing.Sources.Select(static source => source.SourceId),
+            explicitPhase15.Sources.Select(static source => source.SourceId));
+        Assert.Equal(existing.FinalCoverage, explicitPhase15.FinalCoverage);
+        Assert.Equal(existing.InsufficientEvidenceReasons, explicitPhase15.InsufficientEvidenceReasons);
+    }
+
     private static QuestionAwareEvidenceSelectionContext Context() => new()
     {
         Enabled = true,

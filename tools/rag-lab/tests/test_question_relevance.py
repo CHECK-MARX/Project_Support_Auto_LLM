@@ -9,6 +9,7 @@ from rag_lab.question_relevance import (
     classify_question,
     comparison_report,
     extract_exact_technical_tokens,
+    select_evidence_by_mode,
     select_question_aware_evidence,
 )
 from rag_lab.search import SearchResult
@@ -78,6 +79,47 @@ def test_question_type_detection_for_representative_query() -> None:
     assert QuestionType.COMMAND in profile.types
     assert QuestionType.HOW_TO in profile.types
     assert profile.upload_workflow is True
+
+
+def test_phase15_mode_is_exactly_the_existing_selection_path() -> None:
+    results = _representative_results()
+    existing = select_question_aware_evidence(
+        QUERY, results, product="HelixQAC", top_k=3
+    )
+    selected = select_evidence_by_mode(
+        "Phase15", QUERY, results, product="HelixQAC", top_k=3
+    )
+
+    assert [item.result.chunk.chunk_id for item in selected.selected] == [
+        item.result.chunk.chunk_id for item in existing.selected
+    ]
+    assert selected.final_coverage == existing.final_coverage
+    assert selected.insufficient_reasons == existing.insufficient_reasons
+
+
+def test_phase16_mode_prefers_stream_over_license() -> None:
+    results = [
+        _result(
+            "license",
+            "Validate License configuration and setup",
+            score=0.99,
+        ),
+        _result(
+            "stream",
+            "Validate Stream overview, configuration steps, QAC project association and verification.",
+            score=0.45,
+        ),
+    ]
+
+    selected = select_evidence_by_mode(
+        "Phase16",
+        "Validate Streamの概要と設定方法",
+        results,
+        product="HelixQAC",
+        top_k=1,
+    )
+
+    assert selected.selected[0].candidate_id == "stream"
 
 
 def test_command_question_type_detection() -> None:

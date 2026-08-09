@@ -528,7 +528,15 @@
                             <CheckBox Content="{DynamicResource DisableThinkingLabel}" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource SkipGenerationWhenNoEvidenceLabel}" IsChecked="{Binding SkipGenerationWhenNoEvidence}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource EnableTopNFallbackLabel}" IsChecked="{Binding EnableTopNFallback}" Margin="12,0,0,0" />
-                            <CheckBox Content="質問適合性を考慮した根拠選定 (Phase 15)" IsChecked="{Binding UseQuestionAwareEvidenceSelection}" Margin="12,0,0,0" />
+                            <CheckBox Content="質問適合性を考慮した根拠選定" IsChecked="{Binding UseQuestionAwareEvidenceSelection}" Margin="12,0,0,0" />
+                            <TextBlock Text="ランキング方式" Margin="12,4,4,0" />
+                            <ComboBox Width="100"
+                                      IsEnabled="{Binding UseQuestionAwareEvidenceSelection}"
+                                      SelectedValue="{Binding EvidenceRankingMode, UpdateSourceTrigger=PropertyChanged}"
+                                      SelectedValuePath="Tag">
+                                <ComboBoxItem Tag="Phase15" Content="Phase 15" />
+                                <ComboBoxItem Tag="Phase16" Content="Phase 16" />
+                            </ComboBox>
                         </WrapPanel>
 
                         <GroupBox Header="モデル比較 / 推奨設定">

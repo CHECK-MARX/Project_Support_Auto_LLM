@@ -1,0 +1,15 @@
+{
+  "evaluation_cases": [
+    {
+      "query_id": "phase16-stream-overview-setup",
+      "product": "HelixQAC",
+      "query": "Validateのストリーム機能について、具体的な機能概要と設定方法を教えてください。設定後の確認方法も知りたいです。",
+      "target_version": "2025.4",
+      "expected_document_ids": ["phase16-stream-overview", "phase16-stream-setup", "phase16-stream-verify"],
+      "expected_support_ids": [],
+      "required_terms": ["Validate", "Stream", "設定"],
+      "excluded_terms": ["License Server", "IDE Plugin"],
+      "notes": "Phase 16 A/B/C専用の人工質問。"
+    }
+  ]
+}

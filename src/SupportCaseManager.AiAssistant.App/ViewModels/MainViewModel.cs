@@ -39,7 +39,7 @@ public sealed class MainViewModel : ObservableObject
         nameof(ChatModel), nameof(EmbeddingModel), nameof(Temperature), nameof(MaxOutputTokens),
         nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
-        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(HighScoreThreshold),
+        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
@@ -118,6 +118,7 @@ public sealed class MainViewModel : ObservableObject
     private bool skipGenerationWhenNoEvidence = true;
     private bool enableTopNFallback = true;
     private bool useQuestionAwareEvidenceSelection;
+    private string evidenceRankingMode = EvidenceRankingModes.Phase15;
     private bool useRagLabEvidence;
     private string ragLabEvidenceFilePath = string.Empty;
     private string ragLabBaselineReadinessFilePath = string.Empty;
@@ -751,6 +752,19 @@ public sealed class MainViewModel : ObservableObject
         set
         {
             if (SetProperty(ref useQuestionAwareEvidenceSelection, value))
+            {
+                UpdatePromptSummary();
+            }
+        }
+    }
+
+    public string EvidenceRankingMode
+    {
+        get => evidenceRankingMode;
+        set
+        {
+            var normalized = EvidenceRankingModes.Normalize(value);
+            if (SetProperty(ref evidenceRankingMode, normalized))
             {
                 UpdatePromptSummary();
             }
@@ -2662,6 +2676,7 @@ public sealed class MainViewModel : ObservableObject
         SkipGenerationWhenNoEvidence = settings.SkipGenerationWhenNoEvidence;
         EnableTopNFallback = settings.EnableTopNFallback;
         UseQuestionAwareEvidenceSelection = settings.UseQuestionAwareEvidenceSelection;
+        EvidenceRankingMode = settings.EvidenceRankingMode;
         LlmProvider = string.IsNullOrWhiteSpace(settings.LlmProvider.Provider) ? "Fake" : settings.LlmProvider.Provider;
         OllamaEndpoint = settings.LlmProvider.Endpoint;
         ChatModel = settings.LlmProvider.ChatModel;
@@ -2878,6 +2893,7 @@ public sealed class MainViewModel : ObservableObject
             SkipGenerationWhenNoEvidence = SkipGenerationWhenNoEvidence,
             EnableTopNFallback = EnableTopNFallback,
             UseQuestionAwareEvidenceSelection = UseQuestionAwareEvidenceSelection,
+            EvidenceRankingMode = EvidenceRankingMode,
             AnswerQualityMode = AnswerQualityMode,
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
@@ -3875,6 +3891,7 @@ public sealed class MainViewModel : ObservableObject
             TargetVersion = lastInquiryFocus?.TargetVersions.Count == 1
                 ? lastInquiryFocus.TargetVersions[0]
                 : null,
+            RankingMode = EvidenceRankingMode,
         };
     }
 
@@ -4777,6 +4794,7 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"質問適合性選定: {(selection.QuestionAwareSelectionApplied ? "有効" : "無効")}");
         if (selection.QuestionAwareSelectionApplied)
         {
+            builder.AppendLine($"Ranking mode: {selection.RankingMode}");
             builder.AppendLine($"質問種別: {(selection.QuestionTypes.Count == 0 ? "(未分類)" : string.Join(", ", selection.QuestionTypes))}");
             builder.AppendLine($"手順カバレッジ: {(selection.FinalCoverage.Count == 0 ? "(なし)" : string.Join(", ", selection.FinalCoverage))}");
             builder.AppendLine($"不足理由: {(selection.InsufficientEvidenceReasons.Count == 0 ? "(なし)" : string.Join(", ", selection.InsufficientEvidenceReasons))}");

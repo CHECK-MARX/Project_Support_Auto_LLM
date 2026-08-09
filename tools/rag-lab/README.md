@@ -285,6 +285,27 @@ product/version match status, insufficiency reasons, and timing. It does not
 contain source paths or document text. The comparison is diagnostic and does not
 automatically declare the Phase 15 answer better.
 
+## Phase 16 topic/entity ranking
+
+Phase 16 remains opt-in and keeps the Phase 14 and Phase 15 paths unchanged. Run
+the synthetic A/B/C diagnostic with:
+
+```powershell
+python run_rag_lab.py compare-topic-ranking --config config.phase16.json --query-id phase16-stream-overview-setup --top-k 3
+```
+
+The generated JSON records redacted Top-K identifiers, Topic/Entity diagnostics,
+scores, penalties, coverage, match status, insufficiency reasons, and local timing.
+Its synthetic quality condition fails unless Stream evidence ranks above License
+evidence for the Stream query. This diagnostic does not promote a baseline and
+does not claim that production answer quality improved.
+
+The Phase 16 fixture intentionally lets the legacy search return two conflicting
+chunks so the A/B/C difference remains observable. Its generic gate therefore
+permits those two synthetic excluded-term hits; topic quality is enforced by the
+separate Stream-above-License condition. The tracked Phase 8 thresholds are not
+changed.
+
 `status` is `ready` only when the candidate has no regression against the tracked
 baseline and the independent candidate is identical. The report contains file
 names, digests, aggregate counts, and findings only. It has no timestamp, source

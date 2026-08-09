@@ -58,6 +58,9 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("useQuestionAwareEvidenceSelection")]
     public bool UseQuestionAwareEvidenceSelection { get; init; }
 
+    [JsonPropertyName("evidenceRankingMode")]
+    public string EvidenceRankingMode { get; init; } = EvidenceRankingModes.Phase15;
+
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();
 
