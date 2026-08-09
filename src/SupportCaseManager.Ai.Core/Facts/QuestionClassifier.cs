@@ -41,6 +41,13 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
             "トラブル",
             "exception",
             "timeout");
+        asksHowTo = asksHowTo || ContainsAny(normalized, "手順", "方法", "一連", "完了まで", "使い方");
+        var asksCommand = ContainsAny(normalized, "コマンド", "command", "qacli", "cli") ||
+            Regex.IsMatch(text, @"--[A-Za-z0-9][A-Za-z0-9_-]*", RegexOptions.CultureInvariant);
+        var asksConfiguration = ContainsAny(normalized, "設定", "configuration", "configure", "config");
+        var asksVersion = ContainsAny(normalized, "バージョン", "version");
+        var asksPermission = ContainsAny(normalized, "権限", "permission", "accessdenied", "unauthorized", "forbidden");
+        var asksErrorMessage = ContainsAny(normalized, "エラーメッセージ", "エラーコード", "errormessage", "errorcode");
 
         if (asksLatest && (mentionsSast || mentionsEnginePack || mentionsHotfix || ContainsAny(normalized, "バージョン", "version")))
         {
@@ -76,6 +83,31 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
         if (asksTroubleshooting)
         {
             questionTypes.Add(QuestionTypes.TroubleshootingQuestion);
+        }
+
+        if (asksCommand)
+        {
+            questionTypes.Add(QuestionTypes.CommandQuestion);
+        }
+
+        if (asksConfiguration)
+        {
+            questionTypes.Add(QuestionTypes.ConfigurationQuestion);
+        }
+
+        if (asksVersion && !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase))
+        {
+            questionTypes.Add(QuestionTypes.VersionQuestion);
+        }
+
+        if (asksPermission)
+        {
+            questionTypes.Add(QuestionTypes.PermissionQuestion);
+        }
+
+        if (asksErrorMessage)
+        {
+            questionTypes.Add(QuestionTypes.ErrorMessageQuestion);
         }
 
         if (questionTypes.Count == 0)

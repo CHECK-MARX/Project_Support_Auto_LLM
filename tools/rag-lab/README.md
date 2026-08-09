@@ -269,6 +269,22 @@ Create the final machine-readable readiness result:
 python run_rag_lab.py baseline-readiness --baseline baselines/phase8-reference.json --candidate next-reference.json --reproduction next-reference-reproduction.json --output-name next-reference-readiness
 ```
 
+## Phase 15 question-aware selection
+
+The Phase 15 selector is opt-in. Existing evaluation, evidence JSON, and quality
+gate behavior remain unchanged unless `--question-aware` is supplied.
+
+```powershell
+python run_rag_lab.py evidence --config config.phase15.json --query-id phase15-command-howto --question-aware
+python run_rag_lab.py compare-question-ranking --config config.phase15.json --query-id phase15-command-howto --top-k 3
+```
+
+The comparison fixture is synthetic. Its generated report contains identifiers,
+scores, question-type and technical-token scores, A-G procedure coverage,
+product/version match status, insufficiency reasons, and timing. It does not
+contain source paths or document text. The comparison is diagnostic and does not
+automatically declare the Phase 15 answer better.
+
 `status` is `ready` only when the candidate has no regression against the tracked
 baseline and the independent candidate is identical. The report contains file
 names, digests, aggregate counts, and findings only. It has no timestamp, source

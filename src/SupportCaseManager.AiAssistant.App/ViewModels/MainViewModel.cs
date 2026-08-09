@@ -39,7 +39,7 @@ public sealed class MainViewModel : ObservableObject
         nameof(ChatModel), nameof(EmbeddingModel), nameof(Temperature), nameof(MaxOutputTokens),
         nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
-        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(HighScoreThreshold),
+        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
@@ -117,6 +117,7 @@ public sealed class MainViewModel : ObservableObject
     private bool disableThinking = true;
     private bool skipGenerationWhenNoEvidence = true;
     private bool enableTopNFallback = true;
+    private bool useQuestionAwareEvidenceSelection;
     private bool useRagLabEvidence;
     private string ragLabEvidenceFilePath = string.Empty;
     private string ragLabBaselineReadinessFilePath = string.Empty;
@@ -742,6 +743,18 @@ public sealed class MainViewModel : ObservableObject
     {
         get => ollamaProductionMiniTestResultText;
         private set => SetProperty(ref ollamaProductionMiniTestResultText, value);
+    }
+
+    public bool UseQuestionAwareEvidenceSelection
+    {
+        get => useQuestionAwareEvidenceSelection;
+        set
+        {
+            if (SetProperty(ref useQuestionAwareEvidenceSelection, value))
+            {
+                UpdatePromptSummary();
+            }
+        }
     }
 
     public bool UseRagLabEvidence
@@ -2179,7 +2192,8 @@ public sealed class MainViewModel : ObservableObject
                 HighScoreThreshold,
                 MinimumDisplayScore,
                 lastInquiryFocus.IsFreshnessSensitive,
-                EnableTopNFallback);
+                EnableTopNFallback,
+                BuildQuestionAwareSelectionContext());
             UpdateOfficialDocDiagnostics(summary);
             if (!appliedSupportNumberAnswer)
             {
@@ -2647,6 +2661,7 @@ public sealed class MainViewModel : ObservableObject
         DisableThinking = settings.DisableThinking;
         SkipGenerationWhenNoEvidence = settings.SkipGenerationWhenNoEvidence;
         EnableTopNFallback = settings.EnableTopNFallback;
+        UseQuestionAwareEvidenceSelection = settings.UseQuestionAwareEvidenceSelection;
         LlmProvider = string.IsNullOrWhiteSpace(settings.LlmProvider.Provider) ? "Fake" : settings.LlmProvider.Provider;
         OllamaEndpoint = settings.LlmProvider.Endpoint;
         ChatModel = settings.LlmProvider.ChatModel;
@@ -2862,6 +2877,7 @@ public sealed class MainViewModel : ObservableObject
             DisableThinking = DisableThinking,
             SkipGenerationWhenNoEvidence = SkipGenerationWhenNoEvidence,
             EnableTopNFallback = EnableTopNFallback,
+            UseQuestionAwareEvidenceSelection = UseQuestionAwareEvidenceSelection,
             AnswerQualityMode = AnswerQualityMode,
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
@@ -3283,7 +3299,8 @@ public sealed class MainViewModel : ObservableObject
             HighScoreThreshold,
             MinimumDisplayScore,
             lastInquiryFocus.IsFreshnessSensitive,
-            EnableTopNFallback);
+            EnableTopNFallback,
+            BuildQuestionAwareSelectionContext());
         UpdateOfficialDocDiagnostics(summary);
         if (!appliedSupportNumberAnswer)
         {
@@ -3837,9 +3854,28 @@ public sealed class MainViewModel : ObservableObject
             HighScoreThreshold,
             MinimumDisplayScore,
             lastInquiryFocus?.IsFreshnessSensitive == true,
-            EnableTopNFallback);
+            EnableTopNFallback,
+            BuildQuestionAwareSelectionContext());
         ApplySelectionSummary(summary);
         return summary.Selection.Sources;
+    }
+
+    private QuestionAwareEvidenceSelectionContext? BuildQuestionAwareSelectionContext()
+    {
+        if (!UseQuestionAwareEvidenceSelection)
+        {
+            return null;
+        }
+
+        return new QuestionAwareEvidenceSelectionContext
+        {
+            Enabled = true,
+            InquiryText = InquiryText,
+            ProductName = ResolveEffectiveProductName(),
+            TargetVersion = lastInquiryFocus?.TargetVersions.Count == 1
+                ? lastInquiryFocus.TargetVersions[0]
+                : null,
+        };
     }
 
     private void ApplyDraftResult(AnswerDraftResult result)
@@ -3885,7 +3921,8 @@ public sealed class MainViewModel : ObservableObject
                 HighScoreThreshold,
                 MinimumDisplayScore,
                 lastInquiryFocus?.IsFreshnessSensitive == true,
-                EnableTopNFallback);
+                EnableTopNFallback,
+                BuildQuestionAwareSelectionContext());
             ApplySelectionSummary(summary);
             UpdateOfficialDocDiagnostics(summary);
             EvidenceCount = summary.Selection.Sources.Count;
@@ -4737,6 +4774,13 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"Manual送信予定: {selection.ManualSendCount}件");
         builder.AppendLine($"OfficialDoc送信予定: {selection.OfficialDocSendCount}件");
         builder.AppendLine($"最大根拠件数: {selection.MaxEvidenceItems}件");
+        builder.AppendLine($"質問適合性選定: {(selection.QuestionAwareSelectionApplied ? "有効" : "無効")}");
+        if (selection.QuestionAwareSelectionApplied)
+        {
+            builder.AppendLine($"質問種別: {(selection.QuestionTypes.Count == 0 ? "(未分類)" : string.Join(", ", selection.QuestionTypes))}");
+            builder.AppendLine($"手順カバレッジ: {(selection.FinalCoverage.Count == 0 ? "(なし)" : string.Join(", ", selection.FinalCoverage))}");
+            builder.AppendLine($"不足理由: {(selection.InsufficientEvidenceReasons.Count == 0 ? "(なし)" : string.Join(", ", selection.InsufficientEvidenceReasons))}");
+        }
         if (lastInquiryFocus?.IsFreshnessSensitive == true)
         {
             builder.AppendLine("鮮度重要質問: はい");

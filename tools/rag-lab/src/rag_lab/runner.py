@@ -11,10 +11,11 @@ from typing import Any, Mapping
 from .chunking import ChunkingOptions, ChunkingStrategy, chunk_document
 from .evidence import EvidenceSelectionOptions, build_codex_evidence, write_codex_evidence
 from .evaluation import aggregate_evaluations, evaluate_results
-from .io import LabPaths, load_documents, load_evaluation_cases, read_json
+from .io import LabPaths, load_documents, load_evaluation_cases, read_json, write_json_report
 from .models import Document, EvaluationCase
 from .normalization import NormalizationOptions
 from .quality import QualityGateThresholds, apply_quality_gate
+from .question_relevance import comparison_report, select_question_aware_evidence
 from .reporting import write_comparison_reports
 from .reranking import RerankerMethod, apply_reranker
 from .search import SearchFilters, SearchMethod, build_search_index
@@ -29,6 +30,12 @@ class EvaluationRunOutput:
 @dataclass(frozen=True, slots=True)
 class EvidenceRunOutput:
     payload: dict[str, object]
+    file: Path
+
+
+@dataclass(frozen=True, slots=True)
+class QuestionRankingComparisonOutput:
+    report: dict[str, object]
     file: Path
 
 
@@ -364,6 +371,7 @@ def run_evidence(
     filter_mode: str = "product_and_version",
     top_k: int = 3,
     output_name: str | None = None,
+    question_aware: bool = False,
 ) -> EvidenceRunOutput:
     loaded = load_lab_configuration(lab_root, config_path=config_path)
     case = next((item for item in loaded.cases if item.query_id == query_id), None)
@@ -387,9 +395,10 @@ def run_evidence(
         build_search_index(chunks, SearchMethod(search_method)),
         RerankerMethod(reranker),
     )
+    candidate_count = max(top_k, 30) if question_aware else top_k
     results = index.search(
         case.query,
-        top_k=top_k,
+        top_k=candidate_count,
         filters=_filters(filter_mode, case.product, case.target_version),
     )
     payload = build_codex_evidence(
@@ -398,6 +407,7 @@ def run_evidence(
         product=case.product,
         target_version=case.target_version,
         options=EvidenceSelectionOptions(top_k=top_k),
+        question_aware=question_aware,
     )
     safe_query_id = re.sub(r"[^A-Za-z0-9_.-]", "_", query_id)[:60] or "query"
     selected_name = output_name or f"codex-evidence-{safe_query_id}"
@@ -407,3 +417,51 @@ def run_evidence(
         loaded.paths, f"{selected_name}.json", payload
     )
     return EvidenceRunOutput(payload=payload, file=output_file)
+
+
+def run_question_ranking_comparison(
+    lab_root: str | Path,
+    *,
+    query_id: str,
+    config_path: str | Path,
+    top_k: int = 3,
+    output_name: str = "phase15-question-ranking-ab",
+) -> QuestionRankingComparisonOutput:
+    loaded = load_lab_configuration(lab_root, config_path=config_path)
+    case = next((item for item in loaded.cases if item.query_id == query_id), None)
+    if case is None:
+        raise ValueError(f"evaluation query_id was not found: {query_id}")
+    if not 1 <= top_k <= 5:
+        raise ValueError("comparison top_k must be between 1 and 5")
+    if not _SAFE_OUTPUT_NAME.fullmatch(output_name):
+        raise ValueError("comparison output name contains unsupported characters")
+    chunks = [
+        chunk
+        for document in loaded.documents
+        for chunk in chunk_document(
+            document,
+            ChunkingOptions(
+                strategy=ChunkingStrategy.STRUCTURED,
+                max_characters=loaded.max_characters,
+                overlap_characters=loaded.overlap_characters,
+                normalization=loaded.normalization,
+            ),
+        )
+    ]
+    index = apply_reranker(
+        build_search_index(chunks, SearchMethod.HYBRID),
+        RerankerMethod.LEXICAL,
+    )
+    results = index.search(
+        case.query,
+        top_k=max(30, top_k),
+        filters=_filters("product", case.product, case.target_version),
+    )
+    selection = select_question_aware_evidence(
+        case.query, results, product=case.product, top_k=top_k
+    )
+    report = comparison_report(case.query, results, selection, top_k=top_k)
+    report["queryId"] = case.query_id
+    report["topK"] = top_k
+    file = write_json_report(loaded.paths, f"{output_name}.json", report)
+    return QuestionRankingComparisonOutput(report=report, file=file)

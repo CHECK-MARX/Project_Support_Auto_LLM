@@ -14,6 +14,28 @@ namespace SupportCaseManager.Ai.Tests.Facts;
 public sealed class GoldenQuestionFactTests
 {
     [Fact]
+    public void QuestionClassifier_DetectsCommandAndHowToQuestion()
+    {
+        var classification = new QuestionClassifier().Classify(
+            "QACの結果をValidateへアップロードするコマンドと一連の手順を教えてください。");
+
+        Assert.Contains(QuestionTypes.CommandQuestion, classification.QuestionTypes);
+        Assert.Contains(QuestionTypes.HowToQuestion, classification.QuestionTypes);
+    }
+
+    [Theory]
+    [InlineData("接続設定を確認したい", QuestionTypes.ConfigurationQuestion)]
+    [InlineData("対象バージョンを教えて", QuestionTypes.VersionQuestion)]
+    [InlineData("権限不足を解消したい", QuestionTypes.PermissionQuestion)]
+    [InlineData("エラーコードの意味を教えて", QuestionTypes.ErrorMessageQuestion)]
+    public void QuestionClassifier_DetectsAdditionalPhase15Types(string inquiry, string expected)
+    {
+        var classification = new QuestionClassifier().Classify(inquiry);
+
+        Assert.Contains(expected, classification.QuestionTypes);
+    }
+
+    [Fact]
     public void QuestionClassifier_ClassifiesLatestVersionQuestion()
     {
         var classification = new QuestionClassifier().Classify("現在のCxSAST最新バージョンは何でしょうか？EP、HFの最新バージョンも教えてください。");

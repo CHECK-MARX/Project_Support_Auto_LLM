@@ -55,6 +55,9 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("enableTopNFallback")]
     public bool EnableTopNFallback { get; init; } = true;
 
+    [JsonPropertyName("useQuestionAwareEvidenceSelection")]
+    public bool UseQuestionAwareEvidenceSelection { get; init; }
+
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();
 

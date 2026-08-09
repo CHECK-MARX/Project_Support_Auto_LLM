@@ -522,13 +522,14 @@
                             </Grid>
                         </GroupBox>
 
-                        <StackPanel Orientation="Horizontal">
+                        <WrapPanel>
                             <CheckBox Content="{DynamicResource EnableCloudLlmLabel}" IsChecked="{Binding EnableCloudLlm}" />
                             <CheckBox Content="{DynamicResource MaskSensitiveDataForCloudLabel}" IsChecked="{Binding MaskSensitiveDataForCloud}" />
                             <CheckBox Content="{DynamicResource DisableThinkingLabel}" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource SkipGenerationWhenNoEvidenceLabel}" IsChecked="{Binding SkipGenerationWhenNoEvidence}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource EnableTopNFallbackLabel}" IsChecked="{Binding EnableTopNFallback}" Margin="12,0,0,0" />
-                        </StackPanel>
+                            <CheckBox Content="質問適合性を考慮した根拠選定 (Phase 15)" IsChecked="{Binding UseQuestionAwareEvidenceSelection}" Margin="12,0,0,0" />
+                        </WrapPanel>
 
                         <GroupBox Header="モデル比較 / 推奨設定">
                             <TextBox Text="{Binding ModelRecommendationText, Mode=OneWay}"

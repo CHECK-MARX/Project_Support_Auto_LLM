@@ -78,9 +78,20 @@ def build_codex_evidence(
     target_version: str | None = None,
     options: EvidenceSelectionOptions | None = None,
     now: datetime | None = None,
+    question_aware: bool = False,
 ) -> dict[str, object]:
     options = options or EvidenceSelectionOptions()
-    selected = _deduplicate(results)[: options.top_k]
+    materialized = list(results)
+    selection = None
+    if question_aware:
+        from .question_relevance import select_question_aware_evidence
+
+        selection = select_question_aware_evidence(
+            query, materialized, product=product, top_k=options.top_k
+        )
+        selected = [item.result for item in selection.selected]
+    else:
+        selected = _deduplicate(materialized)[: options.top_k]
     conflicts = _conflict_indexes(selected)
     current = (now or datetime.now(UTC)).astimezone(UTC)
     expected_product = _normalized(product)
@@ -148,7 +159,30 @@ def build_codex_evidence(
                 "unverifiedItems": unverified,
             }
         )
-    return {"query": query, "selectedEvidence": evidence_items}
+    payload: dict[str, object] = {"query": query, "selectedEvidence": evidence_items}
+    if selection is not None:
+        by_chunk_id = {
+            item.result.chunk.chunk_id: item for item in selection.selected
+        }
+        for item, result in zip(evidence_items, selected, strict=True):
+            assessment = by_chunk_id[result.chunk.chunk_id]
+            item.update(
+                {
+                    "questionTypeScore": round(assessment.question_type_score, 8),
+                    "technicalTokenScore": round(assessment.technical_token_score, 8),
+                    "sourceTrustScore": round(assessment.source_trust_score, 8),
+                    "coverage": sorted(value.value for value in assessment.coverage),
+                    "versionMatchStatus": assessment.version_match,
+                }
+            )
+        payload["questionAwareDiagnostics"] = {
+            "questionTypes": [item.value for item in selection.profile.types],
+            "technicalTokens": list(selection.profile.technical_tokens),
+            "finalCoverage": sorted(item.value for item in selection.final_coverage),
+            "insufficientReasons": [item.value for item in selection.insufficient_reasons],
+            "selectionTimeMs": round(selection.elapsed_ms, 3),
+        }
+    return payload
 
 
 def write_codex_evidence(

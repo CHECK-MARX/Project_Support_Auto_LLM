@@ -12,5 +12,6 @@ public sealed class AiAssistantSettingsTests
         Assert.True(settings.DisableThinking);
         Assert.True(settings.SkipGenerationWhenNoEvidence);
         Assert.True(settings.EnableTopNFallback);
+        Assert.False(settings.UseQuestionAwareEvidenceSelection);
     }
 }

@@ -13,7 +13,8 @@ public static class SearchSourceSelectionBuilder
         int maxEvidenceItems,
         double autoSelectMinimumScore = SearchSourceSummaryBuilder.DefaultAutoSelectMinimumScore,
         bool isFreshnessSensitive = false,
-        bool enableTopNFallback = false)
+        bool enableTopNFallback = false,
+        QuestionAwareEvidenceSelectionContext? questionAwareContext = null)
     {
         if (searchResults is null)
         {
@@ -36,12 +37,16 @@ public static class SearchSourceSelectionBuilder
             .Select(static item => item.Source)
             .ToList();
         var topNFallbackApplied = false;
+        QuestionAwareEvidenceRankingResult? questionAwareRanking = null;
 
         if (selectedCandidates.Count == 0 && enableTopNFallback && maxItems > 0)
         {
             var fallbackCandidates = allItems
                 .Where(static item => !item.IsManuallyExcluded);
-            selectedCandidates = isFreshnessSensitive
+            selectedCandidates = questionAwareContext?.Enabled == true
+                ? QuestionAwareEvidenceRanker.Rank(fallbackCandidates.ToList(), questionAwareContext, maxItems)
+                    .Ranked.Select(static item => item.Item).ToList()
+                : isFreshnessSensitive
                 ? fallbackCandidates
                     .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(item.SourceType, isFreshnessSensitive))
                     .ThenByDescending(static item => item.Score ?? 0)
@@ -56,7 +61,14 @@ public static class SearchSourceSelectionBuilder
             topNFallbackApplied = selectedCandidates.Count > 0;
         }
 
-        List<SearchSourceViewModel> orderedSelectedItems = isFreshnessSensitive
+        if (questionAwareContext?.Enabled == true && selectedCandidates.Count > 0)
+        {
+            questionAwareRanking = QuestionAwareEvidenceRanker.Rank(selectedCandidates, questionAwareContext, maxItems);
+        }
+
+        List<SearchSourceViewModel> orderedSelectedItems = questionAwareRanking is not null
+            ? questionAwareRanking.Ranked.Select(static item => item.Item).ToList()
+            : isFreshnessSensitive
             ? selectedCandidates
                 .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(item.SourceType, isFreshnessSensitive))
                 .ThenByDescending(static item => item.Score ?? 0)
@@ -90,6 +102,21 @@ public static class SearchSourceSelectionBuilder
                 .ToList();
         }
 
+        var questionAwareBlockingReason = questionAwareRanking is not null &&
+            !selectedCandidates.Any(static item => item.IsManuallySelected) &&
+            questionAwareRanking.InsufficientReasons.Any(static reason => reason is
+                "NoRelevantEvidence" or
+                "MissingCommand" or
+                "MissingProcedure" or
+                "MissingVersionSpecificEvidence" or
+                "ProductMismatch" or
+                "ConflictingEvidence");
+        if (questionAwareBlockingReason)
+        {
+            freshnessLimitedItems.AddRange(orderedSelectedItems);
+            orderedSelectedItems = [];
+        }
+
         var sources = orderedSelectedItems
             .Take(maxItems)
             .Select(static item => item.Source)
@@ -119,6 +146,10 @@ public static class SearchSourceSelectionBuilder
             WasLimited = wasLimited,
             FreshnessNoOfficialDocLimitApplied = freshnessNoOfficialDocLimitApplied,
             TopNFallbackApplied = topNFallbackApplied,
+            QuestionAwareSelectionApplied = questionAwareRanking is not null,
+            QuestionTypes = questionAwareRanking?.QuestionTypes ?? [],
+            FinalCoverage = questionAwareRanking?.FinalCoverage.ToList() ?? [],
+            InsufficientEvidenceReasons = questionAwareRanking?.InsufficientReasons ?? [],
             Warning = BuildWarning(
                 selectedItems.Count,
                 sources.Count,
@@ -127,7 +158,8 @@ public static class SearchSourceSelectionBuilder
                 excludedByScore.Count,
                 threshold,
                 freshnessNoOfficialDocLimitApplied,
-                topNFallbackApplied),
+                topNFallbackApplied,
+                questionAwareRanking?.InsufficientReasons),
         };
     }
 
@@ -147,8 +179,14 @@ public static class SearchSourceSelectionBuilder
         int excludedByScoreCount,
         double autoSelectMinimumScore,
         bool freshnessNoOfficialDocLimitApplied,
-        bool topNFallbackApplied)
+        bool topNFallbackApplied,
+        IReadOnlyList<string>? insufficientReasons)
     {
+        if (insufficientReasons is { Count: > 0 })
+        {
+            return $"質問適合性判定: {string.Join(", ", insufficientReasons)}。不足根拠を確認してください。";
+        }
+
         if (usedCount == 0)
         {
             return "LLMへ送信予定の根拠が0件です。根拠なしでも生成できますが、回答内容の確認が必要です。";
@@ -225,6 +263,14 @@ public sealed record class SearchSourceSelectionResult
     public bool FreshnessNoOfficialDocLimitApplied { get; init; }
 
     public bool TopNFallbackApplied { get; init; }
+
+    public bool QuestionAwareSelectionApplied { get; init; }
+
+    public IReadOnlyList<string> QuestionTypes { get; init; } = [];
+
+    public IReadOnlyList<string> FinalCoverage { get; init; } = [];
+
+    public IReadOnlyList<string> InsufficientEvidenceReasons { get; init; } = [];
 
     public string Warning { get; init; } = string.Empty;
 }

@@ -13,7 +13,7 @@ from .regression import (
     run_regression_comparison,
     run_tracked_baseline_validation,
 )
-from .runner import run_evaluation, run_evidence
+from .runner import run_evaluation, run_evidence, run_question_ranking_comparison
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -85,6 +85,14 @@ def _parser() -> argparse.ArgumentParser:
         choices=("fixed", "paragraph", "heading", "structured"),
         default="heading",
     )
+    ranking_compare = subcommands.add_parser(
+        "compare-question-ranking",
+        help="compare Phase 14 and Phase 15 selection using synthetic inputs",
+    )
+    ranking_compare.add_argument("--config", required=True)
+    ranking_compare.add_argument("--query-id", required=True)
+    ranking_compare.add_argument("--top-k", type=int, choices=range(1, 6), default=3)
+    ranking_compare.add_argument("--output-name", default="phase15-question-ranking-ab")
     evidence.add_argument(
         "--search-method",
         choices=("keyword", "bm25", "hash_embedding", "hybrid"),
@@ -100,6 +108,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     evidence.add_argument("--top-k", type=int, choices=range(1, 6), default=3)
     evidence.add_argument("--output-name")
+    evidence.add_argument(
+        "--question-aware",
+        action="store_true",
+        help="enable Phase 15 question-aware selection (legacy behavior remains default)",
+    )
     return parser
 
 
@@ -127,8 +140,23 @@ def main(argv: list[str] | None = None) -> int:
             filter_mode=args.filter_mode,
             top_k=args.top_k,
             output_name=args.output_name,
+            question_aware=args.question_aware,
         )
         print(f"Selected evidence: {len(output.payload['selectedEvidence'])}")
+        print(f"json: {output.file.relative_to(lab_root)}")
+        return 0
+    if args.command == "compare-question-ranking":
+        output = run_question_ranking_comparison(
+            lab_root,
+            query_id=args.query_id,
+            config_path=args.config,
+            top_k=args.top_k,
+            output_name=args.output_name,
+        )
+        phase15 = output.report["phase15"]
+        print(f"Phase 15 selected: {len(phase15['topIds'])}")
+        print(f"Coverage: {len(phase15['finalCoverage'])}/7")
+        print(f"Insufficient: {phase15['insufficientReasons']}")
         print(f"json: {output.file.relative_to(lab_root)}")
         return 0
     if args.command == "compare":

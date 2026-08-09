@@ -1,0 +1,32 @@
+{
+  "inputRoots": ["samples"],
+  "outputRoot": "reports/generated",
+  "documentsFile": "samples/phase15_documents.json",
+  "evaluationCasesFile": "samples/phase15_evaluation_cases.json",
+  "reportName": "phase15-synthetic",
+  "normalization": {
+    "unicodeNfkc": true,
+    "trimTrailingWhitespace": true,
+    "maxConsecutiveBlankLines": 1,
+    "excludeCategories": []
+  },
+  "chunking": {"maxCharacters": 1200, "overlapCharacters": 120},
+  "evaluation": {
+    "chunkStrategies": ["structured"],
+    "searchMethods": ["hybrid"],
+    "rerankers": ["lexical"],
+    "filterModes": ["product"],
+    "topK": [3]
+  },
+  "qualityGate": {
+    "preferredTopK": 3,
+    "minRecallAtK": 0.0,
+    "minMrr": 0.0,
+    "minNdcgAtK": 0.0,
+    "minRequiredTermCoverageAtK": 0.0,
+    "maxExcludedTermHitCount": 0,
+    "maxProductConfusionCount": 0,
+    "maxVersionMismatchCount": 0,
+    "maxMeanSearchTimeMs": 100.0
+  }
+}
