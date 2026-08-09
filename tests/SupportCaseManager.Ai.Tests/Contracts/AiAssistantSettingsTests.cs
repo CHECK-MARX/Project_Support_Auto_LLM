@@ -14,6 +14,7 @@ public sealed class AiAssistantSettingsTests
         Assert.True(settings.SkipGenerationWhenNoEvidence);
         Assert.True(settings.EnableTopNFallback);
         Assert.False(settings.UseQuestionAwareEvidenceSelection);
+        Assert.False(settings.UseAnswerQualityGate);
         Assert.Equal(EvidenceRankingModes.Phase15, settings.EvidenceRankingMode);
     }
 
@@ -34,5 +35,18 @@ public sealed class AiAssistantSettingsTests
         Assert.Equal(EvidenceRankingModes.Phase15, oldSettings.EvidenceRankingMode);
         Assert.NotNull(restored);
         Assert.Equal(EvidenceRankingModes.Phase16, restored.EvidenceRankingMode);
+        Assert.False(restored.UseAnswerQualityGate);
+    }
+
+    [Fact]
+    public void UseAnswerQualityGate_RoundTrips()
+    {
+        var settings = new AiAssistantSettings { UseAnswerQualityGate = true };
+
+        var restored = JsonSerializer.Deserialize<AiAssistantSettings>(
+            JsonSerializer.Serialize(settings));
+
+        Assert.NotNull(restored);
+        Assert.True(restored.UseAnswerQualityGate);
     }
 }

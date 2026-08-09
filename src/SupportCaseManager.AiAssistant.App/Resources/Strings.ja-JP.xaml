@@ -24,6 +24,7 @@
     <sys:String x:Key="SelectButton">選択</sys:String>
     <sys:String x:Key="RagLabEvidenceSettingsHeader">RAG Lab Evidence（追加根拠）</sys:String>
     <sys:String x:Key="UseRagLabEvidenceLabel">RAG Lab EvidenceをCodex調査へ追加する</sys:String>
+    <sys:String x:Key="UseAnswerQualityGateLabel">回答品質Gateを診断に使用する</sys:String>
     <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
     <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
     <sys:String x:Key="RagLabEvidenceMaxItemsLabel">最大追加件数（1～5）</sys:String>

@@ -50,6 +50,9 @@ jobs:
       - name: Unit tests
         run: python -m pytest
 
+      - name: Phase 17 answer quality gate
+        run: python run_rag_lab.py evaluate-answer-quality --output-name ci-answer-quality
+
       - name: Validate tracked synthetic baseline
         run: >-
           python run_rag_lab.py validate-baseline

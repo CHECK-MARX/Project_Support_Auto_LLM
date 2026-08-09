@@ -119,6 +119,22 @@ Run the complete synthetic comparison from `tools\rag-lab`:
 python run_rag_lab.py evaluate
 ```
 
+Phase 17 evaluates final-answer quality with deterministic rules over synthetic
+cases. It compares Phase 14-16 answers and applies the production-readiness gate
+to the Phase 16 answer as Phase 17:
+
+```powershell
+python run_rag_lab.py evaluate-answer-quality
+```
+
+The generated JSON and Markdown include Evidence TopK identifiers, coverage,
+topic alignment, conflicts, unsupported technical claim counts, decisions and
+decision rates. Raw questions, answers and Evidence text are intentionally not
+written to the report. `CustomerReady` means a human-review candidate; it never
+triggers automatic email or Salesforce actions. False positives are blocking,
+while uncertain but non-dangerous output is conservatively classified as
+`NeedsReview`.
+
 To select a different configuration or safe report name:
 
 ```powershell

@@ -24,6 +24,7 @@
     <sys:String x:Key="SelectButton">Select</sys:String>
     <sys:String x:Key="RagLabEvidenceSettingsHeader">RAG Lab Evidence (additional context)</sys:String>
     <sys:String x:Key="UseRagLabEvidenceLabel">Add RAG Lab Evidence to Codex investigation</sys:String>
+    <sys:String x:Key="UseAnswerQualityGateLabel">Use Answer Quality Gate diagnostics</sys:String>
     <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
     <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
     <sys:String x:Key="RagLabEvidenceMaxItemsLabel">Maximum additional items (1-5)</sys:String>

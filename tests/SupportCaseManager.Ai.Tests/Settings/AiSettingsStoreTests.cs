@@ -27,6 +27,7 @@ public class AiSettingsStoreTests
         Assert.True(settings.SkipGenerationWhenNoEvidence);
         Assert.True(settings.EnableTopNFallback);
         Assert.False(settings.UseRagLabEvidence);
+        Assert.False(settings.UseAnswerQualityGate);
         Assert.Equal(3, settings.RagLabEvidenceMaxItems);
         Assert.Empty(settings.RagLabEvidenceFilePath);
         Assert.Empty(settings.RagLabBaselineReadinessFilePath);
@@ -54,6 +55,7 @@ public class AiSettingsStoreTests
             SkipGenerationWhenNoEvidence = false,
             EnableTopNFallback = false,
             UseRagLabEvidence = true,
+            UseAnswerQualityGate = true,
             RagLabEvidenceFilePath = Path.Combine(temp.Path, "evidence.json"),
             RagLabBaselineReadinessFilePath = Path.Combine(temp.Path, "readiness.json"),
             RagLabEvidenceMaxItems = 5,
@@ -93,6 +95,7 @@ public class AiSettingsStoreTests
         Assert.Equal(settings.SkipGenerationWhenNoEvidence, restored.SkipGenerationWhenNoEvidence);
         Assert.Equal(settings.EnableTopNFallback, restored.EnableTopNFallback);
         Assert.True(restored.UseRagLabEvidence);
+        Assert.True(restored.UseAnswerQualityGate);
         Assert.Equal(settings.RagLabEvidenceFilePath, restored.RagLabEvidenceFilePath);
         Assert.Equal(settings.RagLabBaselineReadinessFilePath, restored.RagLabBaselineReadinessFilePath);
         Assert.Equal(5, restored.RagLabEvidenceMaxItems);

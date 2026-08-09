@@ -40,7 +40,7 @@ public sealed class MainViewModel : ObservableObject
         nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
-        nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
+        nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
     ];
@@ -119,6 +119,7 @@ public sealed class MainViewModel : ObservableObject
     private bool enableTopNFallback = true;
     private bool useQuestionAwareEvidenceSelection;
     private string evidenceRankingMode = EvidenceRankingModes.Phase15;
+    private bool useAnswerQualityGate;
     private bool useRagLabEvidence;
     private string ragLabEvidenceFilePath = string.Empty;
     private string ragLabBaselineReadinessFilePath = string.Empty;
@@ -769,6 +770,12 @@ public sealed class MainViewModel : ObservableObject
                 UpdatePromptSummary();
             }
         }
+    }
+
+    public bool UseAnswerQualityGate
+    {
+        get => useAnswerQualityGate;
+        set => SetProperty(ref useAnswerQualityGate, value);
     }
 
     public bool UseRagLabEvidence
@@ -2700,6 +2707,7 @@ public sealed class MainViewModel : ObservableObject
             ? settings.ModelCapabilityProfiles
             : ModelCapabilityProfiles.GetDefaults();
         CodexExecutablePath = settings.CodexExecutablePath;
+        UseAnswerQualityGate = settings.UseAnswerQualityGate;
         UseRagLabEvidence = settings.UseRagLabEvidence;
         RagLabEvidenceFilePath = settings.RagLabEvidenceFilePath;
         RagLabBaselineReadinessFilePath = settings.RagLabBaselineReadinessFilePath;
@@ -2894,6 +2902,7 @@ public sealed class MainViewModel : ObservableObject
             EnableTopNFallback = EnableTopNFallback,
             UseQuestionAwareEvidenceSelection = UseQuestionAwareEvidenceSelection,
             EvidenceRankingMode = EvidenceRankingMode,
+            UseAnswerQualityGate = UseAnswerQualityGate,
             AnswerQualityMode = AnswerQualityMode,
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
@@ -4302,6 +4311,20 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"evidence count: {request.Sources.Count}");
         builder.AppendLine($"think:false を送ったか: {(request.Settings.DisableThinking ? "yes" : "no")}");
         builder.AppendLine($"OfficialDoc will send: {request.Sources.Count(static source => string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase))}");
+        if (result.AnswerQuality is not null)
+        {
+            builder.AppendLine($"Answer Quality decision: {result.AnswerQuality.Decision}");
+            builder.AppendLine($"Directness: {result.AnswerQuality.Directness:F3}");
+            builder.AppendLine($"Evidence Grounding: {result.AnswerQuality.Grounding:F3}");
+            builder.AppendLine($"Topic Alignment: {result.AnswerQuality.TopicAlignment:F3}");
+            builder.AppendLine($"Coverage: {result.AnswerQuality.Coverage:F3}");
+            builder.AppendLine($"Technical Fidelity: {result.AnswerQuality.TechnicalFidelity:F3}");
+            builder.AppendLine($"Unsupported Technical Claims: {result.AnswerQuality.UnsupportedClaimCount}");
+            builder.AppendLine($"Conflict count: {result.AnswerQuality.ConflictCount}");
+            builder.AppendLine($"Actionability: {result.AnswerQuality.Actionability:F3}");
+            builder.AppendLine($"Customer Readiness: {result.AnswerQuality.CustomerReadiness:F3}");
+            builder.AppendLine($"Internal Leakage: {result.AnswerQuality.InternalLeakageCount}");
+        }
         if (result.Warnings.Count > 0)
         {
             builder.AppendLine("warnings:");

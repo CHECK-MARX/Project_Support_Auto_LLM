@@ -38,6 +38,70 @@ public class AiAnswerServiceTests
         Assert.Single(result.NeedConfirmations);
         Assert.Single(result.Evidence);
         Assert.Equal(0.7, result.Confidence);
+        Assert.Null(result.AnswerQuality);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_AnswerQualityGateOff_PreservesLegacyResult()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "Please check settings.",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.7,
+              "warnings": []
+            }
+            """);
+
+        var result = await service.GenerateDraftAsync(CreateRequest());
+
+        Assert.Null(result.AnswerQuality);
+        Assert.DoesNotContain(
+            result.Warnings,
+            warning => warning.Contains("Answer Quality", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_AnswerQualityGateOn_AddsDiagnosticsWithoutChangingDraft()
+    {
+        const string answer = "qacli validate build --project Demo を実行し、Validate portalで結果を確認してください。";
+        var service = CreateService($$"""
+            {
+              "customerReplyDraft": {{System.Text.Json.JsonSerializer.Serialize(answer)}},
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.7,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest(
+        [
+            new SearchSource
+            {
+                SourceId = "manual-1",
+                SourceType = "Manual",
+                Title = "Upload manual",
+                Text = answer,
+                ProductName = "HelixQAC",
+                Score = 0.9,
+            },
+        ]) with
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = "Validateへ解析結果をアップロードするコマンドと確認方法を教えてください。",
+            Settings = new AiAssistantSettings { UseAnswerQualityGate = true },
+        };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Equal(answer, result.CustomerReplyDraft);
+        Assert.NotNull(result.AnswerQuality);
+        Assert.Contains(
+            result.Warnings,
+            warning => warning.StartsWith("Answer Quality Gate:", StringComparison.Ordinal));
     }
 
     [Fact]

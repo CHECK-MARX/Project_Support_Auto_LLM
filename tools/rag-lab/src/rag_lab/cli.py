@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .answer_quality_runner import run_answer_quality_comparison
 from .baseline_readiness import (
     run_baseline_readiness_assessment,
     run_candidate_reproducibility_check,
@@ -106,6 +107,16 @@ def _parser() -> argparse.ArgumentParser:
     topic_ranking_compare.add_argument("--query-id", required=True)
     topic_ranking_compare.add_argument("--top-k", type=int, choices=range(1, 6), default=3)
     topic_ranking_compare.add_argument("--output-name", default="phase16-topic-ranking-abc")
+    answer_quality_compare = subcommands.add_parser(
+        "evaluate-answer-quality",
+        help="compare Phase 14-17 final-answer quality using synthetic inputs",
+    )
+    answer_quality_compare.add_argument(
+        "--cases", default="samples/phase17_answer_quality_cases.json"
+    )
+    answer_quality_compare.add_argument(
+        "--output-name", default="phase17-answer-quality"
+    )
     evidence.add_argument(
         "--search-method",
         choices=("keyword", "bm25", "hash_embedding", "hybrid"),
@@ -142,6 +153,19 @@ def main(argv: list[str] | None = None) -> int:
         for format_name, path in output.files.items():
             print(f"{format_name}: {path.relative_to(lab_root)}")
         return 0
+    if args.command == "evaluate-answer-quality":
+        output = run_answer_quality_comparison(
+            lab_root,
+            cases_path=args.cases,
+            output_name=args.output_name,
+        )
+        gate = output.report["qualityGate"]
+        print(f"Answer quality gate: {gate['status']}")
+        print(f"False positives: {gate['falsePositiveCount']}")
+        print(f"False negatives: {gate['falseNegativeCount']}")
+        for format_name, path in output.files.items():
+            print(f"{format_name}: {path.relative_to(lab_root)}")
+        return 0 if gate["status"] == "passed" else 1
     if args.command == "evidence":
         output = run_evidence(
             lab_root,

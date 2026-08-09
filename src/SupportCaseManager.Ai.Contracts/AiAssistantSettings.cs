@@ -61,6 +61,9 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("evidenceRankingMode")]
     public string EvidenceRankingMode { get; init; } = EvidenceRankingModes.Phase15;
 
+    [JsonPropertyName("useAnswerQualityGate")]
+    public bool UseAnswerQualityGate { get; init; }
+
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();
 

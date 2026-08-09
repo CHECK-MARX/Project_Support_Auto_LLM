@@ -24,4 +24,10 @@
     <ProjectReference Include="..\SupportCaseManager.Codex.FakeServer\SupportCaseManager.Codex.FakeServer.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\tools\rag-lab\samples\phase17_answer_quality_cases.json"
+          Link="TestData\phase17_answer_quality_cases.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
