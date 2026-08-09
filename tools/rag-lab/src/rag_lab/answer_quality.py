@@ -14,6 +14,8 @@ from .topic_entity_ranking import (
     extract_topic_entity_profile,
     normalize_text,
 )
+from .phase175 import observed_coverage as phase175_observed_coverage
+from .phase175 import observed_evidence_coverage, required_coverage as phase175_required_coverage
 
 
 CUSTOMER_READY = "CustomerReady"
@@ -53,6 +55,8 @@ class AnswerQualityInput:
     requested_version: str | None = None
     existing_insufficient_reasons: tuple[str, ...] = ()
     catalog: TopicEntityCatalog | None = None
+    use_separated_coverage: bool = False
+    required_coverage: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,8 +96,9 @@ _INSUFFICIENT_MARKERS = (
 
 
 def create_support_catalog(product_name: str | None = None) -> TopicEntityCatalog:
+    products = ([AliasDefinition(product_name)] if product_name else []) + [AliasDefinition("Validate", ("Perforce Validate",))]
     return TopicEntityCatalog(
-        products=(AliasDefinition(product_name),) if product_name else (),
+        products=tuple(products),
         components=(AliasDefinition("Validate", ("Perforce Validate",)),),
         features=(
             AliasDefinition("Stream", ("ストリーム",)),
@@ -165,9 +170,17 @@ def evaluate_answer_quality(
     )
     grounding = _grounding(value, len(answer_claims), len(unsupported), topic_alignment)
     technical_fidelity = 1.0 if not answer_claims else _clamp(1 - len(unsupported) / len(answer_claims))
-    required = _required_coverage(query_profile)
-    observed = _observed_coverage(value.answer, answer_claims)
-    coverage = 1.0 if not required else len(required & observed) / len(required)
+    legacy_required = _required_coverage(query_profile)
+    legacy_observed = _observed_coverage(value.answer, answer_claims)
+    phase175_required = value.required_coverage or phase175_required_coverage(value.question, query_profile)
+    evidence_observed = observed_evidence_coverage(item.text for item in value.evidence)
+    answer_observed = phase175_observed_coverage(value.answer)
+    missing_evidence = tuple(item for item in phase175_required if item not in evidence_observed)
+    missing_answer = tuple(item for item in phase175_required if item not in answer_observed)
+    evidence_coverage = 1.0 if not phase175_required else (len(phase175_required) - len(missing_evidence)) / len(phase175_required)
+    answer_coverage = 1.0 if not phase175_required else (len(phase175_required) - len(missing_answer)) / len(phase175_required)
+    observed = answer_observed if value.use_separated_coverage else legacy_observed
+    coverage = answer_coverage if value.use_separated_coverage else (1.0 if not legacy_required else len(legacy_required & legacy_observed) / len(legacy_required))
     directness = _directness(value.answer, topic_alignment, coverage)
     actionability = _actionability(query_profile, value.answer, observed)
     leakage_count = sum(marker.casefold() in value.answer.casefold() for marker in _INTERNAL_MARKERS)
@@ -186,9 +199,37 @@ def evaluate_answer_quality(
         warnings.append("EvidenceConflict")
     if unsupported:
         warnings.append("UnsupportedTechnicalClaim")
+    if value.use_separated_coverage and missing_evidence:
+        warnings.append("MissingEvidenceCoverage")
+    if value.use_separated_coverage and missing_answer:
+        warnings.append("MissingAnswerCoverage")
 
     if blocking:
         decision = BLOCKED
+    elif value.use_separated_coverage:
+        hard_reasons = {"NoRelevantEvidence", "ProductMismatch", "VersionMismatch", "TopicConflict", "ConflictingEvidence"}
+        if (
+            not value.evidence
+            or any(item in hard_reasons for item in value.existing_insufficient_reasons)
+            or grounding < rules.insufficient_grounding
+            or missing_evidence
+        ):
+            decision = INSUFFICIENT_EVIDENCE
+        elif missing_answer:
+            decision = NEEDS_REVIEW
+        elif conflict_count or leakage_count:
+            decision = NEEDS_REVIEW
+        else:
+            ready = (
+                directness >= rules.minimum_directness
+                and grounding >= rules.minimum_grounding
+                and topic_alignment >= rules.minimum_topic_alignment
+                and coverage >= rules.minimum_coverage
+                and technical_fidelity >= rules.minimum_technical_fidelity
+                and actionability >= rules.minimum_actionability
+                and customer_readiness >= rules.minimum_customer_readiness
+            )
+            decision = CUSTOMER_READY if ready else NEEDS_REVIEW
     elif (
         not value.evidence
         or value.existing_insufficient_reasons
@@ -210,7 +251,7 @@ def evaluate_answer_quality(
         )
         decision = CUSTOMER_READY if ready else NEEDS_REVIEW
 
-    return {
+    result = {
         "directness": _round(directness),
         "grounding": _round(grounding),
         "topicAlignment": _round(topic_alignment),
@@ -229,6 +270,15 @@ def evaluate_answer_quality(
         "warnings": list(dict.fromkeys(warnings)),
         "decision": decision,
     }
+    if value.use_separated_coverage:
+        result.update({
+            "evidenceCoverage": _round(evidence_coverage),
+            "answerCoverage": _round(answer_coverage),
+            "requiredCoverage": list(phase175_required),
+            "missingEvidenceCoverage": list(missing_evidence),
+            "missingAnswerCoverage": list(missing_answer),
+        })
+    return result
 
 
 def _normalize_claim(kind: str, value: str) -> str:

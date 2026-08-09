@@ -39,6 +39,31 @@ public class EvidenceBuilderTests
     }
 
     [Fact]
+    public void BuildEvidence_CoverageAwareModePreservesPreselectedSet()
+    {
+        var sources = Enumerable.Range(1, 4)
+            .Select(index => CreateSource($"source-{index}", 0.9 - (index * 0.1)) with
+            {
+                Title = $"Title {index}",
+                Text = $"Distinct evidence {index}",
+            })
+            .ToList();
+        var request = CreateRequest(sources, maxEvidenceItems: 3) with
+        {
+            Settings = new AiAssistantSettings
+            {
+                MaxEvidenceItems = 3,
+                UseCoverageAwareEvidenceSelection = true,
+            },
+        };
+
+        var evidence = new EvidenceBuilder().BuildEvidence(request);
+
+        Assert.Equal(4, evidence.Count);
+        Assert.Equal(sources.Select(static source => source.SourceId), evidence.Select(static item => item.SourceId));
+    }
+
+    [Fact]
     public void BuildEvidence_RemovesDuplicateSourcesBeforeApplyingLimit()
     {
         var builder = new EvidenceBuilder();

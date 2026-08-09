@@ -40,7 +40,8 @@ public sealed class MainViewModel : ObservableObject
         nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
-        nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate),
+        nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate), nameof(UsePhase175QualityControls),
+        nameof(UseCoverageAwareEvidenceSelection), nameof(CoverageAwareMaxEvidenceItems),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
     ];
@@ -120,6 +121,9 @@ public sealed class MainViewModel : ObservableObject
     private bool useQuestionAwareEvidenceSelection;
     private string evidenceRankingMode = EvidenceRankingModes.Phase15;
     private bool useAnswerQualityGate;
+    private bool usePhase175QualityControls;
+    private bool useCoverageAwareEvidenceSelection;
+    private int coverageAwareMaxEvidenceItems = 5;
     private bool useRagLabEvidence;
     private string ragLabEvidenceFilePath = string.Empty;
     private string ragLabBaselineReadinessFilePath = string.Empty;
@@ -776,6 +780,42 @@ public sealed class MainViewModel : ObservableObject
     {
         get => useAnswerQualityGate;
         set => SetProperty(ref useAnswerQualityGate, value);
+    }
+
+    public bool UsePhase175QualityControls
+    {
+        get => usePhase175QualityControls;
+        set
+        {
+            if (SetProperty(ref usePhase175QualityControls, value))
+            {
+                UpdatePromptSummary();
+            }
+        }
+    }
+
+    public bool UseCoverageAwareEvidenceSelection
+    {
+        get => useCoverageAwareEvidenceSelection;
+        set
+        {
+            if (SetProperty(ref useCoverageAwareEvidenceSelection, value))
+            {
+                UpdatePromptSummary();
+            }
+        }
+    }
+
+    public int CoverageAwareMaxEvidenceItems
+    {
+        get => coverageAwareMaxEvidenceItems;
+        set
+        {
+            if (SetProperty(ref coverageAwareMaxEvidenceItems, Math.Clamp(value, 3, 5)))
+            {
+                UpdatePromptSummary();
+            }
+        }
     }
 
     public bool UseRagLabEvidence
@@ -2147,7 +2187,7 @@ public sealed class MainViewModel : ObservableObject
             var searchLimit = Math.Max(12, Math.Max(1, MaxEvidenceItems) * 2);
             var selectedProduct = ResolveProductForSearch();
             allowPastAnswerAutoSelection = selectedProduct is not null;
-            lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext());
+            lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext(), UsePhase175QualityControls);
             InquiryFocusSummaryText = FormatInquiryFocusSummary(lastInquiryFocus);
             SetOperationProgress(20, "ナレッジを検索しています");
 
@@ -2708,6 +2748,9 @@ public sealed class MainViewModel : ObservableObject
             : ModelCapabilityProfiles.GetDefaults();
         CodexExecutablePath = settings.CodexExecutablePath;
         UseAnswerQualityGate = settings.UseAnswerQualityGate;
+        UsePhase175QualityControls = settings.UsePhase175QualityControls;
+        UseCoverageAwareEvidenceSelection = settings.UseCoverageAwareEvidenceSelection;
+        CoverageAwareMaxEvidenceItems = settings.CoverageAwareMaxEvidenceItems;
         UseRagLabEvidence = settings.UseRagLabEvidence;
         RagLabEvidenceFilePath = settings.RagLabEvidenceFilePath;
         RagLabBaselineReadinessFilePath = settings.RagLabBaselineReadinessFilePath;
@@ -2903,6 +2946,9 @@ public sealed class MainViewModel : ObservableObject
             UseQuestionAwareEvidenceSelection = UseQuestionAwareEvidenceSelection,
             EvidenceRankingMode = EvidenceRankingMode,
             UseAnswerQualityGate = UseAnswerQualityGate,
+            UsePhase175QualityControls = UsePhase175QualityControls,
+            UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
+            CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
             AnswerQualityMode = AnswerQualityMode,
             ModelCapabilityProfiles = modelCapabilityProfiles.Count > 0
                 ? modelCapabilityProfiles
@@ -3269,7 +3315,7 @@ public sealed class MainViewModel : ObservableObject
         var searchLimit = Math.Max(12, Math.Max(1, MaxEvidenceItems) * 2);
         var resolvedProduct = ResolveProductForSearch();
         allowPastAnswerAutoSelection = resolvedProduct is not null;
-        lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext());
+        lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext(), UsePhase175QualityControls);
         InquiryFocusSummaryText = FormatInquiryFocusSummary(lastInquiryFocus);
 
         IReadOnlyList<SearchSource> inquiryMatches;
@@ -3681,19 +3727,21 @@ public sealed class MainViewModel : ObservableObject
             caseContext = caseContext with { Notes = [] };
         }
 
-        var inquiryFocus = lastInquiryFocus ?? inquiryFocusExtractor.Extract(InquiryText, caseContext);
+        var inquiryFocus = lastInquiryFocus ?? inquiryFocusExtractor.Extract(InquiryText, caseContext, UsePhase175QualityControls);
         var settings = ApplyAutomaticGenerationRoute(BuildSettings(), sources, inquiryFocus);
         var factResolution = new FactResolver().Resolve(
             effectiveProductName,
             settings.AiIndexFolder,
             InquiryText,
             inquiryFocus);
-        var selectedSources = EvidenceSourceSelector.Select(
-            sources,
-            caseContext,
-            factResolution,
-            settings.MaxEvidenceItems,
-            settings.MaxPromptChars);
+        var selectedSources = settings.UseCoverageAwareEvidenceSelection
+            ? sources
+            : EvidenceSourceSelector.Select(
+                sources,
+                caseContext,
+                factResolution,
+                settings.MaxEvidenceItems,
+                settings.MaxPromptChars);
         var selectedProduct = Products.FirstOrDefault(product =>
             string.Equals(product.ProductName, effectiveProductName, StringComparison.OrdinalIgnoreCase));
         var promptInstructions = SupportPromptFileLoader.Load(
@@ -3887,7 +3935,7 @@ public sealed class MainViewModel : ObservableObject
 
     private QuestionAwareEvidenceSelectionContext? BuildQuestionAwareSelectionContext()
     {
-        if (!UseQuestionAwareEvidenceSelection)
+        if (!UseQuestionAwareEvidenceSelection && !UseCoverageAwareEvidenceSelection)
         {
             return null;
         }
@@ -3901,6 +3949,10 @@ public sealed class MainViewModel : ObservableObject
                 ? lastInquiryFocus.TargetVersions[0]
                 : null,
             RankingMode = EvidenceRankingMode,
+            UsePhase175QualityControls = UsePhase175QualityControls,
+            UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
+            CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
+            MaxPromptChars = MaxPromptChars,
         };
     }
 
@@ -3936,7 +3988,7 @@ public sealed class MainViewModel : ObservableObject
         try
         {
             isUpdatingPromptSummary = true;
-            lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext());
+            lastInquiryFocus = inquiryFocusExtractor.Extract(InquiryText, BuildCurrentCaseContext(), UsePhase175QualityControls);
             InquiryFocusSummaryText = FormatInquiryFocusSummary(lastInquiryFocus);
             RefreshFilteredSearchResults(updateSummary: false);
 
@@ -4318,6 +4370,17 @@ public sealed class MainViewModel : ObservableObject
             builder.AppendLine($"Evidence Grounding: {result.AnswerQuality.Grounding:F3}");
             builder.AppendLine($"Topic Alignment: {result.AnswerQuality.TopicAlignment:F3}");
             builder.AppendLine($"Coverage: {result.AnswerQuality.Coverage:F3}");
+            if (result.AnswerQuality.EvidenceCoverage is double evidenceCoverage &&
+                result.AnswerQuality.AnswerCoverage is double answerCoverage)
+            {
+                var requiredCount = result.AnswerQuality.RequiredCoverage?.Count ?? 0;
+                var evidenceCount = requiredCount - (result.AnswerQuality.MissingEvidenceCoverage?.Count ?? 0);
+                var answerCount = requiredCount - (result.AnswerQuality.MissingAnswerCoverage?.Count ?? 0);
+                builder.AppendLine($"Evidence Coverage: {evidenceCount}/{requiredCount} ({evidenceCoverage:F3})");
+                builder.AppendLine($"Answer Coverage: {answerCount}/{requiredCount} ({answerCoverage:F3})");
+                builder.AppendLine($"Missing Evidence Coverage: {FormatCoverageItems(result.AnswerQuality.MissingEvidenceCoverage)}");
+                builder.AppendLine($"Missing Answer Coverage: {FormatCoverageItems(result.AnswerQuality.MissingAnswerCoverage)}");
+            }
             builder.AppendLine($"Technical Fidelity: {result.AnswerQuality.TechnicalFidelity:F3}");
             builder.AppendLine($"Unsupported Technical Claims: {result.AnswerQuality.UnsupportedClaimCount}");
             builder.AppendLine($"Conflict count: {result.AnswerQuality.ConflictCount}");
@@ -4530,10 +4593,23 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine($"未対応ファイル総数: {result.UnsupportedFileCount}");
         builder.AppendLine($"読み取り失敗: {result.ReadFailureCount}");
         builder.AppendLine($"重複ファイルスキップ: {result.DuplicateFileSkippedCount}");
+        builder.AppendLine($"コマンド例を含む説明文書の取り込み: {result.CommandHeavyManualIncludedCount}");
+        builder.AppendLine($"ZIP走査数: {result.ArchivesScannedCount}");
+        builder.AppendLine($"ZIPファイル数: {result.ZipFileCount}");
+        builder.AppendLine($"ZIP内ファイル数: {result.ZipEntryCount}");
+        builder.AppendLine($"ZIP内対応形式: {result.SupportedZipEntryCount}");
+        builder.AppendLine($"ZIP内取り込み済み: {result.IndexedZipEntryCount}");
+        builder.AppendLine($"ZIP内スキップ: {result.SkippedZipEntryCount}");
+        builder.AppendLine($"ZIP内重複スキップ: {result.DuplicateZipEntryCount}");
+        builder.AppendLine($"暗号化ZIPスキップ: {result.EncryptedZipCount}");
+        builder.AppendLine($"破損ZIPスキップ: {result.CorruptZipCount}");
+        builder.AppendLine($"危険なZIPパス拒否: {result.UnsafeArchivePathRejectedCount}");
+        builder.AppendLine($"ZIP安全上限超過: {result.ArchiveSizeLimitExceededCount}");
         builder.AppendLine("PDF/DOCX/XLSX/PPTX/HTML/CSV/TSVはテキスト抽出して取り込みます。");
         builder.AppendLine("PNG/JPG等の画像OCR、旧Office形式(.doc/.xls/.ppt)は現在未対応です。");
-        builder.AppendLine("ZIPの中身は現在確認しません。");
-        builder.AppendLine("EXE/RUN/DB/PDB/BAK/ZIPは検索対象外です。");
+        builder.AppendLine("ZIPは安全上限内の対応形式のみ読み込みます。ZIP自体と元ファイルは変更しません。");
+        builder.AppendLine("ZIP内の入れ子ZIP、実行形式、未対応形式は展開・実行しません。");
+        builder.AppendLine("EXE/RUN/DB/PDB/BAK/7Zは検索対象外です。");
 
         if (result.UnsupportedExtensionCounts.Count > 0)
         {
@@ -4568,6 +4644,20 @@ public sealed class MainViewModel : ObservableObject
             foreach (var warning in result.Warnings)
             {
                 builder.AppendLine($"- {warning}");
+            }
+        }
+
+        if (result.Diagnostics.Count > 0)
+        {
+            builder.AppendLine("内容判定診断（先頭30件）:");
+            foreach (var diagnostic in result.Diagnostics.Take(30))
+            {
+                builder.AppendLine($"- {diagnostic}");
+            }
+
+            if (result.Diagnostics.Count > 30)
+            {
+                builder.AppendLine($"- ほか {result.Diagnostics.Count - 30} 件");
             }
         }
 
@@ -4821,6 +4911,18 @@ public sealed class MainViewModel : ObservableObject
             builder.AppendLine($"質問種別: {(selection.QuestionTypes.Count == 0 ? "(未分類)" : string.Join(", ", selection.QuestionTypes))}");
             builder.AppendLine($"手順カバレッジ: {(selection.FinalCoverage.Count == 0 ? "(なし)" : string.Join(", ", selection.FinalCoverage))}");
             builder.AppendLine($"不足理由: {(selection.InsufficientEvidenceReasons.Count == 0 ? "(なし)" : string.Join(", ", selection.InsufficientEvidenceReasons))}");
+            if (string.Equals(selection.SelectionMode, "CoverageAware", StringComparison.Ordinal))
+            {
+                builder.AppendLine($"RequiredCoverage: {selection.RequiredCoverage.Count}");
+                builder.AppendLine($"SearchCoverage: {selection.SearchCoverage.Count}/{selection.RequiredCoverage.Count}");
+                builder.AppendLine($"SelectedCoverage: {selection.FinalCoverage.Count}/{selection.RequiredCoverage.Count}");
+                builder.AppendLine($"SelectedEvidenceCount: {selection.Sources.Count}");
+                builder.AppendLine($"MissingCoverage: {(selection.MissingCoverage.Count == 0 ? "(なし)" : string.Join(", ", selection.MissingCoverage))}");
+                builder.AppendLine($"RedundantCandidatesSkipped: {selection.RedundantCandidatesSkipped}");
+                builder.AppendLine($"BudgetLimited: {selection.SelectionBudgetLimited.ToString().ToLowerInvariant()}");
+                builder.AppendLine($"EstimatedEvidenceChars: {selection.EstimatedEvidenceChars}");
+                builder.AppendLine($"SelectionMode: {selection.SelectionMode}");
+            }
         }
         if (lastInquiryFocus?.IsFreshnessSensitive == true)
         {
@@ -5052,6 +5154,9 @@ public sealed class MainViewModel : ObservableObject
         builder.AppendLine(WarningsText);
         return builder.ToString();
     }
+
+    private static string FormatCoverageItems(IReadOnlyList<string>? values) =>
+        values is not { Count: > 0 } ? "(なし)" : string.Join(", ", values);
 
     protected override void OnPropertyChanged(string? propertyName = null)
     {

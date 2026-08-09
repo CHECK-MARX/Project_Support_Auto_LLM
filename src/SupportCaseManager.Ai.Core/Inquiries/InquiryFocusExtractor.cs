@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Quality;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Inquiries;
 
@@ -93,7 +95,10 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         StopWords.Select(NormalizeTerm),
         StringComparer.Ordinal);
 
-    public InquiryFocus Extract(string inquiryText, CaseContext? caseContext = null)
+    public InquiryFocus Extract(
+        string inquiryText,
+        CaseContext? caseContext = null,
+        bool usePhase175QualityControls = false)
     {
         if (string.IsNullOrWhiteSpace(inquiryText))
         {
@@ -106,6 +111,17 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         var targetVersions = ExtractTargetVersions(focusText);
         var terms = ExtractImportantTerms(focusText, normalizedFocus, caseContext);
         var freshness = DetectFreshness(normalizedFocus);
+        var topicAnalysis = usePhase175QualityControls
+            ? NegationAwareTopicAnalyzer.Analyze(focusText, SupportTopicCatalog.Create(caseContext?.ProductName))
+            : null;
+        if (topicAnalysis is not null)
+        {
+            terms = terms
+                .Where(term => !topicAnalysis.ExcludedTextSegments.Any(segment =>
+                    segment.Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                    topicAnalysis.PrimaryText.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
 
         return new InquiryFocus
         {
@@ -115,8 +131,32 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             TargetVersions = targetVersions,
             IsFreshnessSensitive = freshness.IsSensitive,
             FreshnessReason = freshness.Reason,
+            PrimaryTopics = topicAnalysis is null ? [] : ToReferences(topicAnalysis.PrimaryProfile),
+            ExcludedTopics = topicAnalysis is null ? [] : ToReferences(topicAnalysis.ExcludedProfile),
+            RequiredCoverage = topicAnalysis is null
+                ? []
+                : CoverageAnalyzer.Required(focusText, topicAnalysis.PrimaryProfile),
         };
     }
+
+    private static IReadOnlyList<InquiryTopicReference> ToReferences(TopicEntityProfile profile)
+    {
+        var values = new List<InquiryTopicReference>();
+        values.AddRange(profile.Products.Select(static value => Topic("Product", value)));
+        values.AddRange(profile.Components.Select(static value => Topic("Component", value)));
+        values.AddRange(profile.Features.Select(static value => Topic("Feature", value)));
+        values.AddRange(profile.Operations.Select(static value => Topic("Operation", value)));
+        values.AddRange(profile.Entities.Select(static value => Topic(value.Kind.ToString(), value.Value)));
+        return values
+            .DistinctBy(static item => $"{item.Kind}|{item.Value}", StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static InquiryTopicReference Topic(string kind, string value) => new()
+    {
+        Kind = kind,
+        Value = value,
+    };
 
     private static string ExtractFocusText(string inquiryText)
     {

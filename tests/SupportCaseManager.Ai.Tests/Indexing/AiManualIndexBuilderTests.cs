@@ -211,20 +211,21 @@ public class AiManualIndexBuilderTests
         var result = await CreateBuilder().BuildAsync(manualFolder, aiIndexFolder);
 
         Assert.Equal(5, result.ScannedFileCount);
-        Assert.Equal(5, result.UnsupportedFileCount);
+        Assert.Equal(1, result.SupportedFileCount);
+        Assert.Equal(4, result.UnsupportedFileCount);
         Assert.Equal(4, result.UnsupportedDocumentFileCount);
-        Assert.Equal(1, result.OutOfScopeFileCount);
+        Assert.Equal(0, result.OutOfScopeFileCount);
+        Assert.Equal(1, result.ZipFileCount);
+        Assert.Equal(1, result.CorruptZipCount);
         Assert.Equal(0, result.IndexedFileCount);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".doc"]);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".xls"]);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".ppt"]);
         Assert.Equal(1, result.UnsupportedExtensionCounts[".png"]);
-        Assert.Equal(1, result.UnsupportedExtensionCounts[".zip"]);
         Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".doc"]);
         Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".xls"]);
         Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".ppt"]);
         Assert.Equal(1, result.UnsupportedDocumentExtensionCounts[".png"]);
-        Assert.Equal(1, result.OutOfScopeExtensionCounts[".zip"]);
     }
 
     [Fact]

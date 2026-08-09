@@ -36,6 +36,26 @@ public sealed record class AnswerQualityEvaluationResult
     [JsonPropertyName("coverage")]
     public double Coverage { get; init; }
 
+    [JsonPropertyName("evidenceCoverage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? EvidenceCoverage { get; init; }
+
+    [JsonPropertyName("answerCoverage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public double? AnswerCoverage { get; init; }
+
+    [JsonPropertyName("requiredCoverage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? RequiredCoverage { get; init; }
+
+    [JsonPropertyName("missingEvidenceCoverage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? MissingEvidenceCoverage { get; init; }
+
+    [JsonPropertyName("missingAnswerCoverage")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? MissingAnswerCoverage { get; init; }
+
     [JsonPropertyName("technicalFidelity")]
     public double TechnicalFidelity { get; init; }
 

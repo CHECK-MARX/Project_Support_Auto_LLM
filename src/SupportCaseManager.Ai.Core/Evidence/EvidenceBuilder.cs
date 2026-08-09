@@ -15,6 +15,11 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             throw new ArgumentNullException(nameof(request));
         }
 
+        if (request.Settings.UseCoverageAwareEvidenceSelection)
+        {
+            return request.Sources.Select(ToEvidenceItem).ToList();
+        }
+
         var maxItems = request.Settings.MaxEvidenceItems > 0
             ? request.Settings.MaxEvidenceItems
             : DefaultMaxEvidenceItems;
@@ -70,18 +75,7 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             usedChars += itemChars;
         }
 
-        return selected
-            .Select(static source => new EvidenceItem
-            {
-                SourceId = source.SourceId,
-                SourceType = source.SourceType,
-                Title = source.Title,
-                Excerpt = BuildExcerpt(source.Text),
-                FilePath = source.FilePath,
-                SupportNumber = source.SupportNumber,
-                Relevance = Math.Clamp(source.Score ?? 0, 0, 1),
-            })
-            .ToList();
+        return selected.Select(ToEvidenceItem).ToList();
     }
 
     public double CalculateConfidence(AnswerDraftRequest request, IReadOnlyList<EvidenceItem> evidence)
@@ -113,6 +107,17 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             ? normalized
             : normalized[..ExcerptMaxLength] + "...";
     }
+
+    private static EvidenceItem ToEvidenceItem(SearchSource source) => new()
+    {
+        SourceId = source.SourceId,
+        SourceType = source.SourceType,
+        Title = source.Title,
+        Excerpt = BuildExcerpt(source.Text),
+        FilePath = source.FilePath,
+        SupportNumber = source.SupportNumber,
+        Relevance = Math.Clamp(source.Score ?? 0, 0, 1),
+    };
 
     private static bool IsRelevantSource(
         SearchSource source,

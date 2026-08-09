@@ -27,4 +27,36 @@ public sealed record class AiIndexedManual
 
     [JsonPropertyName("lastModifiedAt")]
     public DateTimeOffset? LastModifiedAt { get; init; }
+
+    [JsonPropertyName("sourceType")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceType { get; init; }
+
+    [JsonPropertyName("sha256")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Sha256 { get; init; }
+
+    [JsonPropertyName("archivePath")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ArchivePath { get; init; }
+
+    [JsonPropertyName("entryPath")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? EntryPath { get; init; }
+
+    [JsonPropertyName("originalFileName")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? OriginalFileName { get; init; }
+
+    [JsonPropertyName("extension")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Extension { get; init; }
+
+    [JsonPropertyName("uncompressedSize")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? UncompressedSize { get; init; }
+
+    [JsonPropertyName("compressedSize")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public long? CompressedSize { get; init; }
 }

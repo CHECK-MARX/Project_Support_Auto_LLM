@@ -61,6 +61,8 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
             MatchedTerms = score.MatchedTerms,
             QueryCoverage = score.QueryCoverage,
             ScoreBreakdown = score.ScoreBreakdown,
+            DocumentId = note.NoteFilePath,
+            SectionTitle = note.NoteKind,
         };
     }
 

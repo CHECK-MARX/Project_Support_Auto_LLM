@@ -174,6 +174,8 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             MatchedTerms = score.MatchedTerms,
             QueryCoverage = score.QueryCoverage,
             ScoreBreakdown = score.ScoreBreakdown,
+            DocumentId = document.Url,
+            SectionTitle = document.SectionTitle,
         };
     }
 

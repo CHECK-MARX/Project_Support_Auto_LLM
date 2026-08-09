@@ -25,7 +25,15 @@ internal static class ManualDocumentTextExtractor
         string filePath,
         CancellationToken cancellationToken)
     {
-        var extension = ManualDocumentFilter.NormalizeExtension(Path.GetExtension(filePath));
+        return await ReadAsync(filePath, filePath, cancellationToken);
+    }
+
+    public static async Task<ManualDocumentContent> ReadAsync(
+        string filePath,
+        string originalFileName,
+        CancellationToken cancellationToken)
+    {
+        var extension = ManualDocumentFilter.NormalizeExtension(Path.GetExtension(originalFileName));
         return extension switch
         {
             ".md" or ".markdown" => new ManualDocumentContent(

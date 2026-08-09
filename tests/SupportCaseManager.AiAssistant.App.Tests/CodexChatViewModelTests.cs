@@ -338,10 +338,13 @@ public sealed class CodexChatViewModelTests
         viewModel.PromptInput = "人工調査を実行してください";
         viewModel.SendCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.TechnicalAnswer.Contains("version 1.0", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => viewModel.CaptureAbBaselineCommand.CanExecute(null), TimeSpan.FromSeconds(5));
 
         Assert.True(viewModel.CaptureAbBaselineCommand.CanExecute(null));
         Assert.False(viewModel.CaptureAbEvidenceCommand.CanExecute(null));
         viewModel.CaptureAbBaselineCommand.Execute(null);
+        viewModel.PromptInput = "人工調査を実行してください";
+        await WaitUntilAsync(() => viewModel.SendCommand.CanExecute(null), TimeSpan.FromSeconds(5));
 
         snapshot = snapshot with
         {
@@ -355,11 +358,13 @@ public sealed class CodexChatViewModelTests
             () => string.IsNullOrEmpty(viewModel.TechnicalAnswer)
                 && viewModel.ConnectionDetails.Contains("新しい読み取り専用Thread", StringComparison.Ordinal),
             TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
 
         fakeClient.EnqueueResponse("手順:\n1. version 2.0 を確認します。\n2. `synthetic-cli run` を実行します。");
-        viewModel.PromptInput = "人工調査を実行してください";
+        await WaitUntilAsync(() => viewModel.SendCommand.CanExecute(null), TimeSpan.FromSeconds(5));
         viewModel.SendCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.TechnicalAnswer.Contains("version 2.0", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => viewModel.CaptureAbEvidenceCommand.CanExecute(null), TimeSpan.FromSeconds(5));
 
         Assert.True(viewModel.CaptureAbEvidenceCommand.CanExecute(null));
         viewModel.CaptureAbEvidenceCommand.Execute(null);

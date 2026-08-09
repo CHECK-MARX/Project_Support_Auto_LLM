@@ -52,11 +52,31 @@ public static partial class AnswerQualityEvaluator
         var technicalFidelity = answerClaims.Count == 0
             ? 1.0
             : Clamp(1.0 - (unsupported.Count / (double)answerClaims.Count));
-        var requiredCoverage = RequiredCoverage(queryProfile, input.Question);
-        var observedCoverage = ObservedCoverage(input.Answer, answerClaims);
-        var coverage = requiredCoverage.Count == 0
+        var legacyRequiredCoverage = RequiredCoverage(queryProfile, input.Question);
+        var legacyObservedCoverage = ObservedCoverage(input.Answer, answerClaims);
+        var phase175RequiredCoverage = input.RequiredCoverage.Count > 0
+            ? input.RequiredCoverage.Distinct(StringComparer.Ordinal).ToList()
+            : CoverageAnalyzer.Required(input.Question, queryProfile);
+        var evidenceObservedCoverage = CoverageAnalyzer.Observe(input.Evidence);
+        var answerObservedCoverage = CoverageAnalyzer.Observe(input.Answer);
+        var missingEvidenceCoverage = phase175RequiredCoverage
+            .Where(item => !evidenceObservedCoverage.Contains(item))
+            .ToList();
+        var missingAnswerCoverage = phase175RequiredCoverage
+            .Where(item => !answerObservedCoverage.Contains(item))
+            .ToList();
+        var evidenceCoverage = phase175RequiredCoverage.Count == 0
             ? 1.0
-            : requiredCoverage.Count(item => observedCoverage.Contains(item)) / (double)requiredCoverage.Count;
+            : (phase175RequiredCoverage.Count - missingEvidenceCoverage.Count) / (double)phase175RequiredCoverage.Count;
+        var answerCoverage = phase175RequiredCoverage.Count == 0
+            ? 1.0
+            : (phase175RequiredCoverage.Count - missingAnswerCoverage.Count) / (double)phase175RequiredCoverage.Count;
+        var coverage = input.UseSeparatedCoverage
+            ? answerCoverage
+            : legacyRequiredCoverage.Count == 0
+                ? 1.0
+                : legacyRequiredCoverage.Count(item => legacyObservedCoverage.Contains(item)) / (double)legacyRequiredCoverage.Count;
+        var observedCoverage = input.UseSeparatedCoverage ? answerObservedCoverage : legacyObservedCoverage;
         var directness = CalculateDirectness(input.Answer, topicAlignment, coverage);
         var actionability = CalculateActionability(queryProfile, input.Answer, observedCoverage);
         var leakageCount = InternalMarkers.Count(marker =>
@@ -86,6 +106,14 @@ public static partial class AnswerQualityEvaluator
         {
             warnings.Add("UnsupportedTechnicalClaim");
         }
+        if (input.UseSeparatedCoverage && missingEvidenceCoverage.Count > 0)
+        {
+            warnings.Add("MissingEvidenceCoverage");
+        }
+        if (input.UseSeparatedCoverage && missingAnswerCoverage.Count > 0)
+        {
+            warnings.Add("MissingAnswerCoverage");
+        }
 
         var decision = Decide(
             input,
@@ -99,7 +127,9 @@ public static partial class AnswerQualityEvaluator
             customerReadiness,
             leakageCount,
             conflictCount,
-            blocking);
+            blocking,
+            missingEvidenceCoverage,
+            missingAnswerCoverage);
 
         return new AnswerQualityEvaluationResult
         {
@@ -107,6 +137,11 @@ public static partial class AnswerQualityEvaluator
             Grounding = Round(grounding),
             TopicAlignment = Round(topicAlignment),
             Coverage = Round(coverage),
+            EvidenceCoverage = input.UseSeparatedCoverage ? Round(evidenceCoverage) : null,
+            AnswerCoverage = input.UseSeparatedCoverage ? Round(answerCoverage) : null,
+            RequiredCoverage = input.UseSeparatedCoverage ? phase175RequiredCoverage : null,
+            MissingEvidenceCoverage = input.UseSeparatedCoverage ? missingEvidenceCoverage : null,
+            MissingAnswerCoverage = input.UseSeparatedCoverage ? missingAnswerCoverage : null,
             TechnicalFidelity = Round(technicalFidelity),
             UnsupportedClaimCount = unsupported.Count,
             UnsupportedTechnicalClaims = unsupported,
@@ -121,7 +156,7 @@ public static partial class AnswerQualityEvaluator
     }
 
     public static TopicEntityCatalog CreateSupportCatalog(string? productName = null) =>
-        EnsureCatalog(new TopicEntityCatalog(), productName);
+        SupportTopicCatalog.Create(productName);
 
     private static string Decide(
         AnswerQualityEvaluationInput input,
@@ -135,17 +170,35 @@ public static partial class AnswerQualityEvaluator
         double customerReadiness,
         int leakageCount,
         int conflictCount,
-        IReadOnlyCollection<string> blocking)
+        IReadOnlyCollection<string> blocking,
+        IReadOnlyCollection<string> missingEvidenceCoverage,
+        IReadOnlyCollection<string> missingAnswerCoverage)
     {
         if (blocking.Count > 0)
         {
             return AnswerQualityDecisions.Blocked;
         }
 
-        if (input.Evidence.Count == 0 ||
-            input.ExistingInsufficientReasons.Count > 0 ||
-            grounding < rules.InsufficientGrounding ||
-            coverage < rules.InsufficientCoverage)
+        if (input.UseSeparatedCoverage)
+        {
+            var hardInsufficientReason = input.ExistingInsufficientReasons.Any(static reason => reason is
+                "NoRelevantEvidence" or "ProductMismatch" or "VersionMismatch" or
+                "TopicConflict" or "ConflictingEvidence");
+            if (input.Evidence.Count == 0 || hardInsufficientReason ||
+                grounding < rules.InsufficientGrounding || missingEvidenceCoverage.Count > 0)
+            {
+                return AnswerQualityDecisions.InsufficientEvidence;
+            }
+
+            if (missingAnswerCoverage.Count > 0)
+            {
+                return AnswerQualityDecisions.NeedsReview;
+            }
+        }
+        else if (input.Evidence.Count == 0 ||
+                 input.ExistingInsufficientReasons.Count > 0 ||
+                 grounding < rules.InsufficientGrounding ||
+                 coverage < rules.InsufficientCoverage)
         {
             return AnswerQualityDecisions.InsufficientEvidence;
         }

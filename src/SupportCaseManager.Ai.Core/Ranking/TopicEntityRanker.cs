@@ -114,7 +114,9 @@ public static partial class TopicEntityRanker
         AddSearchScores(weighted, candidate);
         var score = WeightedAverage(weighted.ToArray());
         var conflictPenalty = ConflictPenalty(comparison, productMatch, versionMatch);
-        score = Math.Clamp(score + conflictPenalty, 0, 1);
+        var explicitlyExcluded = NegationAwareTopicAnalyzer.Overlaps(request.ExcludedProfile, candidate.Profile);
+        var exclusionPenalty = explicitlyExcluded && !candidate.IsManuallySelected ? -0.90 : 0;
+        score = Math.Clamp(score + conflictPenalty + exclusionPenalty, 0, 1);
         var coverage = BuildCoverage(request.QueryProfile, candidate.Profile, comparison, candidate.Text);
 
         return new TopicEntityRankingAssessment
@@ -136,6 +138,8 @@ public static partial class TopicEntityRanker
             SourceTrustScore = trust,
             VersionScore = versionScore,
             ConflictPenalty = conflictPenalty,
+            ExclusionPenalty = exclusionPenalty,
+            ExplicitlyExcluded = explicitlyExcluded,
             ProductMatch = productMatch,
             VersionMatch = versionMatch,
             TopicConflict = comparison.TopicConflict,
@@ -145,7 +149,11 @@ public static partial class TopicEntityRanker
             ExactTechnicalTokens = exactTokens,
             TextFingerprint = Convert.ToHexString(
                 SHA256.HashData(Encoding.UTF8.GetBytes(TopicEntityAnalyzer.NormalizeText(candidate.Text)))),
-            SelectionReason = BuildSelectionReason(comparison, coverage, conflictPenalty),
+            SelectionReason = explicitlyExcluded
+                ? candidate.IsManuallySelected
+                    ? "Explicitly excluded topic retained because the source was manually selected"
+                    : $"Explicitly excluded topic; penalty={exclusionPenalty:0.00}"
+                : BuildSelectionReason(comparison, coverage, conflictPenalty),
         };
     }
 

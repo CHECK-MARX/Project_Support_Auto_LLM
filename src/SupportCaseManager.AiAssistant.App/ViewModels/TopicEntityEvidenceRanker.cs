@@ -14,8 +14,11 @@ public static class TopicEntityEvidenceRanker
         ArgumentNullException.ThrowIfNull(candidates);
         ArgumentNullException.ThrowIfNull(context);
         var items = candidates.ToList();
-        var catalog = BuildCatalog(context.ProductName);
-        var queryProfile = TopicEntityAnalyzer.Extract(context.InquiryText, catalog);
+        var catalog = SupportTopicCatalog.Create(context.ProductName);
+        var topicAnalysis = context.UsePhase175QualityControls
+            ? NegationAwareTopicAnalyzer.Analyze(context.InquiryText, catalog)
+            : null;
+        var queryProfile = topicAnalysis?.PrimaryProfile ?? TopicEntityAnalyzer.Extract(context.InquiryText, catalog);
         var technicalTokens = QuestionAwareEvidenceRanker.ExtractExactTechnicalTokens(context.InquiryText);
         var rankingCandidates = items.Select((item, index) => new TopicEntityRankingCandidate
         {
@@ -32,6 +35,7 @@ public static class TopicEntityEvidenceRanker
         var ranked = TopicEntityRanker.Rank(new TopicEntityRankingRequest
         {
             QueryProfile = queryProfile,
+            ExcludedProfile = topicAnalysis?.ExcludedProfile ?? new TopicEntityProfile(),
             TechnicalTokens = technicalTokens,
             RequestedProduct = context.ProductName,
             RequestedVersion = context.TargetVersion,
@@ -57,6 +61,8 @@ public static class TopicEntityEvidenceRanker
                 TopicScore = assessment.TopicScore,
                 EntityScore = assessment.EntityScore,
                 ConflictPenalty = assessment.ConflictPenalty,
+                ExclusionPenalty = assessment.ExclusionPenalty,
+                ExplicitlyExcluded = assessment.ExplicitlyExcluded,
                 TopicConflict = assessment.TopicConflict,
                 SelectionReason = assessment.SelectionReason,
             }).ToList(),
@@ -74,38 +80,4 @@ public static class TopicEntityEvidenceRanker
         item.Source.InternalMemo,
         item.Text);
 
-    private static TopicEntityCatalog BuildCatalog(string? requestedProduct)
-    {
-        var products = string.IsNullOrWhiteSpace(requestedProduct)
-            ? Array.Empty<TopicAliasDefinition>()
-            : [new TopicAliasDefinition { CanonicalName = requestedProduct.Trim() }];
-        return new TopicEntityCatalog
-        {
-            Products = products,
-            Components =
-            [
-                new TopicAliasDefinition { CanonicalName = "Validate", Aliases = ["Perforce Validate"] },
-            ],
-            Features =
-            [
-                new TopicAliasDefinition { CanonicalName = "Stream", Aliases = ["ストリーム"] },
-                new TopicAliasDefinition { CanonicalName = "License", Aliases = ["ライセンス"] },
-                new TopicAliasDefinition { CanonicalName = "IDE Plugin", Aliases = ["IDEプラグイン", "Eclipse Plugin"] },
-                new TopicAliasDefinition { CanonicalName = "Build upload", Aliases = ["validate build", "build upload"] },
-            ],
-            Objects =
-            [
-                new TopicAliasDefinition { CanonicalName = "Analysis result", Aliases = ["解析結果"] },
-            ],
-            Entities =
-            [
-                new TopicEntityAliasDefinition
-                {
-                    Kind = TopicEntityKind.Command,
-                    CanonicalValue = "qacli validate build",
-                    Aliases = ["validate build"],
-                },
-            ],
-        };
-    }
 }

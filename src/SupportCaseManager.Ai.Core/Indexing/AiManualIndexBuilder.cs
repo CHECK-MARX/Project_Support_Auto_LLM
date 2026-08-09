@@ -19,10 +19,14 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
     };
 
     private readonly Func<DateTimeOffset> nowProvider;
+    private readonly SafeZipManualReader safeZipReader;
 
-    public AiManualIndexBuilder(Func<DateTimeOffset>? nowProvider = null)
+    public AiManualIndexBuilder(
+        Func<DateTimeOffset>? nowProvider = null,
+        SafeZipManualReader? safeZipReader = null)
     {
         this.nowProvider = nowProvider ?? (() => DateTimeOffset.Now);
+        this.safeZipReader = safeZipReader ?? new SafeZipManualReader();
     }
 
     public async Task<AiManualIndexBuildResult> BuildAsync(
@@ -49,6 +53,10 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         var warnings = new List<string>();
         var indexedManuals = new List<AiIndexedManual>();
         var seenFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenContentHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var regularCandidates = new List<string>();
+        var archiveCandidates = new List<string>();
+        var diagnostics = new List<string>();
         var unsupportedExtensionCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var unsupportedDocumentExtensionCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var outOfScopeExtensionCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -62,6 +70,18 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         var emptyFileSkippedCount = 0;
         var readFailureCount = 0;
         var duplicateFileSkippedCount = 0;
+        var commandHeavyManualIncludedCount = 0;
+        var archivesScannedCount = 0;
+        var zipFileCount = 0;
+        var zipEntryCount = 0;
+        var supportedZipEntryCount = 0;
+        var indexedZipEntryCount = 0;
+        var skippedZipEntryCount = 0;
+        var duplicateZipEntryCount = 0;
+        var encryptedZipCount = 0;
+        var corruptZipCount = 0;
+        var unsafeArchivePathRejectedCount = 0;
+        var archiveSizeLimitExceededCount = 0;
         var indexedFileCount = 0;
         var errorCount = 0;
 
@@ -108,59 +128,154 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 }
 
                 var fileClassification = ManualDocumentFilter.ClassifyFile(filePath);
-                if (fileClassification.Category != ManualDocumentCategory.ImportCandidate)
+                if (fileClassification.Category == ManualDocumentCategory.ImportCandidate)
                 {
-                    unsupportedFileCount += 1;
-                    Increment(unsupportedExtensionCounts, fileClassification.Extension);
-                    switch (fileClassification.Category)
-                    {
-                        case ManualDocumentCategory.UnsupportedDocumentFormat:
-                            unsupportedDocumentFileCount += 1;
-                            Increment(unsupportedDocumentExtensionCounts, fileClassification.Extension);
-                            break;
-                        case ManualDocumentCategory.OutOfScopeBinaryOrArchive:
-                            outOfScopeFileCount += 1;
-                            Increment(outOfScopeExtensionCounts, fileClassification.Extension);
-                            break;
-                        default:
-                            otherUnsupportedFileCount += 1;
-                            break;
-                    }
-
+                    supportedFileCount += 1;
+                    regularCandidates.Add(filePath);
                     continue;
                 }
 
-                supportedFileCount += 1;
-
-                try
+                if (fileClassification.Category == ManualDocumentCategory.ArchiveCandidate)
                 {
-                    var content = await ManualDocumentTextExtractor.ReadAsync(filePath, cancellationToken);
-                    var contentClassification = ManualDocumentFilter.ClassifyTextFileContent(filePath, content.Text);
-                    if (contentClassification.Category == ManualDocumentCategory.ContentExcludedText)
-                    {
-                        contentExcludedFileCount += 1;
-                        warnings.Add($"Skipped non-manual text file: {filePath}. {contentClassification.Reason}");
-                        continue;
-                    }
-
-                    var fileInfo = new FileInfo(filePath);
-                    var chunks = CreateManualChunks(fileInfo, content).ToList();
-                    if (chunks.Count == 0)
-                    {
-                        emptyFileSkippedCount += 1;
-                        warnings.Add($"Skipped empty manual file: {filePath}");
-                        continue;
-                    }
-
-                    indexedFileCount += 1;
-                    indexedManuals.AddRange(chunks);
+                    supportedFileCount += 1;
+                    archiveCandidates.Add(filePath);
+                    continue;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+
+                unsupportedFileCount += 1;
+                Increment(unsupportedExtensionCounts, fileClassification.Extension);
+                switch (fileClassification.Category)
                 {
-                    readFailureCount += 1;
-                    errorCount += 1;
-                    warnings.Add($"Failed to index manual file: {filePath}. {ex.GetType().Name}: {ex.Message}");
+                    case ManualDocumentCategory.UnsupportedDocumentFormat:
+                        unsupportedDocumentFileCount += 1;
+                        Increment(unsupportedDocumentExtensionCounts, fileClassification.Extension);
+                        break;
+                    case ManualDocumentCategory.OutOfScopeBinaryOrArchive:
+                        outOfScopeFileCount += 1;
+                        Increment(outOfScopeExtensionCounts, fileClassification.Extension);
+                        break;
+                    default:
+                        otherUnsupportedFileCount += 1;
+                        break;
                 }
+            }
+        }
+
+        foreach (var filePath in regularCandidates.OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var contentHash = await ComputeFileSha256Async(filePath, cancellationToken);
+                var content = await ManualDocumentTextExtractor.ReadAsync(filePath, cancellationToken);
+                var contentClassification = ManualDocumentFilter.ClassifyTextFileContent(filePath, content.Text);
+                AddContentDiagnostic(diagnostics, filePath, contentClassification);
+                if (contentClassification.Category == ManualDocumentCategory.ContentExcludedText)
+                {
+                    contentExcludedFileCount += 1;
+                    warnings.Add($"Skipped non-manual text file: {filePath}. {contentClassification.Reason}");
+                    continue;
+                }
+
+                var source = ManualSourceDescriptor.ForFile(filePath, contentHash);
+                var chunks = CreateManualChunks(source, content).ToList();
+                if (chunks.Count == 0)
+                {
+                    emptyFileSkippedCount += 1;
+                    warnings.Add($"Skipped empty manual file: {filePath}");
+                    continue;
+                }
+
+                if (!seenContentHashes.Add(contentHash))
+                {
+                    duplicateFileSkippedCount += 1;
+                    diagnostics.Add($"Duplicate skipped: {filePath}; sha256={contentHash}");
+                    continue;
+                }
+
+                if ((contentClassification.Scores?.CommandExampleScore ?? 0) >= 2)
+                {
+                    commandHeavyManualIncludedCount += 1;
+                }
+
+                indexedFileCount += 1;
+                indexedManuals.AddRange(chunks);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                readFailureCount += 1;
+                errorCount += 1;
+                warnings.Add($"Failed to index manual file: {filePath}. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        foreach (var archivePath in archiveCandidates.OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            archivesScannedCount += 1;
+            zipFileCount += 1;
+            SafeZipManualReadResult archiveResult;
+            try
+            {
+                archiveResult = await safeZipReader.ReadAsync(archivePath, cancellationToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                readFailureCount += 1;
+                errorCount += 1;
+                warnings.Add($"ZIP could not be indexed and was skipped: {archivePath}. {ex.GetType().Name}: {ex.Message}");
+                continue;
+            }
+
+            zipEntryCount += archiveResult.ZipEntryCount;
+            supportedZipEntryCount += archiveResult.SupportedEntryCount;
+            skippedZipEntryCount += archiveResult.SkippedEntryCount;
+            encryptedZipCount += archiveResult.EncryptedArchiveCount;
+            corruptZipCount += archiveResult.CorruptArchiveCount;
+            unsafeArchivePathRejectedCount += archiveResult.UnsafePathRejectedCount;
+            archiveSizeLimitExceededCount += archiveResult.SizeLimitExceededCount;
+            warnings.AddRange(archiveResult.Warnings);
+
+            foreach (var entry in archiveResult.Entries)
+            {
+                var sourcePath = BuildArchiveSourcePath(entry.ArchivePath, entry.EntryPath);
+                var contentClassification = ManualDocumentFilter.ClassifyTextFileContent(sourcePath, entry.Content.Text);
+                AddContentDiagnostic(diagnostics, sourcePath, contentClassification);
+                if (contentClassification.Category == ManualDocumentCategory.ContentExcludedText)
+                {
+                    contentExcludedFileCount += 1;
+                    skippedZipEntryCount += 1;
+                    warnings.Add($"Skipped non-manual ZIP entry: {sourcePath}. {contentClassification.Reason}");
+                    continue;
+                }
+
+                var source = ManualSourceDescriptor.ForArchiveEntry(entry, sourcePath);
+                var chunks = CreateManualChunks(source, entry.Content).ToList();
+                if (chunks.Count == 0)
+                {
+                    emptyFileSkippedCount += 1;
+                    skippedZipEntryCount += 1;
+                    warnings.Add($"Skipped empty manual ZIP entry: {sourcePath}");
+                    continue;
+                }
+
+                if (!seenContentHashes.Add(entry.Sha256))
+                {
+                    duplicateFileSkippedCount += 1;
+                    duplicateZipEntryCount += 1;
+                    skippedZipEntryCount += 1;
+                    diagnostics.Add($"Duplicate skipped: {sourcePath}; sha256={entry.Sha256}");
+                    continue;
+                }
+
+                if ((contentClassification.Scores?.CommandExampleScore ?? 0) >= 2)
+                {
+                    commandHeavyManualIncludedCount += 1;
+                }
+
+                indexedFileCount += 1;
+                indexedZipEntryCount += 1;
+                indexedManuals.AddRange(chunks);
             }
         }
 
@@ -177,6 +292,18 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             EmptyFileSkippedCount = emptyFileSkippedCount,
             ReadFailureCount = readFailureCount,
             DuplicateFileSkippedCount = duplicateFileSkippedCount,
+            CommandHeavyManualIncludedCount = commandHeavyManualIncludedCount,
+            ArchivesScannedCount = archivesScannedCount,
+            ZipFileCount = zipFileCount,
+            ZipEntryCount = zipEntryCount,
+            SupportedZipEntryCount = supportedZipEntryCount,
+            IndexedZipEntryCount = indexedZipEntryCount,
+            SkippedZipEntryCount = skippedZipEntryCount,
+            DuplicateZipEntryCount = duplicateZipEntryCount,
+            EncryptedZipCount = encryptedZipCount,
+            CorruptZipCount = corruptZipCount,
+            UnsafeArchivePathRejectedCount = unsafeArchivePathRejectedCount,
+            ArchiveSizeLimitExceededCount = archiveSizeLimitExceededCount,
             IndexedFileCount = indexedFileCount,
             IndexedChunkCount = indexedManuals.Count,
             ErrorCount = errorCount,
@@ -191,6 +318,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 .OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(static item => item.Key, static item => item.Value, StringComparer.OrdinalIgnoreCase),
             Warnings = warnings,
+            Diagnostics = diagnostics,
         };
     }
 
@@ -207,23 +335,30 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
         Directory.CreateDirectory(aiIndexFolder);
         var indexFilePath = Path.Combine(aiIndexFolder, IndexFileName);
-        var existing = await ReadExistingIndexAsync(indexFilePath, cancellationToken);
-        var existingByPath = existing.Manuals
-            .Where(static item => !string.IsNullOrWhiteSpace(item.FilePath))
-            .GroupBy(static item => Path.GetFullPath(item.FilePath), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.OrdinalIgnoreCase);
         var targetFolders = (manualFolders ?? [])
             .Where(static folder => !string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder))
             .Select(static folder => Path.GetFullPath(folder.Trim()))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var warnings = new List<string>();
-        var currentFiles = targetFolders
+        var allCurrentFiles = targetFolders
             .SelectMany(folder => EnumerateFilesSafely(folder, warnings))
-            .Where(path => ManualDocumentFilter.ClassifyFile(path).Category == ManualDocumentCategory.ImportCandidate)
             .Select(Path.GetFullPath)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (allCurrentFiles.Any(path => ManualDocumentFilter.ClassifyFile(path).Category == ManualDocumentCategory.ArchiveCandidate))
+        {
+            return await BuildManyAsync(targetFolders, aiIndexFolder, cancellationToken);
+        }
+
+        var existing = await ReadExistingIndexAsync(indexFilePath, cancellationToken);
+        var existingByPath = existing.Manuals
+            .Where(static item => item.ArchivePath is null && !string.IsNullOrWhiteSpace(item.FilePath))
+            .GroupBy(static item => Path.GetFullPath(item.FilePath), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.OrdinalIgnoreCase);
+        var currentFiles = allCurrentFiles
+            .Where(path => ManualDocumentFilter.ClassifyFile(path).Category == ManualDocumentCategory.ImportCandidate)
             .ToList();
         var currentPaths = currentFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var output = new List<AiIndexedManual>();
@@ -248,6 +383,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
             try
             {
+                var contentHash = await ComputeFileSha256Async(filePath, cancellationToken);
                 var content = await ManualDocumentTextExtractor.ReadAsync(filePath, cancellationToken);
                 var classification = ManualDocumentFilter.ClassifyTextFileContent(filePath, content.Text);
                 if (classification.Category == ManualDocumentCategory.ContentExcludedText)
@@ -255,7 +391,8 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     continue;
                 }
 
-                var chunks = CreateManualChunks(fileInfo, content).ToList();
+                var source = ManualSourceDescriptor.ForFile(filePath, contentHash);
+                var chunks = CreateManualChunks(source, content).ToList();
                 output.AddRange(chunks);
                 if (oldChunks is { Count: > 0 })
                 {
@@ -308,6 +445,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
     {
         var document = new AiManualIndexDocument
         {
+            Version = AiManualIndexDocument.CurrentVersion,
             BuiltAt = nowProvider(),
             SourceFolder = sourceFolder,
             Manuals = manuals,
@@ -328,6 +466,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         {
             var document = new AiManualIndexDocument
             {
+                Version = AiManualIndexDocument.CurrentVersion,
                 BuiltAt = nowProvider(),
                 SourceFolder = sourceFolder,
                 Manuals = manuals,
@@ -418,8 +557,33 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             : 1;
     }
 
+    private static async Task<string> ComputeFileSha256Async(
+        string filePath,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(filePath);
+        var hash = await SHA256.HashDataAsync(stream, cancellationToken);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
+    private static string BuildArchiveSourcePath(string archivePath, string entryPath) =>
+        $"{Path.GetFullPath(archivePath)}!/{entryPath.Replace('\\', '/')}";
+
+    private static void AddContentDiagnostic(
+        ICollection<string> diagnostics,
+        string sourcePath,
+        ManualDocumentFilterResult classification)
+    {
+        if (classification.Scores is null)
+        {
+            return;
+        }
+
+        diagnostics.Add($"{sourcePath}: {classification.Reason}");
+    }
+
     private static IEnumerable<AiIndexedManual> CreateManualChunks(
-        FileInfo fileInfo,
+        ManualSourceDescriptor source,
         ManualDocumentContent content)
     {
         var text = content.Text;
@@ -428,7 +592,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             yield break;
         }
 
-        var isMarkdown = IsMarkdown(fileInfo, content.DocumentType);
+        var isMarkdown = IsMarkdown(source.Extension, content.DocumentType);
         var sections = isMarkdown
             ? SplitMarkdownSections(text).ToList()
             : [new ManualSection(string.Empty, text)];
@@ -445,25 +609,33 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
                 yield return new AiIndexedManual
                 {
-                    Id = BuildId(fileInfo.FullName, chunkIndex, section.SectionTitle),
-                    FilePath = fileInfo.FullName,
-                    FileName = fileInfo.Name,
-                    Title = BuildTitle(fileInfo, section.SectionTitle),
+                    Id = BuildId(source.SourcePath, chunkIndex, section.SectionTitle),
+                    FilePath = source.SourcePath,
+                    FileName = source.FileName,
+                    Title = BuildTitle(source.FileName, section.SectionTitle),
                     DocumentType = content.DocumentType,
                     SectionTitle = section.SectionTitle,
                     Text = chunk,
-                    LastModifiedAt = fileInfo.LastWriteTime,
+                    LastModifiedAt = source.LastModifiedAt,
+                    SourceType = "Manual",
+                    Sha256 = source.Sha256,
+                    ArchivePath = source.ArchivePath,
+                    EntryPath = source.EntryPath,
+                    OriginalFileName = source.OriginalFileName,
+                    Extension = source.Extension,
+                    UncompressedSize = source.UncompressedSize,
+                    CompressedSize = source.CompressedSize,
                 };
                 chunkIndex += 1;
             }
         }
     }
 
-    private static bool IsMarkdown(FileInfo fileInfo, string documentType)
+    private static bool IsMarkdown(string extension, string documentType)
     {
         return string.Equals(documentType, "Markdown", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(fileInfo.Extension, ".md", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(fileInfo.Extension, ".markdown", StringComparison.OrdinalIgnoreCase);
+            string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(extension, ".markdown", StringComparison.OrdinalIgnoreCase);
     }
 
     private static IEnumerable<ManualSection> SplitMarkdownSections(string text)
@@ -526,9 +698,9 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
     }
 
-    private static string BuildTitle(FileInfo fileInfo, string sectionTitle)
+    private static string BuildTitle(string fileName, string sectionTitle)
     {
-        var fileTitle = Path.GetFileNameWithoutExtension(fileInfo.Name);
+        var fileTitle = Path.GetFileNameWithoutExtension(fileName);
         return string.IsNullOrWhiteSpace(sectionTitle)
             ? fileTitle
             : $"{fileTitle} - {sectionTitle}";
@@ -539,6 +711,49 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         var raw = $"{filePath}|{chunkIndex}|{sectionTitle}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
         return Convert.ToHexString(hash)[..24].ToLowerInvariant();
+    }
+
+    private sealed record ManualSourceDescriptor(
+        string SourcePath,
+        string FileName,
+        string Extension,
+        DateTimeOffset? LastModifiedAt,
+        string Sha256,
+        string? ArchivePath,
+        string? EntryPath,
+        string? OriginalFileName,
+        long? UncompressedSize,
+        long? CompressedSize)
+    {
+        public static ManualSourceDescriptor ForFile(string filePath, string sha256)
+        {
+            var fullPath = Path.GetFullPath(filePath);
+            var fileInfo = new FileInfo(fullPath);
+            return new ManualSourceDescriptor(
+                fullPath,
+                fileInfo.Name,
+                ManualDocumentFilter.NormalizeExtension(fileInfo.Extension),
+                fileInfo.LastWriteTime,
+                sha256,
+                null,
+                null,
+                fileInfo.Name,
+                fileInfo.Length,
+                null);
+        }
+
+        public static ManualSourceDescriptor ForArchiveEntry(SafeZipManualEntry entry, string sourcePath) =>
+            new(
+                sourcePath,
+                entry.OriginalFileName,
+                entry.Extension,
+                entry.LastModifiedAt,
+                entry.Sha256,
+                entry.ArchivePath,
+                entry.EntryPath,
+                entry.OriginalFileName,
+                entry.UncompressedSize,
+                entry.CompressedSize);
     }
 
     private sealed record ManualSection(string SectionTitle, string Text);

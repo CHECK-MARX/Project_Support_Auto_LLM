@@ -24,6 +24,24 @@ public static class SearchSourceSelectionBuilder
         var allItems = searchResults
             .Where(static item => item is not null)
             .ToList();
+        var coverageAwareFallbackApplied = false;
+        if (questionAwareContext?.UseCoverageAwareEvidenceSelection == true)
+        {
+            try
+            {
+                return CoverageAwareSearchSourceSelector.Select(
+                    allItems,
+                    maxEvidenceItems,
+                    autoSelectMinimumScore,
+                    questionAwareContext);
+            }
+            catch
+            {
+                // Phase 18 is optional. Any adapter failure must preserve the existing selector path.
+                coverageAwareFallbackApplied = true;
+            }
+        }
+
         var maxItems = Math.Max(0, maxEvidenceItems);
         var threshold = Math.Clamp(autoSelectMinimumScore, 0.0, 1.0);
         var selectedItems = allItems
@@ -161,7 +179,8 @@ public static class SearchSourceSelectionBuilder
             FinalCoverage = questionAwareRanking?.FinalCoverage.ToList() ?? [],
             InsufficientEvidenceReasons = questionAwareRanking?.InsufficientReasons ?? [],
             RankingMode = questionAwareRanking?.RankingMode ?? string.Empty,
-            Warning = BuildWarning(
+            SelectionMode = coverageAwareFallbackApplied ? "LegacyFallback" : string.Empty,
+            Warning = AppendCoverageFallbackWarning(BuildWarning(
                 selectedItems.Count,
                 sources.Count,
                 maxItems,
@@ -171,6 +190,7 @@ public static class SearchSourceSelectionBuilder
                 freshnessNoOfficialDocLimitApplied,
                 topNFallbackApplied,
                 questionAwareRanking?.InsufficientReasons),
+                coverageAwareFallbackApplied),
         };
     }
 
@@ -224,6 +244,19 @@ public static class SearchSourceSelectionBuilder
         }
 
         return string.Empty;
+    }
+
+    private static string AppendCoverageFallbackWarning(string warning, bool fallbackApplied)
+    {
+        if (!fallbackApplied)
+        {
+            return warning;
+        }
+
+        const string fallbackWarning = "Phase 18 selection failed; the legacy evidence selector was used.";
+        return string.IsNullOrWhiteSpace(warning)
+            ? fallbackWarning
+            : $"{warning} {fallbackWarning}";
     }
 
     private static bool IsSourceType(SearchSourceViewModel item, string sourceType)
@@ -286,6 +319,20 @@ public sealed record class SearchSourceSelectionResult
     public IReadOnlyList<string> QuestionTypes { get; init; } = [];
 
     public IReadOnlyList<string> FinalCoverage { get; init; } = [];
+
+    public IReadOnlyList<string> RequiredCoverage { get; init; } = [];
+
+    public IReadOnlyList<string> SearchCoverage { get; init; } = [];
+
+    public IReadOnlyList<string> MissingCoverage { get; init; } = [];
+
+    public string SelectionMode { get; init; } = string.Empty;
+
+    public int RedundantCandidatesSkipped { get; init; }
+
+    public bool SelectionBudgetLimited { get; init; }
+
+    public int EstimatedEvidenceChars { get; init; }
 
     public IReadOnlyList<string> InsufficientEvidenceReasons { get; init; } = [];
 

@@ -24,6 +24,7 @@ public sealed class PromptBuilder : IPromptBuilder
         }
 
         var userPrompt = Truncate(rawUserPrompt, Math.Max(0, maxPromptChars - adjustedSystemPrompt.Length));
+        var evidenceLimit = EvidenceLimit(request);
 
         return new PromptMessages
         {
@@ -36,8 +37,8 @@ public sealed class PromptBuilder : IPromptBuilder
                 SystemChars = adjustedSystemPrompt.Length,
                 UserPromptChars = userPrompt.Length,
                 InquiryChars = SafeLength(request.InquiryText) + SafeLength(request.UserInstruction) + request.Case.Notes.Sum(static note => SafeLength(note.Text)),
-                EvidenceChars = request.Sources.Take(Math.Max(0, request.Settings.MaxEvidenceItems)).Sum(static source => SafeLength(source.Text)),
-                EvidenceCount = request.Sources.Take(Math.Max(0, request.Settings.MaxEvidenceItems)).Count(),
+                EvidenceChars = request.Sources.Take(evidenceLimit).Sum(static source => SafeLength(source.Text)),
+                EvidenceCount = request.Sources.Take(evidenceLimit).Count(),
             },
         };
     }
@@ -110,6 +111,14 @@ public sealed class PromptBuilder : IPromptBuilder
             AppendField(builder, "targetVersions", request.InquiryFocus.TargetVersions.Count == 0 ? null : string.Join(", ", request.InquiryFocus.TargetVersions));
             AppendField(builder, "freshnessSensitive", request.InquiryFocus.IsFreshnessSensitive ? "true" : "false");
             AppendField(builder, "freshnessReason", request.InquiryFocus.FreshnessReason);
+            if (request.Settings.UsePhase175QualityControls)
+            {
+                AppendField(builder, "primaryTopics", FormatTopics(request.InquiryFocus.PrimaryTopics));
+                AppendField(builder, "excludedTopics", FormatTopics(request.InquiryFocus.ExcludedTopics));
+                AppendField(builder, "requiredCoverage", request.InquiryFocus.RequiredCoverage.Count == 0
+                    ? null
+                    : string.Join(", ", request.InquiryFocus.RequiredCoverage));
+            }
             builder.AppendLine();
         }
 
@@ -179,7 +188,7 @@ public sealed class PromptBuilder : IPromptBuilder
         }
 
         builder.AppendLine("# 参照根拠");
-        var maxEvidenceItems = Math.Max(0, request.Settings.MaxEvidenceItems);
+        var maxEvidenceItems = EvidenceLimit(request);
         if (request.Sources.Any(static source => string.Equals(source.SourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase)))
         {
             builder.AppendLine("以下のExactPastAnswerは、同一またはほぼ同一の問い合わせに対して過去に実際に使用した回答です。");
@@ -204,6 +213,12 @@ public sealed class PromptBuilder : IPromptBuilder
         }
 
         builder.AppendLine("# 出力ルール");
+        if (request.Settings.UsePhase175QualityControls && request.InquiryFocus?.RequiredCoverage.Count > 0)
+        {
+            builder.AppendLine("選択根拠に存在するRequired Coverageは、お客様向け回答にも具体的に反映してください。");
+            builder.AppendLine("根拠に存在しない項目は作らず、要確認事項として明示してください。");
+            builder.AppendLine("excludedTopicsは今回の検索対象ではありません。回答の中心にしないでください。");
+        }
         if (request.InquiryFocus?.IsFreshnessSensitive == true)
         {
             builder.AppendLine("""
@@ -220,12 +235,20 @@ public sealed class PromptBuilder : IPromptBuilder
         return builder.ToString();
     }
 
+    private static int EvidenceLimit(AnswerDraftRequest request) =>
+        request.Settings.UseCoverageAwareEvidenceSelection
+            ? request.Sources.Count
+            : Math.Max(0, request.Settings.MaxEvidenceItems);
+
     private static void AppendField(StringBuilder builder, string name, string? value)
     {
         builder.Append(name);
         builder.Append(": ");
         builder.AppendLine(string.IsNullOrWhiteSpace(value) ? "(未設定)" : value);
     }
+
+    private static string? FormatTopics(IReadOnlyList<InquiryTopicReference> topics) =>
+        topics.Count == 0 ? null : string.Join(", ", topics.Select(static item => $"{item.Kind}={item.Value}"));
 
     private static void AppendResolvedLatestVersionSummary(
         StringBuilder builder,

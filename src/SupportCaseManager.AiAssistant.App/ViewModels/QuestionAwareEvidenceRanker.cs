@@ -18,6 +18,14 @@ public sealed record class QuestionAwareEvidenceSelectionContext
     public string? TargetVersion { get; init; }
 
     public string RankingMode { get; init; } = EvidenceRankingModes.Phase15;
+
+    public bool UsePhase175QualityControls { get; init; }
+
+    public bool UseCoverageAwareEvidenceSelection { get; init; }
+
+    public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
+
+    public int MaxPromptChars { get; init; } = 6000;
 }
 
 public sealed record class QuestionAwareEvidenceAssessment
@@ -47,6 +55,10 @@ public sealed record class QuestionAwareEvidenceAssessment
     public double EntityScore { get; init; }
 
     public double ConflictPenalty { get; init; }
+
+    public double ExclusionPenalty { get; init; }
+
+    public bool ExplicitlyExcluded { get; init; }
 
     public bool TopicConflict { get; init; }
 

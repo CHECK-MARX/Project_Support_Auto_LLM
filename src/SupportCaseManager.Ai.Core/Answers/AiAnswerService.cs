@@ -90,6 +90,8 @@ public sealed class AiAnswerService : IAiAnswerService
             RequestedVersion = request.InquiryFocus?.TargetVersions.FirstOrDefault(),
             Evidence = BuildQualityEvidence(request.Sources, postProcessed.Evidence),
             Catalog = AnswerQualityEvaluator.CreateSupportCatalog(request.Case.ProductName),
+            UseSeparatedCoverage = request.Settings.UsePhase175QualityControls,
+            RequiredCoverage = request.InquiryFocus?.RequiredCoverage ?? [],
         });
         var qualityWarnings = postProcessed.Warnings
             .Concat([$"Answer Quality Gate: {quality.Decision}"])

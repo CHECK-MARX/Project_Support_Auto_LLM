@@ -66,6 +66,9 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
             MatchedTerms = score.MatchedTerms,
             QueryCoverage = score.QueryCoverage,
             ScoreBreakdown = score.ScoreBreakdown,
+            DocumentId = manual.ArchivePath ?? manual.FilePath,
+            SectionTitle = manual.SectionTitle,
+            ContentHash = manual.Sha256,
         };
     }
 

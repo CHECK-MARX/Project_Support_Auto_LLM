@@ -75,6 +75,32 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void Build_CoverageAwareModeIncludesEntirePreselectedSet()
+    {
+        var request = CreateRequest() with
+        {
+            Settings = new AiAssistantSettings
+            {
+                MaxEvidenceItems = 3,
+                MaxPromptChars = 20000,
+                UseCoverageAwareEvidenceSelection = true,
+            },
+            Sources =
+            [
+                CreateSource("source-1"),
+                CreateSource("source-2"),
+                CreateSource("source-3"),
+                CreateSource("source-4"),
+            ],
+        };
+
+        var messages = new PromptBuilder().Build(request);
+
+        Assert.Contains("source-4", messages.UserPrompt);
+        Assert.Equal(4, messages.Diagnostics.EvidenceCount);
+    }
+
+    [Fact]
     public void Build_RespectsMaxPromptChars()
     {
         var request = CreateRequest() with

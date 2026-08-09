@@ -64,6 +64,15 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("useAnswerQualityGate")]
     public bool UseAnswerQualityGate { get; init; }
 
+    [JsonPropertyName("usePhase175QualityControls")]
+    public bool UsePhase175QualityControls { get; init; }
+
+    [JsonPropertyName("useCoverageAwareEvidenceSelection")]
+    public bool UseCoverageAwareEvidenceSelection { get; init; }
+
+    [JsonPropertyName("coverageAwareMaxEvidenceItems")]
+    public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
+
     [JsonPropertyName("llmProvider")]
     public LlmProviderSettings LlmProvider { get; init; } = new();
 

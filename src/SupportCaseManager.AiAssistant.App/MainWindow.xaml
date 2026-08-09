@@ -532,6 +532,16 @@
                             <CheckBox Content="{DynamicResource UseAnswerQualityGateLabel}"
                                       IsChecked="{Binding UseAnswerQualityGate}"
                                       Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UsePhase175QualityControlsLabel}"
+                                      IsChecked="{Binding UsePhase175QualityControls}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UseCoverageAwareEvidenceSelectionLabel}"
+                                      IsChecked="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource CoverageAwareMaxEvidenceItemsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="42"
+                                     Text="{Binding CoverageAwareMaxEvidenceItems, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UseCoverageAwareEvidenceSelection}" />
                             <TextBlock Text="ランキング方式" Margin="12,4,4,0" />
                             <ComboBox Width="100"
                                       IsEnabled="{Binding UseQuestionAwareEvidenceSelection}"

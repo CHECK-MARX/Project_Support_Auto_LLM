@@ -15,6 +15,9 @@ public sealed class AiAssistantSettingsTests
         Assert.True(settings.EnableTopNFallback);
         Assert.False(settings.UseQuestionAwareEvidenceSelection);
         Assert.False(settings.UseAnswerQualityGate);
+        Assert.False(settings.UsePhase175QualityControls);
+        Assert.False(settings.UseCoverageAwareEvidenceSelection);
+        Assert.Equal(5, settings.CoverageAwareMaxEvidenceItems);
         Assert.Equal(EvidenceRankingModes.Phase15, settings.EvidenceRankingMode);
     }
 
@@ -48,5 +51,37 @@ public sealed class AiAssistantSettingsTests
 
         Assert.NotNull(restored);
         Assert.True(restored.UseAnswerQualityGate);
+    }
+
+    [Fact]
+    public void UsePhase175QualityControls_OldJsonDefaultsOffAndRoundTrips()
+    {
+        var oldSettings = JsonSerializer.Deserialize<AiAssistantSettings>("{}");
+        var restored = JsonSerializer.Deserialize<AiAssistantSettings>(
+            JsonSerializer.Serialize(new AiAssistantSettings { UsePhase175QualityControls = true }));
+
+        Assert.NotNull(oldSettings);
+        Assert.False(oldSettings.UsePhase175QualityControls);
+        Assert.NotNull(restored);
+        Assert.True(restored.UsePhase175QualityControls);
+    }
+
+    [Fact]
+    public void CoverageAwareSelection_OldJsonDefaultsOffAndRoundTrips()
+    {
+        var oldSettings = JsonSerializer.Deserialize<AiAssistantSettings>("{}");
+        var restored = JsonSerializer.Deserialize<AiAssistantSettings>(
+            JsonSerializer.Serialize(new AiAssistantSettings
+            {
+                UseCoverageAwareEvidenceSelection = true,
+                CoverageAwareMaxEvidenceItems = 4,
+            }));
+
+        Assert.NotNull(oldSettings);
+        Assert.False(oldSettings.UseCoverageAwareEvidenceSelection);
+        Assert.Equal(5, oldSettings.CoverageAwareMaxEvidenceItems);
+        Assert.NotNull(restored);
+        Assert.True(restored.UseCoverageAwareEvidenceSelection);
+        Assert.Equal(4, restored.CoverageAwareMaxEvidenceItems);
     }
 }

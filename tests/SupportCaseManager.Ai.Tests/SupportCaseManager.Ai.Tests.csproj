@@ -28,6 +28,9 @@
     <None Include="..\..\tools\rag-lab\samples\phase17_answer_quality_cases.json"
           Link="TestData\phase17_answer_quality_cases.json"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\tools\rag-lab\samples\phase18_coverage_selection_cases.json"
+          Link="TestData\phase18_coverage_selection_cases.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

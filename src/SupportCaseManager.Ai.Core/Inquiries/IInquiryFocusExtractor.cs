@@ -4,5 +4,8 @@ namespace SupportCaseManager.Ai.Core.Inquiries;
 
 public interface IInquiryFocusExtractor
 {
-    InquiryFocus Extract(string inquiryText, CaseContext? caseContext = null);
+    InquiryFocus Extract(
+        string inquiryText,
+        CaseContext? caseContext = null,
+        bool usePhase175QualityControls = false);
 }

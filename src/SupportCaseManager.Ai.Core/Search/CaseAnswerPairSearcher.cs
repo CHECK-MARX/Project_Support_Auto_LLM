@@ -127,6 +127,8 @@ public sealed class CaseAnswerPairSearcher : ICaseAnswerPairSearcher
             QuestionText = match.Pair.QuestionText,
             InternalMemo = match.Pair.InternalMemo,
             MatchKind = match.Kind,
+            DocumentId = match.Pair.SourceFile,
+            SectionTitle = match.Kind,
         };
     }
 

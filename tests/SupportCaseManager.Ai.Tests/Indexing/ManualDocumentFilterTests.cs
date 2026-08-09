@@ -27,7 +27,7 @@ public sealed class ManualDocumentFilterTests
     {
         var result = ManualDocumentFilter.ClassifyTextFileContent(
             Path.Combine(@"D:\Manuals", fileName),
-            "# 手順書\r\n通常の説明文です。");
+            "2026-08-09 10:00:00 INFO build started\r\n2026-08-09 10:00:01 ERROR build failed\r\n2026-08-09 10:00:02 INFO build ended");
 
         Assert.Equal(ManualDocumentCategory.ContentExcludedText, result.Category);
     }
@@ -58,12 +58,19 @@ public sealed class ManualDocumentFilterTests
     [InlineData(".db")]
     [InlineData(".pdb")]
     [InlineData(".bak")]
-    [InlineData(".zip")]
     public void ClassifyFile_CountsOutOfScopeBinaryOrArchiveExtensions(string extension)
     {
         var result = ManualDocumentFilter.ClassifyFile($@"D:\Manuals\tool{extension}");
 
         Assert.Equal(ManualDocumentCategory.OutOfScopeBinaryOrArchive, result.Category);
+    }
+
+    [Fact]
+    public void ClassifyFile_RecognizesZipAsArchiveCandidate()
+    {
+        var result = ManualDocumentFilter.ClassifyFile(@"D:\Manuals\manuals.zip");
+
+        Assert.Equal(ManualDocumentCategory.ArchiveCandidate, result.Category);
     }
 
     [Theory]

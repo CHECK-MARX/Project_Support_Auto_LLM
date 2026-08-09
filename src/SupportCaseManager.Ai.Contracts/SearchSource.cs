@@ -54,4 +54,13 @@ public sealed record class SearchSource
 
     [JsonPropertyName("matchKind")]
     public string? MatchKind { get; init; }
+
+    [JsonPropertyName("documentId")]
+    public string? DocumentId { get; init; }
+
+    [JsonPropertyName("sectionTitle")]
+    public string? SectionTitle { get; init; }
+
+    [JsonPropertyName("contentHash")]
+    public string? ContentHash { get; init; }
 }

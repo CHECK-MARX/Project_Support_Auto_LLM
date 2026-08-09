@@ -35,6 +35,8 @@ public sealed record AnswerQualityEvaluationInput
     public IReadOnlyList<AnswerQualityEvidence> Evidence { get; init; } = [];
     public IReadOnlyList<string> ExistingInsufficientReasons { get; init; } = [];
     public TopicEntityCatalog Catalog { get; init; } = new();
+    public bool UseSeparatedCoverage { get; init; }
+    public IReadOnlyList<string> RequiredCoverage { get; init; } = [];
 }
 
 public sealed record AnswerTechnicalClaim

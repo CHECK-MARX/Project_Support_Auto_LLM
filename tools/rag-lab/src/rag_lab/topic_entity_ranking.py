@@ -113,6 +113,7 @@ class TopicEntityRankingRequest:
     requested_product: str | None = None
     requested_version: str | None = None
     max_items: int = 3
+    excluded_profile: TopicEntityProfile = TopicEntityProfile()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +135,8 @@ class TopicEntityRankingAssessment:
     source_trust_score: float
     version_score: float
     conflict_penalty: float
+    exclusion_penalty: float
+    explicitly_excluded: bool
     product_match: bool | None
     version_match: str
     topic_conflict: bool
@@ -506,13 +509,16 @@ def _assess_ranking_candidate(
     else:
         weighted.append((0.08, _clamp(candidate.base_search_score), True))
     penalty = _ranking_conflict_penalty(comparison, product_match, version_match)
+    from .phase175 import profiles_overlap
+    explicitly_excluded = profiles_overlap(request.excluded_profile, candidate.profile)
+    exclusion_penalty = -0.90 if explicitly_excluded and not candidate.manually_selected else 0.0
     coverage = _ranking_coverage(
         request.query_profile, candidate.profile, comparison, candidate.text
     )
     return TopicEntityRankingAssessment(
         candidate_index=candidate.candidate_index,
         candidate_id=candidate.candidate_id,
-        final_score=_clamp(_weighted_average(*weighted) + penalty),
+        final_score=_clamp(_weighted_average(*weighted) + penalty + exclusion_penalty),
         topic_score=topic_score,
         product_score=product_score,
         component_score=component_score,
@@ -527,6 +533,8 @@ def _assess_ranking_candidate(
         source_trust_score=trust,
         version_score=version_score,
         conflict_penalty=penalty,
+        exclusion_penalty=exclusion_penalty,
+        explicitly_excluded=explicitly_excluded,
         product_match=product_match,
         version_match=version_match,
         topic_conflict=comparison.topic_conflict,
@@ -535,7 +543,13 @@ def _assess_ranking_candidate(
         coverage=coverage,
         exact_technical_tokens=exact_tokens,
         text_fingerprint=hashlib.sha256(normalize_text(candidate.text).encode("utf-8")).hexdigest(),
-        selection_reason=_selection_reason(comparison, coverage, penalty),
+        selection_reason=(
+            "Explicitly excluded topic retained because the source was manually selected"
+            if explicitly_excluded and candidate.manually_selected
+            else f"Explicitly excluded topic; penalty={exclusion_penalty:.2f}"
+            if explicitly_excluded
+            else _selection_reason(comparison, coverage, penalty)
+        ),
     )
 
 

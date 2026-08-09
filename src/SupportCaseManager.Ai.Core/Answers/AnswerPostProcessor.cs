@@ -57,8 +57,11 @@ internal static partial class AnswerPostProcessor
 
             if (ShouldBuildEvidenceBackedFallback(request, customerReply, finalEvidence))
             {
-                var sourceEvidence = BuildEvidenceFromSources(request.Sources, request.Settings.MaxEvidenceItems);
-                finalEvidence = MergeEvidence(finalEvidence, sourceEvidence, request.Settings.MaxEvidenceItems).ToList();
+                var evidenceLimit = request.Settings.UseCoverageAwareEvidenceSelection
+                    ? request.Sources.Count
+                    : request.Settings.MaxEvidenceItems;
+                var sourceEvidence = BuildEvidenceFromSources(request.Sources, evidenceLimit);
+                finalEvidence = MergeEvidence(finalEvidence, sourceEvidence, evidenceLimit).ToList();
 
                 if (finalEvidence.Count > 0)
                 {

@@ -31,6 +31,8 @@ public sealed record TopicEntityRankingRequest
 {
     public TopicEntityProfile QueryProfile { get; init; } = new();
 
+    public TopicEntityProfile ExcludedProfile { get; init; } = new();
+
     public IReadOnlyList<string> TechnicalTokens { get; init; } = [];
 
     public string? RequestedProduct { get; init; }
@@ -77,6 +79,10 @@ public sealed record TopicEntityRankingAssessment
     public double VersionScore { get; init; }
 
     public double ConflictPenalty { get; init; }
+
+    public double ExclusionPenalty { get; init; }
+
+    public bool ExplicitlyExcluded { get; init; }
 
     public bool? ProductMatch { get; init; }
 
