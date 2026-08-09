@@ -176,3 +176,27 @@ def test_runner_reads_and_writes_only_generated_reports(tmp_path: Path) -> None:
             candidate_path="after.json",
             output_name="before",
         )
+
+
+def test_runner_accepts_tracked_synthetic_baseline(tmp_path: Path) -> None:
+    baselines = tmp_path / "baselines"
+    generated = tmp_path / "reports" / "generated"
+    baselines.mkdir()
+    generated.mkdir(parents=True)
+    (baselines / "reference.json").write_text(
+        json.dumps(_report([_row()])), encoding="utf-8"
+    )
+    (generated / "candidate.json").write_text(
+        json.dumps(_report([_row()])), encoding="utf-8"
+    )
+
+    output = run_regression_comparison(
+        tmp_path,
+        baseline_path="baselines/reference.json",
+        candidate_path="candidate.json",
+        output_name="tracked-result",
+    )
+
+    assert output.report["status"] == "passed"
+    assert output.report["baseline_file_name"] == "reference.json"
+    assert all(path.parent == generated for path in output.files.values())

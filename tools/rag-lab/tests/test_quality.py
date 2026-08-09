@@ -61,6 +61,29 @@ def test_recommendation_prefers_safe_filter_when_quality_is_equal() -> None:
     )
 
 
+def test_recommendation_does_not_change_with_timing_noise() -> None:
+    rows = [
+        _row(
+            chunk_strategy="paragraph",
+            search_method="bm25",
+            reranker="none",
+            mean_search_time_ms=0.1,
+        ),
+        _row(
+            chunk_strategy="fixed",
+            search_method="bm25",
+            reranker="none",
+            mean_search_time_ms=100.0,
+        ),
+    ]
+
+    _, gate = apply_quality_gate(
+        rows, QualityGateThresholds(max_mean_search_time_ms=None), preferred_top_k=3
+    )
+
+    assert gate["recommended_configuration"]["chunk_strategy"] == "fixed"
+
+
 def test_quality_gate_fails_when_no_candidate_passes() -> None:
     _, gate = apply_quality_gate(
         [_row(mean_recall_at_k=0.0)],

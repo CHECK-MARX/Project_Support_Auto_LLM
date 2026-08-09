@@ -49,4 +49,11 @@ jobs:
         run: python -m pytest
 
       - name: Synthetic quality gate
-        run: python run_rag_lab.py verify
+        run: python run_rag_lab.py verify --report-name ci-candidate
+
+      - name: Synthetic regression baseline
+        run: >-
+          python run_rag_lab.py compare
+          --baseline baselines/phase8-reference.json
+          --candidate ci-candidate.json
+          --output-name ci-regression

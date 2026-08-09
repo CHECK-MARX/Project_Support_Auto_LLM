@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 7)
+## Implemented scope (Phases 2 through 8)
 
 Implemented in this phase:
 
@@ -32,6 +32,7 @@ Implemented in this phase:
 - A `verify` command suitable for a local quality check or CI job
 - A path-filtered GitHub Actions workflow for tests and the synthetic quality gate
 - Offline regression comparison between two generated evaluation reports
+- A reviewed synthetic reference baseline enforced by GitHub Actions
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -155,7 +156,8 @@ quality.
 `.github/workflows/rag-lab.yml` runs on Windows with Python 3.13 when files below
 `tools/rag-lab/`, its workflow definition, or the related `.gitignore` rules are
 changed. It installs only `requirements.txt`, runs all unit tests, and then runs
-`python run_rag_lab.py verify` against synthetic data. It can also be started
+`python run_rag_lab.py verify` against synthetic data. It then compares the
+candidate report with `baselines/phase8-reference.json`. It can also be started
 manually with `workflow_dispatch`.
 
 The existing .NET CI workflow remains separate and unchanged. The RAG workflow
@@ -180,11 +182,16 @@ not match. `--max-quality-drop` and `--max-count-increase` provide explicit
 non-negative tolerances. Use `--allow-input-change` only when comparing different
 synthetic datasets intentionally.
 
-JSON and Markdown results are written below `reports/generated/`. Baseline and
-candidate inputs must also be existing JSON files in that directory. Absolute
-paths and document text are not copied into the regression report. Timing deltas
-are recorded for investigation but do not affect pass/fail because they vary by
-machine and current load.
+JSON and Markdown results are written below `reports/generated/`. Candidate inputs
+must be existing JSON files in that directory. A baseline can be another generated
+report or a reviewed file below `baselines/`. Absolute paths and document text are
+not copied into the regression report. Timing deltas are recorded for investigation
+but do not affect pass/fail because they vary by machine and current load.
+
+The tracked Phase 8 baseline contains only the recommended synthetic configuration
+and its deterministic quality/count metrics. New candidate configurations are
+informational, while degradation or removal of the reference configuration fails
+CI. Baseline updates must be reviewed as intentional quality-policy changes.
 
 ## Codex evidence JSON
 

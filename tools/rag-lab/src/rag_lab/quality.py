@@ -133,6 +133,9 @@ def apply_quality_gate(
     if not candidates:
         raise ValueError("preferred_top_k is not present in evaluation summary")
     filter_preference = {"product_and_version": 0, "product": 1, "none": 2}
+    search_preference = {"bm25": 0, "keyword": 1, "hybrid": 2, "hash_embedding": 3}
+    reranker_preference = {"none": 0, "lexical": 1}
+    chunk_preference = {"fixed": 0, "paragraph": 1, "heading": 2, "structured": 3}
     ranked = sorted(
         candidates,
         key=lambda row: (
@@ -145,7 +148,9 @@ def apply_quality_gate(
             int(row.get("product_confusion_count", 0)),
             int(row.get("version_mismatch_count", 0)),
             filter_preference.get(str(row.get("filter_mode")), 99),
-            float(row.get("mean_search_time_ms", 0.0)),
+            search_preference.get(str(row.get("search_method")), 99),
+            reranker_preference.get(str(row.get("reranker")), 99),
+            chunk_preference.get(str(row.get("chunk_strategy")), 99),
             str(row.get("chunk_strategy", "")),
             str(row.get("search_method", "")),
             str(row.get("reranker", "")),

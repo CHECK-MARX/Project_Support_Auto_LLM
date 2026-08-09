@@ -5,7 +5,13 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
-from .io import DataValidationError, LabPaths, read_generated_json
+from .io import (
+    DataValidationError,
+    LabPaths,
+    PathValidationError,
+    read_generated_json,
+    read_json,
+)
 from .reporting import write_regression_reports
 
 
@@ -267,7 +273,14 @@ def run_regression_comparison(
     }
     if Path(output_json_name).name.casefold() in input_names:
         raise ValueError("regression output must not overwrite an input report")
-    baseline = read_generated_json(paths, baseline_path)
+    try:
+        baseline = read_generated_json(paths, baseline_path)
+    except PathValidationError as generated_error:
+        baseline_paths = LabPaths.create(lab_root, input_roots=("baselines",))
+        try:
+            baseline = read_json(baseline_paths, baseline_path)
+        except PathValidationError:
+            raise generated_error
     candidate = read_generated_json(paths, candidate_path)
     report = compare_reports(
         baseline,
