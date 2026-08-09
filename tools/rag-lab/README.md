@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 9)
+## Implemented scope (Phases 2 through 11)
 
 Implemented in this phase:
 
@@ -36,6 +36,8 @@ Implemented in this phase:
 - A reviewed synthetic reference baseline enforced by GitHub Actions
 - Strict tracked-baseline validation that rejects source text, paths, timings, and
   unexpected fields
+- Review-only baseline candidate generation from the quality gate recommendation
+- Strict end-to-end review of generated baseline candidates against tracked policy
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -175,6 +177,11 @@ Only the compact synthetic schema is accepted. Source text, absolute or relative
 paths, query details, timing values, unknown fields, malformed fingerprints, and
 out-of-range metrics cause validation to fail.
 
+After the quality gate, CI exercises safe candidate generation and strictly reviews
+that compact candidate against the tracked baseline. The candidate and review
+reports remain below `reports/generated/`; CI does not copy them into the tracked
+baseline directory or publish them.
+
 The existing .NET CI workflow remains separate and unchanged. The RAG workflow
 does not load customer data, call a network API from the evaluation tool, publish
 generated reports, or modify WPF projects and production indexes.
@@ -207,6 +214,36 @@ The tracked Phase 8 baseline contains only the recommended synthetic configurati
 and its deterministic quality/count metrics. New candidate configurations are
 informational, while degradation or removal of the reference configuration fails
 CI. Baseline updates must be reviewed as intentional quality-policy changes.
+
+## Baseline candidate
+
+Create a compact review candidate from a passing generated evaluation report:
+
+```powershell
+python run_rag_lab.py baseline-candidate --source ci-candidate.json --output-name next-reference
+```
+
+The command selects only the quality gate's recommended configuration and copies
+only aggregate metrics and normalized input fingerprints allowed by the strict
+baseline schema. Query text, result details, paths, timestamps, and performance
+timings are not copied. It refuses failed quality gates, missing recommendations,
+source paths outside `reports/generated/`, and source/output name collisions.
+
+The result is written to `reports/generated/next-reference.json`. Review its
+synthetic classification, fingerprints, configuration, and metrics before manually
+copying it into `baselines/`. The command never updates a tracked baseline itself.
+
+Run the strict candidate review before that manual copy:
+
+```powershell
+python run_rag_lab.py review-baseline --baseline baselines/phase8-reference.json --candidate next-reference.json --output-name next-reference-review
+```
+
+Both inputs must conform to the compact baseline schema. The command fails when
+quality decreases, an error count increases, the reference configuration is
+missing, fingerprints differ, an unexpected field is present, or either input
+escapes its allowed directory. JSON and Markdown review reports are written only
+below `reports/generated/`.
 
 ## Codex evidence JSON
 

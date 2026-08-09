@@ -8,7 +8,10 @@ import pytest
 from rag_lab.io import DataValidationError, PathValidationError
 from rag_lab.regression import (
     RegressionThresholds,
+    build_baseline_candidate,
     compare_reports,
+    run_baseline_candidate_generation,
+    run_baseline_candidate_review,
     run_regression_comparison,
     run_tracked_baseline_validation,
     validate_tracked_baseline,
@@ -69,6 +72,31 @@ def _tracked_baseline() -> dict[str, object]:
         ],
         "summary": [row],
     }
+
+
+def _generated_report(*, gate_status: str = "passed") -> dict[str, object]:
+    report = _tracked_baseline()
+    row = report["summary"][0]  # type: ignore[index]
+    row.update(  # type: ignore[union-attr]
+        chunk_generation_time_ms=1.0,
+        index_build_time_ms=2.0,
+        mean_search_time_ms=3.0,
+        quality_gate_passed=gate_status == "passed",
+        quality_gate_violations=[],
+    )
+    report["quality_gate"] = {
+        "status": gate_status,
+        "recommended_configuration": {
+            "chunk_strategy": row["chunk_strategy"],  # type: ignore[index]
+            "search_method": row["search_method"],  # type: ignore[index]
+            "reranker": row["reranker"],  # type: ignore[index]
+            "filter_mode": row["filter_mode"],  # type: ignore[index]
+            "top_k": row["top_k"],  # type: ignore[index]
+        },
+    }
+    report["generated_at_utc"] = "2026-01-01T00:00:00+00:00"
+    report["details"] = [{"query": "synthetic detail that must not be copied"}]
+    return report
 
 
 def test_comparison_reports_improvement_without_timing_failure() -> None:
@@ -323,4 +351,164 @@ def test_baseline_validation_runner_rejects_files_outside_baselines(
         run_tracked_baseline_validation(
             tmp_path,
             baseline_path=outside,
+        )
+
+
+def test_baseline_candidate_copies_only_safe_recommended_summary() -> None:
+    candidate = build_baseline_candidate(
+        _generated_report(),
+        report_name="review-candidate",
+    )
+
+    assert set(candidate) == {
+        "schema_version",
+        "data_classification",
+        "report_name",
+        "input_fingerprints",
+        "summary",
+    }
+    assert candidate["report_name"] == "review-candidate"
+    row = candidate["summary"][0]
+    assert "mean_search_time_ms" not in row
+    assert "quality_gate_passed" not in row
+    assert "details" not in candidate
+    validate_tracked_baseline(candidate)
+
+
+def test_baseline_candidate_requires_passing_gate_and_matching_row() -> None:
+    with pytest.raises(DataValidationError, match="passing quality gate"):
+        build_baseline_candidate(
+            _generated_report(gate_status="failed"),
+            report_name="review-candidate",
+        )
+
+    report = _generated_report()
+    recommendation = report["quality_gate"]["recommended_configuration"]  # type: ignore[index]
+    recommendation["search_method"] = "keyword"  # type: ignore[index]
+    with pytest.raises(DataValidationError, match="not present"):
+        build_baseline_candidate(report, report_name="review-candidate")
+
+    report = _generated_report()
+    report["summary"][0]["quality_gate_passed"] = False  # type: ignore[index]
+    with pytest.raises(DataValidationError, match="row-level quality gate"):
+        build_baseline_candidate(report, report_name="review-candidate")
+
+
+def test_baseline_candidate_runner_writes_only_generated_output(
+    tmp_path: Path,
+) -> None:
+    generated = tmp_path / "reports" / "generated"
+    generated.mkdir(parents=True)
+    source = generated / "evaluation.json"
+    source.write_text(json.dumps(_generated_report()), encoding="utf-8")
+
+    output = run_baseline_candidate_generation(
+        tmp_path,
+        source_path="evaluation.json",
+        output_name="review-candidate",
+    )
+
+    assert output.file == generated / "review-candidate.json"
+    assert output.file.is_file()
+    assert not (tmp_path / "baselines" / "review-candidate.json").exists()
+    assert "synthetic detail that must not be copied" not in output.file.read_text(
+        encoding="utf-8"
+    )
+
+    with pytest.raises(PathValidationError, match="outside"):
+        run_baseline_candidate_generation(
+            tmp_path,
+            source_path=tmp_path / "outside.json",
+        )
+
+    with pytest.raises(ValueError, match="must not overwrite"):
+        run_baseline_candidate_generation(
+            tmp_path,
+            source_path="evaluation.json",
+            output_name="evaluation",
+        )
+
+
+def test_baseline_candidate_review_passes_and_reports_regression(
+    tmp_path: Path,
+) -> None:
+    baselines = tmp_path / "baselines"
+    generated = tmp_path / "reports" / "generated"
+    baselines.mkdir()
+    generated.mkdir(parents=True)
+    baseline = _tracked_baseline()
+    (baselines / "reference.json").write_text(
+        json.dumps(baseline), encoding="utf-8"
+    )
+    candidate_path = generated / "candidate.json"
+    candidate_path.write_text(json.dumps(baseline), encoding="utf-8")
+
+    output = run_baseline_candidate_review(
+        tmp_path,
+        baseline_path="baselines/reference.json",
+        candidate_path="candidate.json",
+        output_name="candidate-review",
+    )
+
+    assert output.report["status"] == "passed"
+    assert output.report["counts"]["unchanged"] == 1
+    assert set(output.files) == {"json", "markdown"}
+    assert all(path.parent == generated for path in output.files.values())
+
+    candidate = json.loads(json.dumps(baseline))
+    candidate["summary"][0]["mrr"] = 0.5
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    regressed = run_baseline_candidate_review(
+        tmp_path,
+        baseline_path="baselines/reference.json",
+        candidate_path="candidate.json",
+        output_name="regressed-review",
+    )
+
+    assert regressed.report["status"] == "failed"
+    assert regressed.report["counts"]["regressed"] == 1
+
+
+def test_baseline_candidate_review_rejects_unsafe_candidate_and_paths(
+    tmp_path: Path,
+) -> None:
+    baselines = tmp_path / "baselines"
+    generated = tmp_path / "reports" / "generated"
+    baselines.mkdir()
+    generated.mkdir(parents=True)
+    baseline = _tracked_baseline()
+    (baselines / "reference.json").write_text(
+        json.dumps(baseline), encoding="utf-8"
+    )
+    unsafe = dict(baseline)
+    unsafe["details"] = [{"query": "must not be accepted"}]
+    (generated / "unsafe.json").write_text(json.dumps(unsafe), encoding="utf-8")
+
+    with pytest.raises(DataValidationError, match="unexpected fields"):
+        run_baseline_candidate_review(
+            tmp_path,
+            baseline_path="baselines/reference.json",
+            candidate_path="unsafe.json",
+        )
+
+    with pytest.raises(PathValidationError, match="outside"):
+        run_baseline_candidate_review(
+            tmp_path,
+            baseline_path=tmp_path / "outside.json",
+            candidate_path="unsafe.json",
+        )
+
+    with pytest.raises(PathValidationError, match="outside"):
+        run_baseline_candidate_review(
+            tmp_path,
+            baseline_path="baselines/reference.json",
+            candidate_path=tmp_path / "outside.json",
+        )
+
+    with pytest.raises(ValueError, match="must not overwrite"):
+        run_baseline_candidate_review(
+            tmp_path,
+            baseline_path="baselines/reference.json",
+            candidate_path="unsafe.json",
+            output_name="unsafe",
         )

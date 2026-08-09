@@ -1,6 +1,6 @@
 # Reports
 
-Phases 3 through 8 write generated JSON, CSV, and Markdown comparison reports,
+Phases 3 through 11 write generated JSON, CSV, and Markdown comparison reports,
 regression comparisons, and Codex evidence JSON under `reports/generated/`.
 Phase 5 reports include the
 quality-gate result, recommended configuration, required/excluded-term metrics,
@@ -13,5 +13,11 @@ file names only; source paths and document text are not copied.
 
 Phase 8 adds a compact reviewed baseline under `../baselines/`. It is read-only at
 runtime; candidate and regression outputs remain in this generated directory.
+
+Phase 10 creates strict, review-only baseline candidates here from a passing
+evaluation report. It does not copy candidates into `../baselines/`.
+
+Phase 11 writes strict candidate-review JSON and Markdown here after validating
+both the tracked baseline and generated compact candidate.
 
 No report writer may write outside `reports/generated/`.

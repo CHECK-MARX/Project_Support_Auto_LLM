@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .regression import run_regression_comparison, run_tracked_baseline_validation
+from .regression import (
+    run_baseline_candidate_generation,
+    run_baseline_candidate_review,
+    run_regression_comparison,
+    run_tracked_baseline_validation,
+)
 from .runner import run_evaluation, run_evidence
 
 
@@ -36,6 +41,19 @@ def _parser() -> argparse.ArgumentParser:
         help="validate a tracked synthetic baseline against the compact safe schema",
     )
     validate_baseline.add_argument("--baseline", required=True)
+    baseline_candidate = subcommands.add_parser(
+        "baseline-candidate",
+        help="create a review-only compact baseline candidate from a generated report",
+    )
+    baseline_candidate.add_argument("--source", required=True)
+    baseline_candidate.add_argument("--output-name", default="baseline-candidate")
+    review_baseline = subcommands.add_parser(
+        "review-baseline",
+        help="strictly compare a safe generated candidate with a tracked baseline",
+    )
+    review_baseline.add_argument("--baseline", required=True)
+    review_baseline.add_argument("--candidate", required=True)
+    review_baseline.add_argument("--output-name", default="baseline-review")
     evidence = subcommands.add_parser(
         "evidence", help="write top evidence in the future Codex input shape"
     )
@@ -120,6 +138,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Fingerprints: {output.fingerprint_count}")
         print(f"Configurations: {output.configuration_count}")
         return 0
+    if args.command == "baseline-candidate":
+        output = run_baseline_candidate_generation(
+            lab_root,
+            source_path=args.source,
+            output_name=args.output_name,
+        )
+        print("Baseline candidate: created and validated")
+        print(f"json: {output.file.relative_to(lab_root)}")
+        print("Review is required before copying it into baselines/.")
+        return 0
+    if args.command == "review-baseline":
+        output = run_baseline_candidate_review(
+            lab_root,
+            baseline_path=args.baseline,
+            candidate_path=args.candidate,
+            output_name=args.output_name,
+        )
+        counts = output.report["counts"]
+        print(f"Baseline candidate review: {output.report['status']}")
+        print(
+            f"Regressed: {counts['regressed']}, "
+            f"missing: {counts['missing']}, improved: {counts['improved']}"
+        )
+        for format_name, path in output.files.items():
+            print(f"{format_name}: {path.relative_to(lab_root)}")
+        return 0 if output.report["status"] == "passed" else 1
     if args.command == "verify":
         output = run_evaluation(
             lab_root,

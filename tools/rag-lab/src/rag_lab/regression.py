@@ -12,6 +12,7 @@ from .io import (
     PathValidationError,
     read_generated_json,
     read_json,
+    write_json_report,
 )
 from .reporting import write_regression_reports
 
@@ -47,18 +48,20 @@ _BASELINE_ROOT_FIELDS = {
     "input_fingerprints",
     "summary",
 }
-_FINGERPRINT_FIELDS = {"file_name", "size_bytes", "sha256"}
+_FINGERPRINT_FIELD_ORDER = ("file_name", "size_bytes", "sha256")
+_FINGERPRINT_FIELDS = set(_FINGERPRINT_FIELD_ORDER)
 _BASELINE_COUNT_METRICS = (
     "document_count",
     "chunk_count",
     "query_count",
     *_COUNT_METRICS,
 )
-_BASELINE_SUMMARY_FIELDS = {
+_BASELINE_SUMMARY_FIELD_ORDER = (
     *_IDENTITY_FIELDS,
     *_QUALITY_METRICS,
     *_BASELINE_COUNT_METRICS,
-}
+)
+_BASELINE_SUMMARY_FIELDS = set(_BASELINE_SUMMARY_FIELD_ORDER)
 _SAFE_REPORT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _ALLOWED_IDENTITY_VALUES = {
@@ -96,6 +99,18 @@ class BaselineValidationOutput:
     file: Path
     fingerprint_count: int
     configuration_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineCandidateOutput:
+    candidate: dict[str, Any]
+    file: Path
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineReviewOutput:
+    report: dict[str, Any]
+    files: dict[str, Path]
 
 
 def _require_exact_fields(
@@ -203,6 +218,106 @@ def run_tracked_baseline_validation(
         fingerprint_count=fingerprint_count,
         configuration_count=configuration_count,
     )
+
+
+def build_baseline_candidate(report: Any, *, report_name: str) -> dict[str, Any]:
+    if not isinstance(report, Mapping):
+        raise DataValidationError("evaluation report root must be an object")
+    if not _SAFE_REPORT_NAME.fullmatch(report_name):
+        raise DataValidationError("baseline candidate report_name is not safe")
+    if report.get("data_classification") != "synthetic":
+        raise DataValidationError("baseline candidate source must be synthetic")
+    quality_gate = report.get("quality_gate")
+    if not isinstance(quality_gate, Mapping):
+        raise DataValidationError("evaluation report quality_gate must be an object")
+    if quality_gate.get("status") != "passed":
+        raise DataValidationError("baseline candidate requires a passing quality gate")
+    recommended = quality_gate.get("recommended_configuration")
+    if not isinstance(recommended, Mapping):
+        raise DataValidationError(
+            "quality_gate recommended_configuration must be an object"
+        )
+
+    rows = _rows_by_identity(
+        _validated_summary(report, "evaluation"), "evaluation"
+    )
+    recommended_identity = _identity(recommended, "recommended configuration")
+    selected = rows.get(recommended_identity)
+    if selected is None:
+        raise DataValidationError(
+            "recommended configuration is not present in evaluation summary"
+        )
+    if selected.get("quality_gate_passed") is not True:
+        raise DataValidationError(
+            "recommended configuration must pass its row-level quality gate"
+        )
+
+    fingerprints = report.get("input_fingerprints")
+    try:
+        compact_fingerprints = [
+            {field: item[field] for field in _FINGERPRINT_FIELD_ORDER}
+            for item in fingerprints
+        ]
+        compact_row = {
+            field: selected[field] for field in _BASELINE_SUMMARY_FIELD_ORDER
+        }
+    except (KeyError, TypeError) as error:
+        raise DataValidationError(
+            "evaluation report cannot be reduced to the safe baseline schema"
+        ) from error
+
+    candidate = {
+        "schema_version": 3,
+        "data_classification": "synthetic",
+        "report_name": report_name,
+        "input_fingerprints": compact_fingerprints,
+        "summary": [compact_row],
+    }
+    validate_tracked_baseline(candidate)
+    return candidate
+
+
+def run_baseline_candidate_generation(
+    lab_root: str | Path,
+    *,
+    source_path: str | Path,
+    output_name: str = "baseline-candidate",
+) -> BaselineCandidateOutput:
+    paths = LabPaths.create(lab_root)
+    output_file_name = f"{output_name}.json"
+    if Path(source_path).name.casefold() == Path(output_file_name).name.casefold():
+        raise ValueError("baseline candidate must not overwrite its source report")
+    report = read_generated_json(paths, source_path)
+    candidate = build_baseline_candidate(report, report_name=output_name)
+    file = write_json_report(paths, output_file_name, candidate)
+    return BaselineCandidateOutput(candidate=candidate, file=file)
+
+
+def run_baseline_candidate_review(
+    lab_root: str | Path,
+    *,
+    baseline_path: str | Path,
+    candidate_path: str | Path,
+    output_name: str = "baseline-review",
+) -> BaselineReviewOutput:
+    paths = LabPaths.create(lab_root)
+    baseline_paths = LabPaths.create(lab_root, input_roots=("baselines",))
+    output_json_name = f"{output_name}.json"
+    if Path(candidate_path).name.casefold() == Path(output_json_name).name.casefold():
+        raise ValueError("baseline review must not overwrite its candidate")
+
+    baseline = read_json(baseline_paths, baseline_path)
+    candidate = read_generated_json(paths, candidate_path)
+    validate_tracked_baseline(baseline)
+    validate_tracked_baseline(candidate)
+    report = compare_reports(
+        baseline,
+        candidate,
+        baseline_file_name=Path(baseline_path).name,
+        candidate_file_name=Path(candidate_path).name,
+    )
+    files = write_regression_reports(paths, output_name, report)
+    return BaselineReviewOutput(report=report, files=files)
 
 
 def _validated_summary(report: Any, label: str) -> list[Mapping[str, Any]]:

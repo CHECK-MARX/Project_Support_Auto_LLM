@@ -17,3 +17,20 @@ python run_rag_lab.py validate-baseline --baseline baselines/phase8-reference.js
 
 Regression comparison applies the same strict validation automatically whenever
 its baseline is loaded from this directory.
+
+Generate a review candidate from a passing report without writing here:
+
+```powershell
+python run_rag_lab.py baseline-candidate --source ci-candidate.json --output-name next-reference
+```
+
+The candidate is created below `reports/generated/`. Moving it into this directory
+is a separate, deliberate review action.
+
+Review that compact candidate against the tracked reference first:
+
+```powershell
+python run_rag_lab.py review-baseline --baseline baselines/phase8-reference.json --candidate next-reference.json --output-name next-reference-review
+```
+
+The review is strict and never writes into this directory.
