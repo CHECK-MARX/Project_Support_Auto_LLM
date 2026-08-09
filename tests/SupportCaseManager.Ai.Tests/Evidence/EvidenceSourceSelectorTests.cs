@@ -32,6 +32,33 @@ public sealed class EvidenceSourceSelectorTests
         Assert.Equal(["gui", "cli"], selected.Select(static source => source.SourceId));
     }
 
+    [Fact]
+    public void Select_KeepsThreeLongDistinctSectionsFromSameUrl()
+    {
+        var sources = new[]
+        {
+            CreateSource("overview", "Perforce_QAC_Manual", $"Validate Stream overview {new string('A', 1100)}", 0.92) with { SectionTitle = "Stream overview", Url = "file:///manual.pdf" },
+            CreateSource("setup", "Perforce_QAC_Manual", $"Validate Stream setup {new string('B', 1100)}", 0.91) with { SectionTitle = "Stream setup", Url = "file:///manual.pdf" },
+            CreateSource("verify", "Perforce_QAC_Manual", $"Validate Stream verification {new string('C', 1100)}", 0.90) with { SectionTitle = "Stream verification", Url = "file:///manual.pdf" },
+        };
+        var facts = new FactResolutionResult
+        {
+            Classification = new QuestionClassificationResult
+            {
+                QuestionTypes = [QuestionTypes.HowToQuestion, QuestionTypes.ConfigurationQuestion],
+            },
+        };
+
+        var selected = EvidenceSourceSelector.Select(
+            sources,
+            new CaseContext { ProductName = "HelixQAC" },
+            facts,
+            maxItems: 3,
+            maxPromptChars: 6000);
+
+        Assert.Equal(["overview", "setup", "verify"], selected.Select(static source => source.SourceId));
+    }
+
     private static SearchSource CreateSource(string id, string title, string text, double score)
     {
         return new SearchSource

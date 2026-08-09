@@ -336,6 +336,23 @@ public sealed class GoldenQuestionFactTests
     }
 
     [Fact]
+    public void FactResolver_StreamProcedureQuestionDoesNotRequireVersionFactCatalog()
+    {
+        using var temp = new TempDirectory();
+
+        var result = new FactResolver().Resolve(
+            "HelixQAC",
+            temp.Path,
+            "Validateのストリームはどのような機能でしょうか？またそのストリームの設定方法について教えてください。");
+
+        Assert.Empty(result.CandidateFacts);
+        Assert.Empty(result.ResolvedFacts);
+        Assert.Contains(QuestionTypes.HowToQuestion, result.Classification.QuestionTypes);
+        Assert.Contains(QuestionTypes.ConfigurationQuestion, result.Classification.QuestionTypes);
+        Assert.Equal(AnswerReadiness.NeedsConfirmation, result.AnswerReadiness);
+    }
+
+    [Fact]
     public async Task PromptBuilder_IncludesResolvedFacts()
     {
         using var temp = new TempDirectory();

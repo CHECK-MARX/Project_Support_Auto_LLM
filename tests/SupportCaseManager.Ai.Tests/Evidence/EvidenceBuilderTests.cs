@@ -84,19 +84,18 @@ public class EvidenceBuilderTests
     }
 
     [Fact]
-    public void BuildEvidence_RemovesSecondChunkFromSameUrl()
+    public void BuildEvidence_KeepsDistinctSectionsFromSameUrl()
     {
         var builder = new EvidenceBuilder();
         var request = CreateRequest(
             [
-                CreateSource("source-1", 0.9) with { Title = "Section A", Text = "alpha content", Url = "https://example.test/doc/" },
-                CreateSource("source-2", 0.8) with { Title = "Section B", Text = "beta content", Url = "https://example.test/doc" },
+                CreateSource("source-1", 0.9) with { Title = "Manual", SectionTitle = "Overview", Text = "alpha overview content", Url = "https://example.test/doc/" },
+                CreateSource("source-2", 0.8) with { Title = "Manual", SectionTitle = "Setup", Text = "beta setup content", Url = "https://example.test/doc" },
             ]);
 
         var evidence = builder.BuildEvidence(request);
 
-        var item = Assert.Single(evidence);
-        Assert.Equal("source-1", item.SourceId);
+        Assert.Equal(["source-1", "source-2"], evidence.Select(static item => item.SourceId));
     }
 
     [Fact]

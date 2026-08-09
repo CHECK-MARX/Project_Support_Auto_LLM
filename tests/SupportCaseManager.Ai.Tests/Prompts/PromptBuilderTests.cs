@@ -39,6 +39,17 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void Build_InstructsMissingRecipientPlaceholdersAndRejectsToyoInference()
+    {
+        var messages = new PromptBuilder().Build(CreateRequest());
+
+        Assert.Contains("[会社名]", messages.SystemPrompt);
+        Assert.Contains("[お客様名] 様", messages.SystemPrompt);
+        Assert.Contains("TOYO", messages.SystemPrompt);
+        Assert.DoesNotContain("担当者名が未設定の場合は「ご担当者様」", messages.SystemPrompt);
+    }
+
+    [Fact]
     public void Build_UserPromptIncludesInquiryCaseAndEvidence()
     {
         var builder = new PromptBuilder();

@@ -27,8 +27,6 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
         var questionTypes = request.FactResolution?.Classification.QuestionTypes ?? [];
         var charBudget = Math.Max(600, request.Settings.MaxPromptChars / 2);
         var selected = new List<SearchSource>();
-        var urlCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        var titles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var usedChars = 0;
 
         foreach (var source in request.Sources
@@ -39,24 +37,6 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             if (selected.Count >= maxItems)
             {
                 break;
-            }
-
-            var normalizedTitle = source.Title.Trim();
-            if (!string.IsNullOrWhiteSpace(normalizedTitle) && !titles.Add(normalizedTitle))
-            {
-                continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(source.Url))
-            {
-                var normalizedUrl = NormalizeUrl(source.Url);
-                var count = urlCounts.GetValueOrDefault(normalizedUrl);
-                if (count >= 1)
-                {
-                    continue;
-                }
-
-                urlCounts[normalizedUrl] = count + 1;
             }
 
             var excerpt = BuildExcerpt(source.Text);
@@ -183,8 +163,6 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
     {
         return sourceType is "ExactPastAnswer" or "PastAnswer" or "PastCaseNote";
     }
-
-    private static string NormalizeUrl(string value) => value.Trim().TrimEnd('/');
 
     private static bool IsNearDuplicate(string left, string right)
     {

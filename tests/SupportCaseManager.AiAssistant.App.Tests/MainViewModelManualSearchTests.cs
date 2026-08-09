@@ -258,12 +258,66 @@ public sealed class MainViewModelManualSearchTests
 
         Assert.Equal("qwen3:4b", request.Settings.LlmProvider.ChatModel);
         Assert.Equal(90, request.Settings.LlmProvider.TimeoutSeconds);
-        Assert.Equal(3500, request.Settings.MaxPromptChars);
+        Assert.Equal(6000, request.Settings.MaxPromptChars);
         Assert.Equal(2, request.Settings.MaxEvidenceItems);
-        Assert.Equal(320, request.Settings.LlmProvider.MaxOutputTokens);
+        Assert.Equal(600, request.Settings.LlmProvider.MaxOutputTokens);
         Assert.Empty(request.Case.Notes);
         Assert.True(services.ViewModel.PromptApproxChars < 2000);
         Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+    }
+
+    [Fact]
+    public async Task BuildDraftRequest_StreamOverviewAndSetupKeepsThreeManualEvidenceItems()
+    {
+        const string manualPath = @"D:\Manuals\Perforce-QAC-Manual.pdf";
+        var sources = Enumerable.Range(1, 36)
+            .Select(index => CreateManualSource() with
+            {
+                SourceId = $"stream-{index:00}",
+                ProductName = "HelixQAC",
+                Title = "Perforce-QAC-Manual",
+                SectionTitle = index switch
+                {
+                    1 => "Stream overview",
+                    2 => "Stream setup",
+                    3 => "Stream verification",
+                    _ => $"Other section {index}",
+                },
+                Text = index switch
+                {
+                    1 => $"Validate Stream feature overview and purpose. {new string('A', 1100)}",
+                    2 => $"Validate Stream configuration and project setup. {new string('B', 1100)}",
+                    3 => $"Validate Stream association and verification. {new string('C', 1100)}",
+                    _ => $"Validate reference {index}. {new string((char)('D' + (index % 20)), 1100)}",
+                },
+                FilePath = manualPath,
+                Score = index <= 3 ? 0.70 - (index * 0.001) : 0.60 - (index * 0.001),
+            })
+            .ToList();
+        var services = CreateViewModel(sources);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "gemma4:31b";
+        services.ViewModel.MaxPromptChars = 6000;
+        services.ViewModel.MaxOutputTokens = 800;
+        services.ViewModel.MaxEvidenceItems = 3;
+        services.ViewModel.AvailableModels.Add("qwen3:4b");
+        services.ViewModel.InquiryText = "Validateのストリームはどのような機能でしょうか？またそのストリームの設定方法について教えてください。";
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        var request = InvokePrivate<AnswerDraftRequest>(services.ViewModel, "BuildDraftRequest");
+        var prompt = new PromptBuilder().Build(request);
+
+        Assert.Equal(36, services.ViewModel.SearchResultCount);
+        Assert.Equal(3, request.Sources.Count);
+        Assert.InRange(request.Sources.Count, 2, 5);
+        Assert.True(request.Settings.MaxPromptChars >= 8000);
+        Assert.True(request.Settings.LlmProvider.MaxOutputTokens >= 600);
+        Assert.Equal(AnswerReadiness.NeedsConfirmation, request.FactResolution?.AnswerReadiness);
+        Assert.Empty(request.FactResolution!.CandidateFacts);
+        Assert.Equal(3, prompt.Diagnostics.EvidenceCount);
+        Assert.All(request.Sources, source => Assert.Contains(source.SourceId, prompt.UserPrompt));
+        Assert.Contains("\"customerReplyDraft\": \"string\"", prompt.UserPrompt);
     }
 
     [Fact]

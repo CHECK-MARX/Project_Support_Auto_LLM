@@ -5,6 +5,8 @@ namespace SupportCaseManager.Ai.Core.Evidence;
 
 public static class EvidenceSourceSelector
 {
+    private const int EstimatedPromptCharsPerSource = 800;
+
     public static IReadOnlyList<SearchSource> Select(
         IReadOnlyList<SearchSource> sources,
         CaseContext caseContext,
@@ -15,7 +17,6 @@ public static class EvidenceSourceSelector
         var questionTypes = factResolution.Classification.QuestionTypes;
         var budget = Math.Max(600, maxPromptChars / 2);
         var selected = new List<SearchSource>();
-        var urlCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var usedChars = 0;
 
         foreach (var source in sources
@@ -28,24 +29,14 @@ public static class EvidenceSourceSelector
                 break;
             }
 
-            if (!string.IsNullOrWhiteSpace(source.Url))
-            {
-                var url = source.Url.Trim().TrimEnd('/');
-                var count = urlCounts.GetValueOrDefault(url);
-                if (count >= 1)
-                {
-                    continue;
-                }
-
-                urlCounts[url] = count + 1;
-            }
-
             if (selected.Any(existing => Similarity(existing.Text, source.Text) >= 0.88))
             {
                 continue;
             }
 
-            var sourceChars = source.Title.Length + source.Text.Length;
+            // One PDF is indexed as multiple sections. Estimate the bounded prompt
+            // excerpt instead of charging each selected section as a full document.
+            var sourceChars = source.Title.Length + Math.Min(source.Text.Length, EstimatedPromptCharsPerSource);
             if (selected.Count > 0 && usedChars + sourceChars > budget)
             {
                 continue;

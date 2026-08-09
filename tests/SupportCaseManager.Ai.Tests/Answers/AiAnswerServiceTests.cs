@@ -33,7 +33,7 @@ public class AiAnswerServiceTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("Please check settings.", result.CustomerReplyDraft);
+        Assert.EndsWith("Please check settings.", result.CustomerReplyDraft);
         Assert.Equal("source-1 referenced.", result.InternalMemo);
         Assert.Single(result.NeedConfirmations);
         Assert.Single(result.Evidence);
@@ -97,7 +97,7 @@ public class AiAnswerServiceTests
 
         var result = await service.GenerateDraftAsync(request);
 
-        Assert.Equal(answer, result.CustomerReplyDraft);
+        Assert.EndsWith(answer, result.CustomerReplyDraft);
         Assert.NotNull(result.AnswerQuality);
         Assert.Contains(
             result.Warnings,
@@ -431,6 +431,36 @@ public class AiAnswerServiceTests
         Assert.DoesNotContain("東陽ユーティリティ", result.CustomerReplyDraft);
         Assert.DoesNotContain("鈴木", result.CustomerReplyDraft);
         Assert.DoesNotContain("old@example.test", result.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_MissingRecipientUsesPlaceholdersAndNeverInfersToyo()
+    {
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "お問い合わせいただきありがとうございます。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.7,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest() with
+        {
+            Case = new CaseContext
+            {
+                CompanyName = "TOYO",
+                CustomerName = "",
+                ProductName = "HelixQAC",
+            },
+        };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.StartsWith($"[会社名]{Environment.NewLine}[お客様名] 様", result.CustomerReplyDraft);
+        Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ご担当者様", result.CustomerReplyDraft, StringComparison.Ordinal);
     }
 
     [Fact]

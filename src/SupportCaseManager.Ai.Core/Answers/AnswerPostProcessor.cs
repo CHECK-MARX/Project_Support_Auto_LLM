@@ -951,22 +951,19 @@ internal static partial class AnswerPostProcessor
         var companyName = NormalizeRecipientText(context.CompanyName);
         if (IsPlaceholderCompanyName(companyName))
         {
-            companyName = string.Empty;
+            companyName = "[会社名]";
         }
 
         var customerName = NormalizeRecipientText(context.CustomerName);
-        if (!string.IsNullOrWhiteSpace(companyName))
-        {
-            yield return companyName;
-        }
+        yield return companyName;
 
         if (!string.IsNullOrWhiteSpace(customerName))
         {
             yield return HasHonorificSuffix(customerName) ? customerName : $"{customerName} 様";
         }
-        else if (!string.IsNullOrWhiteSpace(companyName))
+        else
         {
-            yield return "ご担当者様";
+            yield return "[お客様名] 様";
         }
     }
 
@@ -981,7 +978,11 @@ internal static partial class AnswerPostProcessor
     {
         return string.IsNullOrWhiteSpace(value) ||
             string.Equals(value, "株式会社サンプル", StringComparison.Ordinal) ||
-            string.Equals(value, "サンプル", StringComparison.Ordinal);
+            string.Equals(value, "サンプル", StringComparison.Ordinal) ||
+            string.Equals(value, "TOYO", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "TOYO Corporation", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "東陽テクニカ", StringComparison.Ordinal) ||
+            string.Equals(value, "株式会社東陽テクニカ", StringComparison.Ordinal);
     }
 
     private static bool HasHonorificSuffix(string value)

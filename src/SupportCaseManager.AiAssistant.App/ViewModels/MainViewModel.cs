@@ -58,9 +58,11 @@ public sealed class MainViewModel : ObservableObject
     private const string FastManualPreferredModelName = "qwen3:4b";
     private const string FastManualFallbackModelName = "qwen3:8b";
     private const int FastManualTimeoutSeconds = 90;
-    private const int FastManualMaxPromptChars = 3500;
+    private const int FastManualMaxPromptChars = 6000;
     private const int FastManualMaxEvidenceItems = 2;
-    private const int FastManualMaxOutputTokens = 320;
+    private const int FastManualMaxOutputTokens = 600;
+    private const int ExpandedProcedureMinPromptChars = 8000;
+    private const int ExpandedProcedureMinOutputTokens = 600;
 
     private readonly IAiSettingsStore settingsStore;
     private readonly ICaseContextBuilder caseContextBuilder;
@@ -3934,6 +3936,19 @@ public sealed class MainViewModel : ObservableObject
         IReadOnlyList<SearchSource> sources,
         InquiryFocus inquiryFocus)
     {
+        if (RequiresExpandedProcedureRoute(sources, inquiryFocus))
+        {
+            return settings with
+            {
+                MaxEvidenceItems = Math.Clamp(Math.Max(2, settings.MaxEvidenceItems), 2, 5),
+                MaxPromptChars = Math.Max(ExpandedProcedureMinPromptChars, settings.MaxPromptChars),
+                LlmProvider = settings.LlmProvider with
+                {
+                    MaxOutputTokens = Math.Max(ExpandedProcedureMinOutputTokens, settings.LlmProvider.MaxOutputTokens),
+                },
+            };
+        }
+
         if (!ShouldUseFastManualRoute(settings, sources, inquiryFocus))
         {
             return settings;
@@ -3951,9 +3966,7 @@ public sealed class MainViewModel : ObservableObject
             {
                 ChatModel = availableModel,
                 Temperature = profile.Temperature,
-                MaxOutputTokens = Math.Min(
-                    FastManualMaxOutputTokens,
-                    Math.Max(240, Math.Min(settings.LlmProvider.MaxOutputTokens, profile.MaxOutputTokens))),
+                MaxOutputTokens = FastManualMaxOutputTokens,
                 ContextWindowTokens = Math.Min(4096, Math.Max(2048, settings.LlmProvider.ContextWindowTokens)),
                 TimeoutSeconds = FastManualTimeoutSeconds,
                 ThinkingParameterType = profile.ThinkingParameterType,
@@ -3961,6 +3974,25 @@ public sealed class MainViewModel : ObservableObject
                 StructuredOutputMode = profile.StructuredOutputMode,
             },
         };
+    }
+
+    private bool RequiresExpandedProcedureRoute(
+        IReadOnlyList<SearchSource> sources,
+        InquiryFocus inquiryFocus)
+    {
+        if (sources.Count == 0 || sources.Any(static source =>
+            !string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var questionTypes = new QuestionClassifier()
+            .Classify(InquiryText, inquiryFocus)
+            .QuestionTypes;
+        return inquiryFocus.RequiredCoverage.Count > 1 ||
+            (questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) &&
+             questionTypes.Contains(QuestionTypes.ConfigurationQuestion, StringComparer.OrdinalIgnoreCase));
     }
 
     private bool ShouldUseFastManualRoute(
@@ -4330,14 +4362,14 @@ public sealed class MainViewModel : ObservableObject
             .Take(2)
             .ToList();
         var reply = new StringBuilder();
-        if (!string.IsNullOrWhiteSpace(request.Case.CompanyName))
-        {
-            reply.AppendLine(request.Case.CompanyName.Trim());
-        }
-
-        reply.AppendLine(string.IsNullOrWhiteSpace(request.Case.CustomerName)
-            ? "ご担当者様"
-            : $"{request.Case.CustomerName.Trim()} 様");
+        var companyName = IsUsableRecipientCompanyName(request.Case.CompanyName)
+            ? request.Case.CompanyName!.Trim()
+            : "[会社名]";
+        var customerName = string.IsNullOrWhiteSpace(request.Case.CustomerName)
+            ? "[お客様名] 様"
+            : $"{request.Case.CustomerName.Trim()} 様";
+        reply.AppendLine(companyName);
+        reply.AppendLine(customerName);
         reply.AppendLine();
         reply.AppendLine("お問い合わせいただきありがとうございます。");
         reply.AppendLine("マニュアルで確認できた関連手順を以下に記載します。");
@@ -4385,6 +4417,20 @@ public sealed class MainViewModel : ObservableObject
             Warnings = ["LLMタイムアウトのため、マニュアル抜粋を使った保守的な回答案です。送信前に内容を確認してください。"],
             GeneratedAt = DateTimeOffset.Now,
         };
+    }
+
+    private static bool IsUsableRecipientCompanyName(string? companyName)
+    {
+        if (string.IsNullOrWhiteSpace(companyName))
+        {
+            return false;
+        }
+
+        var normalized = companyName.Trim();
+        return !string.Equals(normalized, "TOYO", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(normalized, "TOYO Corporation", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(normalized, "東陽テクニカ", StringComparison.Ordinal) &&
+            !string.Equals(normalized, "株式会社東陽テクニカ", StringComparison.Ordinal);
     }
 
     private static string BuildFocusedManualExcerpt(string text, string inquiry, int maxLength)

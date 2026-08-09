@@ -25,7 +25,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("ライセンスサーバー名とポート番号を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("ライセンスサーバー名とポート番号を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain("customerReplyDraft", result.CustomerReplyDraft);
     }
 
@@ -47,7 +47,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("ファイアウォール設定を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("ファイアウォール設定を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain("{", result.CustomerReplyDraft);
     }
 
@@ -69,7 +69,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("認証エラーの状況を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("認証エラーの状況を確認してください。", result.CustomerReplyDraft);
         Assert.Equal(0.75, result.Confidence);
     }
 
@@ -154,7 +154,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("抽出可能な回答案", result.CustomerReplyDraft);
+        Assert.EndsWith("抽出可能な回答案", result.CustomerReplyDraft);
         Assert.Contains(result.Warnings, warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal));
     }
 
