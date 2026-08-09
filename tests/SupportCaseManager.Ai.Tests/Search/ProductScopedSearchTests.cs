@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Inquiries;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.Ai.Tests.Helpers;
@@ -134,6 +135,172 @@ public sealed class ProductScopedSearchTests
         Assert.Contains("Hybrid local", results[0].ScoreBreakdown, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task SearchAllAsync_ValidateStream_PreservesRelevantSourceTypesAndSuppressesGenericManuals()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var genericManuals = Enumerable.Range(1, 45)
+            .Select(index => CreateManual(
+                $"toyo-utility-{index:00}",
+                "Validateの利用手順です。プロジェクト設定、登録コンポーネント、解析結果のアップロード方法を説明します。"))
+            .ToList();
+        genericManuals.Add(CreateManual(
+            "stream-manual",
+            "Validate Streamは開発中のプロジェクトのビルド履歴を追跡します。ストリームの作成と設定手順を説明します。"));
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC", genericManuals);
+        await WriteCaseIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateNote("stream-past-case", "Validateのストリーム機能とStream設定手順を案内した過去案件です。")]);
+        await WriteOfficialIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateOfficial(
+                "stream-official",
+                "Validate Stream",
+                "Stream configuration",
+                "Validate Streamの機能概要とストリーム設定手順を説明する公式情報です。")]);
+        var service = CreateService();
+        var focus = new InquiryFocusExtractor().Extract(
+            "ValidateのStream機能について教えてください。また、ストリームの設定方法を教えてください。");
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            focus,
+            maxResults: 12);
+
+        Assert.Contains(results, source => source.SourceType == "Manual" && source.SourceId == "stream-manual");
+        Assert.Contains(results, source => source.SourceType == "OfficialDoc" && source.SourceId == "stream-official");
+        Assert.Contains(results, source => source.SourceType == "PastCaseNote" && source.SourceId == "stream-past-case");
+        Assert.DoesNotContain(results.Take(3), source => source.SourceId.StartsWith("toyo-utility", StringComparison.Ordinal));
+        Assert.All(
+            results.Where(source => source.SourceId.StartsWith("toyo-utility", StringComparison.Ordinal)),
+            source => Assert.Contains("feature=missing", source.ScoreBreakdown, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_StreamAndJapaneseAlias_ReturnSameFeatureSources()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [
+                CreateManual("english-stream", "Validate Stream configuration procedure."),
+                CreateManual("japanese-stream", "Validate ストリーム 設定手順。"),
+            ]);
+        var service = CreateService();
+
+        var english = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "Validate Stream configuration" },
+            maxResults: 8);
+        var japanese = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "Validate ストリーム 設定" },
+            maxResults: 8);
+
+        Assert.Equal(
+            new[] { "english-stream", "japanese-stream" },
+            english.Select(static source => source.SourceId).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            new[] { "english-stream", "japanese-stream" },
+            japanese.Select(static source => source.SourceId).Order(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_ValidateCli_DoesNotRegressToDifferentFeature()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [
+                CreateManual(
+                    "validate-cli-manual",
+                    "qacli validate buildを実行してQACの解析結果をValidateへアップロードする手順です。"),
+                CreateManual(
+                    "stream-only-manual",
+                    "Validate Streamの機能概要とストリーム設定手順です。"),
+            ]);
+        await WriteOfficialIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateOfficial(
+                "validate-cli-official",
+                "qacli validate build",
+                "Upload analysis results",
+                "qacli validate buildコマンドでQACの解析結果をValidateへアップロードします。")]);
+        var service = CreateService();
+        var focus = new InquiryFocusExtractor().Extract(
+            "QACの解析結果をValidateへアップロードするqacli validate buildの方法を教えてください。");
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            focus,
+            maxResults: 5);
+
+        Assert.Contains(results, source => source.SourceId == "validate-cli-manual");
+        Assert.Contains(results, source => source.SourceId == "validate-cli-official");
+        Assert.DoesNotContain(results.Take(2), source => source.SourceId == "stream-only-manual");
+        Assert.All(
+            results.Where(source => source.SourceId == "stream-only-manual"),
+            source => Assert.Contains("feature=conflict", source.ScoreBreakdown, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_SuppressesExactContentDuplicates()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        const string duplicate = "Validate Streamの機能概要とストリーム設定手順を説明します。同じ内容が別形式の文書にも収録されています。";
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateManual("stream-docx", duplicate), CreateManual("stream-pdf", duplicate)]);
+        var service = CreateService();
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "Validate Stream 設定手順" },
+            maxResults: 8);
+
+        Assert.Single(results);
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_SameSourceIdAcrossTypes_DoesNotDropEitherType()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateManual("shared-id", "Validate Streamの設定を説明するマニュアルです。")]);
+        await WriteCaseIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateNote("shared-id", "Validate ストリームの利用方法を回答した過去案件です。")]);
+        var service = CreateService();
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "Validate Stream 設定方法" },
+            maxResults: 8);
+
+        Assert.Contains(results, source => source.SourceType == "Manual" && source.SourceId == "shared-id");
+        Assert.Contains(results, source => source.SourceType == "PastCaseNote" && source.SourceId == "shared-id");
+    }
+
     private static ProductScopedSearchService CreateService()
     {
         return new ProductScopedSearchService(new AiCaseKeywordSearcher(), new AiManualKeywordSearcher());
@@ -177,6 +344,25 @@ public sealed class ProductScopedSearchTests
         };
     }
 
+    private static AiIndexedOfficialDocument CreateOfficial(
+        string id,
+        string title,
+        string sectionTitle,
+        string text)
+    {
+        return new AiIndexedOfficialDocument
+        {
+            Id = id,
+            ProductName = "HelixQAC",
+            Url = $"https://docs.example.test/{id}",
+            Title = title,
+            SectionTitle = sectionTitle,
+            Text = text,
+            RetrievedAt = new DateTimeOffset(2026, 8, 10, 9, 0, 0, TimeSpan.FromHours(9)),
+            ContentHash = id,
+        };
+    }
+
     private static async Task WriteManualIndexAsync(
         string aiIndexFolder,
         string productName,
@@ -206,6 +392,22 @@ public sealed class ProductScopedSearchTests
             BuiltAt = new DateTimeOffset(2026, 6, 4, 10, 0, 0, TimeSpan.FromHours(9)),
             SourceFolder = @"D:\Closed",
             Notes = notes,
+        });
+    }
+
+    private static async Task WriteOfficialIndexAsync(
+        string aiIndexFolder,
+        string productName,
+        IReadOnlyList<AiIndexedOfficialDocument> documents)
+    {
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, productName);
+        Directory.CreateDirectory(productFolder);
+        await using var stream = File.Create(Path.Combine(productFolder, AiOfficialDocumentIndexBuilder.IndexFileName));
+        await JsonSerializer.SerializeAsync(stream, new AiOfficialDocumentIndexDocument
+        {
+            ProductName = productName,
+            BuiltAt = new DateTimeOffset(2026, 8, 10, 9, 0, 0, TimeSpan.FromHours(9)),
+            Documents = documents,
         });
     }
 

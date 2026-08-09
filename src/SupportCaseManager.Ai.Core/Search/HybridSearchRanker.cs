@@ -41,7 +41,7 @@ internal static partial class HybridSearchRanker
                 static entry => entry.Vector,
                 StringComparer.Ordinal);
             var semanticScores = sources.ToDictionary(
-                static source => source.SourceId,
+                SourceKey,
                 source => vectors.TryGetValue($"{source.SourceType}\n{source.SourceId}", out var vector)
                     ? CosineSimilarity(queryVector, vector)
                     : 0,
@@ -70,7 +70,7 @@ internal static partial class HybridSearchRanker
         }
 
         var semanticScores = sources.ToDictionary(
-            static source => source.SourceId,
+            SourceKey,
             source => Similarity(query, $"{source.Title} {source.Text}"),
             StringComparer.Ordinal);
         return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "local");
@@ -90,19 +90,20 @@ internal static partial class HybridSearchRanker
 
         var keywordRank = sources
             .OrderByDescending(static source => source.Score ?? 0)
-            .Select((source, index) => (source.SourceId, Rank: index + 1))
-            .ToDictionary(static item => item.SourceId, static item => item.Rank, StringComparer.Ordinal);
+            .Select((source, index) => (Key: SourceKey(source), Rank: index + 1))
+            .ToDictionary(static item => item.Key, static item => item.Rank, StringComparer.Ordinal);
         var semanticRank = sources
-            .Select(source => (Source: source, Score: semanticScores.GetValueOrDefault(source.SourceId)))
+            .Select(source => (Source: source, Score: semanticScores.GetValueOrDefault(SourceKey(source))))
             .OrderByDescending(static item => item.Score)
-            .Select((item, index) => (item.Source.SourceId, Rank: index + 1, item.Score))
-            .ToDictionary(static item => item.SourceId, static item => (item.Rank, item.Score), StringComparer.Ordinal);
+            .Select((item, index) => (Key: SourceKey(item.Source), Rank: index + 1, item.Score))
+            .ToDictionary(static item => item.Key, static item => (item.Rank, item.Score), StringComparer.Ordinal);
 
         return sources
             .Select(source =>
             {
-                var lexical = keywordRank[source.SourceId];
-                var semantic = semanticRank[source.SourceId];
+                var key = SourceKey(source);
+                var lexical = keywordRank[key];
+                var semantic = semanticRank[key];
                 var rrf = (1d / (60 + lexical)) + (1d / (60 + semantic.Rank));
                 var productBoost = string.IsNullOrWhiteSpace(source.ProductName) ||
                     string.Equals(source.ProductName, productName, StringComparison.OrdinalIgnoreCase)
@@ -120,6 +121,8 @@ internal static partial class HybridSearchRanker
             .Take(maxResults)
             .ToList();
     }
+
+    private static string SourceKey(SearchSource source) => $"{source.SourceType}\n{source.SourceId}";
 
     private static double CosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
     {
