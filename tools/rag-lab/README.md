@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 6)
+## Implemented scope (Phases 2 through 7)
 
 Implemented in this phase:
 
@@ -31,6 +31,7 @@ Implemented in this phase:
 - SHA-256 input fingerprints for repeatable evaluation runs
 - A `verify` command suitable for a local quality check or CI job
 - A path-filtered GitHub Actions workflow for tests and the synthetic quality gate
+- Offline regression comparison between two generated evaluation reports
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -160,6 +161,30 @@ manually with `workflow_dispatch`.
 The existing .NET CI workflow remains separate and unchanged. The RAG workflow
 does not load customer data, call a network API from the evaluation tool, publish
 generated reports, or modify WPF projects and production indexes.
+
+## Regression comparison
+
+Keep an evaluation report before changing retrieval behavior, generate another
+report after the change, and compare them from `tools\rag-lab`:
+
+```powershell
+python run_rag_lab.py evaluate --report-name before-change
+# Change and test only the offline RAG Lab implementation.
+python run_rag_lab.py evaluate --report-name after-change
+python run_rag_lab.py compare --baseline before-change.json --candidate after-change.json --output-name retrieval-regression
+```
+
+The command returns exit code `1` when a quality metric decreases, an error-count
+metric increases, a baseline configuration disappears, or input fingerprints do
+not match. `--max-quality-drop` and `--max-count-increase` provide explicit
+non-negative tolerances. Use `--allow-input-change` only when comparing different
+synthetic datasets intentionally.
+
+JSON and Markdown results are written below `reports/generated/`. Baseline and
+candidate inputs must also be existing JSON files in that directory. Absolute
+paths and document text are not copied into the regression report. Timing deltas
+are recorded for investigation but do not affect pass/fail because they vary by
+machine and current load.
 
 ## Codex evidence JSON
 

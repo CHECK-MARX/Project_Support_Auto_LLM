@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .regression import run_regression_comparison
 from .runner import run_evaluation, run_evidence
 
 
@@ -21,6 +22,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     verify.add_argument("--config", default="config.example.json")
     verify.add_argument("--report-name")
+    compare = subcommands.add_parser(
+        "compare", help="compare two generated evaluation reports for regressions"
+    )
+    compare.add_argument("--baseline", required=True)
+    compare.add_argument("--candidate", required=True)
+    compare.add_argument("--output-name", default="rag-regression")
+    compare.add_argument("--max-quality-drop", type=float, default=0.0)
+    compare.add_argument("--max-count-increase", type=int, default=0)
+    compare.add_argument("--allow-input-change", action="store_true")
     evidence = subcommands.add_parser(
         "evidence", help="write top evidence in the future Codex input shape"
     )
@@ -77,6 +87,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Selected evidence: {len(output.payload['selectedEvidence'])}")
         print(f"json: {output.file.relative_to(lab_root)}")
         return 0
+    if args.command == "compare":
+        output = run_regression_comparison(
+            lab_root,
+            baseline_path=args.baseline,
+            candidate_path=args.candidate,
+            output_name=args.output_name,
+            max_quality_drop=args.max_quality_drop,
+            max_count_increase=args.max_count_increase,
+            allow_input_change=args.allow_input_change,
+        )
+        counts = output.report["counts"]
+        print(f"Regression comparison: {output.report['status']}")
+        print(
+            f"Regressed: {counts['regressed']}, "
+            f"missing: {counts['missing']}, improved: {counts['improved']}"
+        )
+        for format_name, path in output.files.items():
+            print(f"{format_name}: {path.relative_to(lab_root)}")
+        return 0 if output.report["status"] == "passed" else 1
     if args.command == "verify":
         output = run_evaluation(
             lab_root,

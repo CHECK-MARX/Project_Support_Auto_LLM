@@ -105,3 +105,70 @@ def write_comparison_reports(
             _markdown_text(summary, report_name),
         ),
     }
+
+
+def _regression_markdown(report: dict[str, Any], report_name: str) -> str:
+    counts = report["counts"]
+    lines = [
+        f"# RAG regression comparison: {report_name}",
+        "",
+        "Synthetic/offline comparison. Source paths and document text are omitted.",
+        "",
+        f"- Status: {report['status']}",
+        f"- Baseline: {report['baseline_file_name']}",
+        f"- Candidate: {report['candidate_file_name']}",
+        f"- Input fingerprints match: {report['input_fingerprints_match']}",
+        f"- Regressed configurations: {counts['regressed']}",
+        f"- Missing configurations: {counts['missing']}",
+        f"- Improved configurations: {counts['improved']}",
+        f"- Unchanged configurations: {counts['unchanged']}",
+        f"- New configurations: {counts['new']}",
+    ]
+    lines.extend(
+        f"- Finding: {finding}" for finding in report.get("global_findings", ())
+    )
+    lines.extend(
+        (
+            "",
+            "Performance timing deltas are informational and do not affect status.",
+            "",
+            "| status | chunk_strategy | search_method | reranker | filter_mode | top_k | findings |",
+            "| --- | --- | --- | --- | --- | --- | --- |",
+        )
+    )
+    for row in report["rows"]:
+        configuration = row["configuration"]
+        findings = "; ".join(row.get("findings", ())).replace("|", "\\|")
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    str(row["status"]),
+                    str(configuration["chunk_strategy"]),
+                    str(configuration["search_method"]),
+                    str(configuration["reranker"]),
+                    str(configuration["filter_mode"]),
+                    str(configuration["top_k"]),
+                    findings,
+                )
+            )
+            + " |"
+        )
+    return "\n".join(lines)
+
+
+def write_regression_reports(
+    paths: LabPaths, report_name: str, report: dict[str, Any]
+) -> dict[str, Path]:
+    _validate_report_name(report_name)
+    rows = report.get("rows")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        raise ValueError("regression report rows must be an array of objects")
+    return {
+        "json": write_json_report(paths, f"{report_name}.json", report),
+        "markdown": write_text_report(
+            paths,
+            f"{report_name}.md",
+            _regression_markdown(report, report_name),
+        ),
+    }

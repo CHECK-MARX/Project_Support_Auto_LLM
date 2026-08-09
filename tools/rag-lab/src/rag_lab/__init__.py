@@ -12,6 +12,7 @@ from .embedding import EmbeddingProvider, HashingEmbeddingProvider
 from .evidence import EvidenceSelectionOptions, build_codex_evidence
 from .reranking import Reranker, RerankerMethod, apply_reranker
 from .quality import QualityGateThresholds, apply_quality_gate
+from .regression import RegressionThresholds, compare_reports
 from .search import SearchFilters, SearchMethod, SearchResult, build_search_index
 
 __all__ = [
@@ -30,12 +31,14 @@ __all__ = [
     "Reranker",
     "RerankerMethod",
     "QualityGateThresholds",
+    "RegressionThresholds",
     "SearchFilters",
     "SearchMethod",
     "SearchResult",
     "build_search_index",
     "apply_reranker",
     "apply_quality_gate",
+    "compare_reports",
     "build_codex_evidence",
     "chunk_document",
     "normalize_text",

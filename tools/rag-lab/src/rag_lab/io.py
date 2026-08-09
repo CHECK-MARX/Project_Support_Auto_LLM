@@ -78,9 +78,16 @@ class LabPaths:
             raise PathValidationError("output path is outside reports/generated")
         return candidate
 
+    def resolve_generated_input(self, path: str | Path) -> Path:
+        candidate = self.resolve_output(path)
+        if not candidate.is_file():
+            raise PathValidationError(
+                "generated input path does not identify an existing file"
+            )
+        return candidate
 
-def read_json(paths: LabPaths, path: str | Path) -> Any:
-    source = paths.resolve_input(path)
+
+def _read_json_file(source: Path) -> Any:
     try:
         with source.open("r", encoding="utf-8") as stream:
             return json.load(stream)
@@ -92,6 +99,16 @@ def read_json(paths: LabPaths, path: str | Path) -> Any:
         ) from error
     except OSError as error:
         raise DataValidationError("input could not be read") from error
+
+
+def read_json(paths: LabPaths, path: str | Path) -> Any:
+    source = paths.resolve_input(path)
+    return _read_json_file(source)
+
+
+def read_generated_json(paths: LabPaths, path: str | Path) -> Any:
+    source = paths.resolve_generated_input(path)
+    return _read_json_file(source)
 
 
 def _array_from_root(data: Any, key: str) -> list[Any]:
