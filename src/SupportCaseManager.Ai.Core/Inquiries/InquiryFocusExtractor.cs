@@ -60,6 +60,20 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         "失敗",
         "成功",
         "権限",
+        "権限不足",
+        "権限不十分",
+        "QAC",
+        "Dashboard",
+        "Validate",
+        "インストール方法",
+        "インストール",
+        "アップロード",
+        "解析結果",
+        "接続確認",
+        "接続",
+        "手順書",
+        "手順",
+        "方法",
         "permission",
         "error",
         "license",
@@ -76,16 +90,12 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         "最新バージョン",
         "current version",
         "latest version",
-        "バージョン",
-        "version",
-        "ep",
-        "engine pack",
-        "hf",
-        "hotfix",
-        "リリース",
-        "release",
-        "パッチ",
-        "patch",
+        "最新リリース",
+        "latest release",
+        "最新パッチ",
+        "latest patch",
+        "リリース日",
+        "release date",
         "サポート期限",
         "eol",
         "対応バージョン",
@@ -199,6 +209,12 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             }
         }
 
+        if (normalizedFocus.Contains(NormalizeTerm("権限"), StringComparison.Ordinal) &&
+            normalizedFocus.Contains(NormalizeTerm("不十分"), StringComparison.Ordinal))
+        {
+            terms["権限不足"] = 120;
+        }
+
         foreach (var token in SplitTokens(focusText))
         {
             var normalizedToken = NormalizeTerm(token);
@@ -213,18 +229,9 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
                 continue;
             }
 
-            terms[token] = Math.Max(terms.GetValueOrDefault(token), score);
-
-            if (ContainsJapanese(token))
+            if (ShouldKeepWholeToken(token))
             {
-                foreach (var ngram in CreateJapaneseNGrams(token, minLength: 2, maxLength: 6))
-                {
-                    var normalizedNGram = NormalizeTerm(ngram);
-                    if (!StopWordSet.Contains(normalizedNGram))
-                    {
-                        terms[ngram] = Math.Max(terms.GetValueOrDefault(ngram), Math.Min(score, 40));
-                    }
-                }
+                terms[token] = Math.Max(terms.GetValueOrDefault(token), score);
             }
         }
 
@@ -275,11 +282,48 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
     {
         return VersionNumberRegex()
             .Matches(focusText)
+            .Where(match => !LooksLikeNumberedStep(focusText, match) && !LooksLikeCalendarDate(match.Value))
             .Select(static match => match.Value.Trim())
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8)
             .ToList();
+    }
+
+    private static bool ShouldKeepWholeToken(string token)
+    {
+        if (string.IsNullOrWhiteSpace(token) ||
+            token.Contains('@') ||
+            ContactTokenRegex().IsMatch(token))
+        {
+            return false;
+        }
+
+        if (ContainsJapanese(token) && token.Length > 24)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool LooksLikeNumberedStep(string text, Match match)
+    {
+        var before = match.Index > 0 ? text[match.Index - 1] : '\0';
+        var afterIndex = match.Index + match.Length;
+        var after = afterIndex < text.Length ? text[afterIndex] : '\0';
+        return before is '[' or '［' or '(' or '（'
+            && (char.IsWhiteSpace(after) || after is ']' or '］' or ')' or '）');
+    }
+
+    private static bool LooksLikeCalendarDate(string value)
+    {
+        var parts = value.Split('.');
+        return parts.Length == 3 &&
+            parts[0].Length == 4 &&
+            int.TryParse(parts[0], out var year) && year is >= 1900 and <= 2200 &&
+            int.TryParse(parts[1], out var month) && month is >= 1 and <= 12 &&
+            int.TryParse(parts[2], out var day) && day is >= 1 and <= 31;
     }
 
     private static (bool IsSensitive, string Reason) DetectFreshness(string normalizedFocus)
@@ -302,22 +346,6 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             if (token.Length >= 2)
             {
                 yield return token;
-            }
-        }
-    }
-
-    private static IEnumerable<string> CreateJapaneseNGrams(string token, int minLength, int maxLength)
-    {
-        if (token.Length > 80)
-        {
-            yield break;
-        }
-
-        for (var length = minLength; length <= maxLength && length <= token.Length; length++)
-        {
-            for (var start = 0; start <= token.Length - length; start++)
-            {
-                yield return token.Substring(start, length);
             }
         }
     }
@@ -443,6 +471,9 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
     [GeneratedRegex(@"[a-zA-Z0-9][a-zA-Z0-9._:/+\-]{1,}", RegexOptions.CultureInvariant)]
     private static partial Regex AsciiProductOrVersionRegex();
 
-    [GeneratedRegex(@"\b\d{1,2}\.\d{1,2}(?:\.\d{1,3})?\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![\d.])\d{1,4}(?:\.\d{1,4}){1,3}(?![\d.])", RegexOptions.CultureInvariant)]
     private static partial Regex VersionNumberRegex();
+
+    [GeneratedRegex(@"(?i)(?:^|\b)(?:tel|e-?mail|fax)\b|〒|\d{2,4}-\d{2,4}-\d{3,4}", RegexOptions.CultureInvariant)]
+    private static partial Regex ContactTokenRegex();
 }

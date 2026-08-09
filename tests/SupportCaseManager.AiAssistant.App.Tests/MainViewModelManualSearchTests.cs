@@ -168,6 +168,50 @@ public sealed class MainViewModelManualSearchTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_EmptyOllamaModelUsesAvailableQualityPreset()
+    {
+        var services = CreateViewModel([CreateManualSource()]);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.AnswerQualityMode = AnswerQualityModes.Standard;
+        services.ViewModel.ChatModel = string.Empty;
+        services.ViewModel.AvailableModels.Clear();
+        services.ViewModel.AvailableModels.Add("qwen3:8b");
+        services.ViewModel.AvailableModels.Add("gemma4:26b");
+        ConfigureProduct(services.ViewModel, "Checkmarx");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        Assert.Equal("gemma4:26b", services.ViewModel.ChatModel);
+        Assert.NotEqual("NeedsConfiguration", services.ViewModel.GenerationState);
+        Assert.DoesNotContain("回答モデルを解決できません", services.ViewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManualSearch_AutoSelectionIsBoundedByMaximumEvidenceItems()
+    {
+        var sources = Enumerable.Range(1, 8)
+            .Select(index => CreateManualSource() with
+            {
+                SourceId = $"manual-{index}",
+                Title = $"QACインストール手順 {index}",
+                Score = 0.90 - (index * 0.01),
+            })
+            .ToList();
+        var services = CreateViewModel(sources);
+        services.ViewModel.InquiryText = "QACのインストール方法を教えてください。";
+        services.ViewModel.MaxEvidenceItems = 3;
+        services.ViewModel.HighScoreThreshold = 0.65;
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+
+        Assert.Equal(8, services.ViewModel.SearchResultCount);
+        Assert.Equal(3, services.ViewModel.SelectedEvidenceCount);
+        Assert.Equal(3, services.ViewModel.EvidenceToSendCount);
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_OllamaFailureDoesNotFallbackToFake()
     {
         var services = CreateViewModel(

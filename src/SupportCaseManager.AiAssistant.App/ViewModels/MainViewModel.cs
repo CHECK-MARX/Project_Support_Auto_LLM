@@ -2395,14 +2395,26 @@ public sealed class MainViewModel : ObservableObject
 
             if (provider == "Ollama" && string.IsNullOrWhiteSpace(model))
             {
-                if (selectedPastAnswerCandidate is not null && allowPastAnswerAutoSelection)
+                if (await TryResolveOllamaModelForGenerationAsync())
+                {
+                    model = ChatModel;
+                    DraftProviderStatusText = FormatDraftProviderStatus(
+                        provider,
+                        model,
+                        usedRealLlm: false,
+                        usedEvidenceCount: 0,
+                        isSuccess: false);
+                }
+                else if (selectedPastAnswerCandidate is not null && allowPastAnswerAutoSelection)
                 {
                     ApplyPastAnswerCandidate("回答モデル未解決のため、完全一致した過去回答をLLMなしで表示しました。");
                     return;
                 }
-
-                SkipGeneration("NeedsConfiguration", "ModelUnresolved", BuildUnresolvedModelMessage());
-                return;
+                else
+                {
+                    SkipGeneration("NeedsConfiguration", "ModelUnresolved", BuildUnresolvedModelMessage());
+                    return;
+                }
             }
 
             if (!HasKnowledgeForProduct(resolvedProduct) && SearchResults.Count == 0)
@@ -3585,6 +3597,33 @@ public sealed class MainViewModel : ObservableObject
         return $"回答モデルを解決できませんでした。{Environment.NewLine}利用可能モデル:{Environment.NewLine}{models}";
     }
 
+    private async Task<bool> TryResolveOllamaModelForGenerationAsync()
+    {
+        var models = AvailableModels
+            .Where(static item => !string.IsNullOrWhiteSpace(item))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (models.Count == 0)
+        {
+            try
+            {
+                models = (await ollamaConnectionChecker.ListModelsAsync(BuildSettings().LlmProvider))
+                    .Where(static item => !string.IsNullOrWhiteSpace(item))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                ReplaceAvailableModels(models);
+            }
+            catch (Exception ex)
+            {
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                    $"Ollama model auto-resolution failed before generation. {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+        }
+
+        return await ResolveAndApplyAvailableModelAsync(models, persist: true);
+    }
+
     private bool HasKnowledgeForProduct(ProductKnowledgeSettings product)
     {
         var folder = productScopedIndexService.GetProductIndexFolder(EffectiveAiIndexFolder(), product.ProductName);
@@ -3714,13 +3753,24 @@ public sealed class MainViewModel : ObservableObject
     private void ReplaceSearchResults(IReadOnlyList<SearchSource> sources)
     {
         SearchResults.Clear();
+        var autoSelectedIndexes = sources
+            .Select((source, index) => (Source: source, Index: index))
+            .Where(item => FreshnessEvidenceAutoSelector.ShouldAutoSelect(
+                item.Source,
+                lastInquiryFocus?.IsFreshnessSensitive == true,
+                HighScoreThreshold))
+            .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(
+                item.Source.SourceType,
+                lastInquiryFocus?.IsFreshnessSensitive == true))
+            .ThenByDescending(static item => item.Source.Score ?? 0)
+            .ThenBy(static item => item.Index)
+            .Take(Math.Max(0, MaxEvidenceItems))
+            .Select(static item => item.Index)
+            .ToHashSet();
         for (var index = 0; index < sources.Count; index++)
         {
             var source = sources[index];
-            var shouldSelect = FreshnessEvidenceAutoSelector.ShouldAutoSelect(
-                source,
-                lastInquiryFocus?.IsFreshnessSensitive == true,
-                HighScoreThreshold);
+            var shouldSelect = autoSelectedIndexes.Contains(index);
             if (!allowPastAnswerAutoSelection &&
                 source.SourceType is "ExactPastAnswer" or "PastAnswer")
             {
