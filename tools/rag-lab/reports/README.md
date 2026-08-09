@@ -1,6 +1,6 @@
 # Reports
 
-Phases 3 through 11 write generated JSON, CSV, and Markdown comparison reports,
+Phases 3 through 13 write generated JSON, CSV, and Markdown comparison reports,
 regression comparisons, and Codex evidence JSON under `reports/generated/`.
 Phase 5 reports include the
 quality-gate result, recommended configuration, required/excluded-term metrics,
@@ -19,5 +19,9 @@ evaluation report. It does not copy candidates into `../baselines/`.
 
 Phase 11 writes strict candidate-review JSON and Markdown here after validating
 both the tracked baseline and generated compact candidate.
+
+Phase 12 writes candidate reproducibility reports with canonical digests. Phase 13
+writes a deterministic readiness result that combines regression and independent
+reproduction checks. Neither phase modifies `../baselines/`.
 
 No report writer may write outside `reports/generated/`.

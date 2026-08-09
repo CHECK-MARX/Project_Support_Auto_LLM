@@ -34,3 +34,7 @@ python run_rag_lab.py review-baseline --baseline baselines/phase8-reference.json
 ```
 
 The review is strict and never writes into this directory.
+
+Before manual promotion, independently generate the candidate twice and run
+`check-reproducibility`, then run `baseline-readiness`. A `ready` result is a review
+input, not permission for the tool to modify this directory automatically.

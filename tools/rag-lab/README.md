@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 11)
+## Implemented scope (Phases 2 through 13)
 
 Implemented in this phase:
 
@@ -38,6 +38,8 @@ Implemented in this phase:
   unexpected fields
 - Review-only baseline candidate generation from the quality gate recommendation
 - Strict end-to-end review of generated baseline candidates against tracked policy
+- Independent candidate reproducibility checks with canonical SHA-256 digests
+- Deterministic baseline-readiness JSON and Markdown without automatic promotion
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -177,10 +179,11 @@ Only the compact synthetic schema is accepted. Source text, absolute or relative
 paths, query details, timing values, unknown fields, malformed fingerprints, and
 out-of-range metrics cause validation to fail.
 
-After the quality gate, CI exercises safe candidate generation and strictly reviews
-that compact candidate against the tracked baseline. The candidate and review
-reports remain below `reports/generated/`; CI does not copy them into the tracked
-baseline directory or publish them.
+After the quality gate, CI exercises safe candidate generation twice, strictly
+reviews the first compact candidate against the tracked baseline, verifies that
+the two independent candidates are identical, and writes a final readiness report.
+All candidates and reports remain below `reports/generated/`; CI does not copy them
+into the tracked baseline directory or publish them.
 
 The existing .NET CI workflow remains separate and unchanged. The RAG workflow
 does not load customer data, call a network API from the evaluation tool, publish
@@ -244,6 +247,32 @@ quality decreases, an error count increases, the reference configuration is
 missing, fingerprints differ, an unexpected field is present, or either input
 escapes its allowed directory. JSON and Markdown review reports are written only
 below `reports/generated/`.
+
+## Reproducibility and readiness
+
+Generate a second evaluation and compact candidate independently, then compare the
+two candidates:
+
+```powershell
+python run_rag_lab.py verify --report-name reproduction
+python run_rag_lab.py baseline-candidate --source reproduction.json --output-name next-reference-reproduction
+python run_rag_lab.py check-reproducibility --first next-reference.json --second next-reference-reproduction.json --output-name next-reference-reproducibility
+```
+
+The comparison validates both compact schemas, ignores only `report_name`, and
+compares every other value. It records canonical SHA-256 digests and fails if the
+same file is supplied twice or any content differs.
+
+Create the final machine-readable readiness result:
+
+```powershell
+python run_rag_lab.py baseline-readiness --baseline baselines/phase8-reference.json --candidate next-reference.json --reproduction next-reference-reproduction.json --output-name next-reference-readiness
+```
+
+`status` is `ready` only when the candidate has no regression against the tracked
+baseline and the independent candidate is identical. The report contains file
+names, digests, aggregate counts, and findings only. It has no timestamp, source
+path, query text, or document content and never promotes a candidate automatically.
 
 ## Codex evidence JSON
 

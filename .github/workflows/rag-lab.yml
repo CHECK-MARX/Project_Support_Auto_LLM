@@ -64,9 +64,33 @@ jobs:
           --source ci-candidate.json
           --output-name ci-baseline-candidate
 
+      - name: Independent synthetic quality gate
+        run: python run_rag_lab.py verify --report-name ci-reproduction
+
+      - name: Build independent baseline candidate
+        run: >-
+          python run_rag_lab.py baseline-candidate
+          --source ci-reproduction.json
+          --output-name ci-baseline-reproduction
+
       - name: Review safe baseline candidate
         run: >-
           python run_rag_lab.py review-baseline
           --baseline baselines/phase8-reference.json
           --candidate ci-baseline-candidate.json
           --output-name ci-baseline-review
+
+      - name: Check baseline candidate reproducibility
+        run: >-
+          python run_rag_lab.py check-reproducibility
+          --first ci-baseline-candidate.json
+          --second ci-baseline-reproduction.json
+          --output-name ci-candidate-reproducibility
+
+      - name: Assess baseline readiness
+        run: >-
+          python run_rag_lab.py baseline-readiness
+          --baseline baselines/phase8-reference.json
+          --candidate ci-baseline-candidate.json
+          --reproduction ci-baseline-reproduction.json
+          --output-name ci-baseline-readiness

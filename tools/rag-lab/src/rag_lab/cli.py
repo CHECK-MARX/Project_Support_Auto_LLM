@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from .baseline_readiness import (
+    run_baseline_readiness_assessment,
+    run_candidate_reproducibility_check,
+)
 from .regression import (
     run_baseline_candidate_generation,
     run_baseline_candidate_review,
@@ -54,6 +58,23 @@ def _parser() -> argparse.ArgumentParser:
     review_baseline.add_argument("--baseline", required=True)
     review_baseline.add_argument("--candidate", required=True)
     review_baseline.add_argument("--output-name", default="baseline-review")
+    reproducibility = subcommands.add_parser(
+        "check-reproducibility",
+        help="strictly compare two independently generated compact candidates",
+    )
+    reproducibility.add_argument("--first", required=True)
+    reproducibility.add_argument("--second", required=True)
+    reproducibility.add_argument(
+        "--output-name", default="candidate-reproducibility"
+    )
+    readiness = subcommands.add_parser(
+        "baseline-readiness",
+        help="assess regression and reproducibility without promoting a baseline",
+    )
+    readiness.add_argument("--baseline", required=True)
+    readiness.add_argument("--candidate", required=True)
+    readiness.add_argument("--reproduction", required=True)
+    readiness.add_argument("--output-name", default="baseline-readiness")
     evidence = subcommands.add_parser(
         "evidence", help="write top evidence in the future Codex input shape"
     )
@@ -164,6 +185,31 @@ def main(argv: list[str] | None = None) -> int:
         for format_name, path in output.files.items():
             print(f"{format_name}: {path.relative_to(lab_root)}")
         return 0 if output.report["status"] == "passed" else 1
+    if args.command == "check-reproducibility":
+        output = run_candidate_reproducibility_check(
+            lab_root,
+            first_path=args.first,
+            second_path=args.second,
+            output_name=args.output_name,
+        )
+        print(f"Candidate reproducibility: {output.report['status']}")
+        print(f"Content match: {output.report['content_match']}")
+        for format_name, path in output.files.items():
+            print(f"{format_name}: {path.relative_to(lab_root)}")
+        return 0 if output.report["status"] == "passed" else 1
+    if args.command == "baseline-readiness":
+        output = run_baseline_readiness_assessment(
+            lab_root,
+            baseline_path=args.baseline,
+            candidate_path=args.candidate,
+            reproduction_path=args.reproduction,
+            output_name=args.output_name,
+        )
+        print(f"Baseline readiness: {output.report['status']}")
+        print(f"Reproducible: {output.report['reproducible']}")
+        for format_name, path in output.files.items():
+            print(f"{format_name}: {path.relative_to(lab_root)}")
+        return 0 if output.report["status"] == "ready" else 1
     if args.command == "verify":
         output = run_evaluation(
             lab_root,
