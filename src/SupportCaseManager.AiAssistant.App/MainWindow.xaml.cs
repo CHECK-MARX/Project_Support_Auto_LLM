@@ -41,7 +41,6 @@ public partial class MainWindow : Window
                 await ViewModel.Codex.ShutdownAsync();
                 await ViewModel.Codex.DisposeAsync();
             }
-
             await ViewModel.FlushSettingsAsync();
         }
         catch
@@ -50,6 +49,7 @@ public partial class MainWindow : Window
         }
         finally
         {
+            ViewModel.ShutdownEvidenceSelector();
             shutdownComplete = true;
             await Dispatcher.InvokeAsync(Close, DispatcherPriority.ApplicationIdle);
         }

@@ -10,6 +10,10 @@ public sealed record RustEvidenceSelectorOptions
 
     public bool EnableRustSelectorShadowMode { get; init; }
 
+    public bool UsePersistentRustEvidenceSelector { get; init; }
+
+    public int MaxWorkerRestartsPerMinute { get; init; } = 3;
+
     public int TimeoutMs { get; init; } = 2000;
 
     public string? ExecutablePath { get; init; }
@@ -251,18 +255,7 @@ public sealed class RustEvidenceSelectorClient : IRustEvidenceSelectorClient
                 category: RustSelectorFailureCategory.SchemaMismatch);
         }
 
-        var validation = ValidateAndMap(request, output);
-        return validation.Selection is null
-            ? Failed(validation.Error, process.ElapsedMilliseconds, exitCode: process.ExitCode,
-                category: CategorizeValidationFailure(validation.Error))
-            : new RustEvidenceSelectorAttempt
-            {
-                Success = true,
-                Selection = validation.Selection,
-                ElapsedMilliseconds = process.ElapsedMilliseconds,
-                SelectorElapsedMilliseconds = Math.Max(0, output.SelectorElapsedMs),
-                ExitCode = process.ExitCode,
-            };
+        return ValidateOutput(request, output, process.ElapsedMilliseconds, process.ExitCode);
     }
 
     public static string? ResolveExecutablePath(string? configuredPath)
@@ -291,6 +284,26 @@ public sealed class RustEvidenceSelectorClient : IRustEvidenceSelectorClient
             throw new ArgumentException("Executable path contains invalid characters.", nameof(path));
         }
         return Path.GetFullPath(expanded);
+    }
+
+    internal static RustEvidenceSelectorAttempt ValidateOutput(
+        CoverageEvidenceSelectionRequest request,
+        RustSelectorOutput output,
+        long elapsedMilliseconds,
+        int? exitCode = 0)
+    {
+        var validation = ValidateAndMap(request, output);
+        return validation.Selection is null
+            ? CreateFailure(validation.Error, elapsedMilliseconds, exitCode: exitCode,
+                category: CategorizeValidationFailure(validation.Error))
+            : new RustEvidenceSelectorAttempt
+            {
+                Success = true,
+                Selection = validation.Selection,
+                ElapsedMilliseconds = elapsedMilliseconds,
+                SelectorElapsedMilliseconds = Math.Max(0, output.SelectorElapsedMs),
+                ExitCode = exitCode,
+            };
     }
 
     private static (CoverageEvidenceSelectionResult? Selection, string Error) ValidateAndMap(
@@ -373,7 +386,7 @@ public sealed class RustEvidenceSelectorClient : IRustEvidenceSelectorClient
         }, string.Empty);
     }
 
-    private static RustEvidenceSelectorAttempt Failed(
+    internal static RustEvidenceSelectorAttempt CreateFailure(
         string reason,
         long elapsed = 0,
         string diagnostic = "",
@@ -391,6 +404,22 @@ public sealed class RustEvidenceSelectorClient : IRustEvidenceSelectorClient
         ProcessTreeTerminated = processTreeTerminated,
     };
 
+    private static RustEvidenceSelectorAttempt Failed(
+        string reason,
+        long elapsed = 0,
+        string diagnostic = "",
+        bool timedOut = false,
+        int? exitCode = null,
+        RustSelectorFailureCategory category = RustSelectorFailureCategory.UnexpectedException,
+        bool processTreeTerminated = false) => CreateFailure(
+            reason,
+            elapsed,
+            diagnostic,
+            timedOut,
+            exitCode,
+            category,
+            processTreeTerminated);
+
     private static RustSelectorFailureCategory CategorizeValidationFailure(string reason) => reason switch
     {
         "SchemaMismatch" or "SelectedCoverageMismatch" or "SelectedCountMismatch" or "MaxItemsExceeded" =>
@@ -407,7 +436,7 @@ public sealed class RustEvidenceSelectorClient : IRustEvidenceSelectorClient
         return singleLine.Length <= 300 ? singleLine : singleLine[..300];
     }
 
-    private sealed record RustSelectorOutput
+    internal sealed record RustSelectorOutput
     {
         public IReadOnlyList<string>? SelectedEvidenceIds { get; init; }
         public IReadOnlyList<string>? RequiredCoverage { get; init; }

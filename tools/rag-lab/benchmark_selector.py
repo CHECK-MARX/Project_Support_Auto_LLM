@@ -37,6 +37,7 @@ print(
             "samples": SAMPLES,
             "medianMs": statistics.median(timings),
             "p95Ms": timings[int((len(timings) - 1) * 0.95 + 0.999999)],
+            "p99Ms": timings[int((len(timings) - 1) * 0.99 + 0.999999)],
             "processStartupIncluded": False,
         }
     )

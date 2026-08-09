@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
@@ -26,6 +27,12 @@ public sealed record class QuestionAwareEvidenceSelectionContext
     public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
 
     public bool UseRustEvidenceSelector { get; init; }
+
+    public bool UsePersistentRustEvidenceSelector { get; init; }
+
+    public int MaxWorkerRestartsPerMinute { get; init; } = 3;
+
+    public IRustEvidenceSelectorWorkerClient? RustEvidenceSelectorWorkerClient { get; init; }
 
     public bool EnableRustSelectorShadowMode { get; init; }
 

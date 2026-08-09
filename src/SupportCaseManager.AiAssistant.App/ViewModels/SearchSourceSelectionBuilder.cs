@@ -349,6 +349,8 @@ public sealed record class SearchSourceSelectionResult
 
     public RustSelectorShadowStatistics? RustShadowStatistics { get; init; }
 
+    public RustEvidenceSelectorWorkerHealth? PersistentRustWorkerHealth { get; init; }
+
     public IReadOnlyList<string> InsufficientEvidenceReasons { get; init; } = [];
 
     public string RankingMode { get; init; } = string.Empty;

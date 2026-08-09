@@ -100,6 +100,8 @@ public static class CoverageAwareSearchSourceSelector
         var execution = CoverageEvidenceSelectorCoordinator.Select(request, new RustEvidenceSelectorOptions
         {
             UseRustEvidenceSelector = context.UseRustEvidenceSelector,
+            UsePersistentRustEvidenceSelector = context.UsePersistentRustEvidenceSelector,
+            MaxWorkerRestartsPerMinute = context.MaxWorkerRestartsPerMinute,
             EnableRustSelectorShadowMode = context.EnableRustSelectorShadowMode,
             TimeoutMs = context.RustEvidenceSelectorTimeoutMs,
             ExecutablePath = context.RustEvidenceSelectorExecutablePath,
@@ -107,7 +109,7 @@ public static class CoverageAwareSearchSourceSelector
             ShadowMinimumRunsForReadiness = context.ShadowMinimumRunsForReadiness,
             ShadowMaxStoredRecords = context.ShadowMaxStoredRecords,
             ShadowObservationFilePath = context.RustShadowObservationFilePath,
-        });
+        }, workerClient: context.RustEvidenceSelectorWorkerClient);
         var selection = execution.Selection;
         var selectedIds = selection.Selected.Select(static item => item.CandidateId).ToHashSet(StringComparer.Ordinal);
         var selectedViewModels = items
@@ -191,6 +193,7 @@ public static class CoverageAwareSearchSourceSelector
             RustSelectorFallbackReason = execution?.FallbackReason ?? string.Empty,
             RustSelectorParityValidation = execution?.ParityValidation ?? "not applicable",
             RustShadowStatistics = execution?.ShadowStatistics,
+            PersistentRustWorkerHealth = execution?.PersistentWorkerHealth,
             Warning = string.Join("; ", warningParts),
         };
     }

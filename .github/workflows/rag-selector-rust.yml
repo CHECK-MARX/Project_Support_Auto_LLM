@@ -10,6 +10,7 @@ on:
       - "src/SupportCaseManager.Ai.Core/Evidence/**"
       - "tests/SupportCaseManager.Ai.Tests/Evidence/**"
       - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase20RustShadowE2ETests.cs"
+      - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase21PersistentRustWorkerWpfE2ETests.cs"
       - ".github/workflows/rag-selector-rust.yml"
   pull_request:
     paths:
@@ -20,6 +21,7 @@ on:
       - "src/SupportCaseManager.Ai.Core/Evidence/**"
       - "tests/SupportCaseManager.Ai.Tests/Evidence/**"
       - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase20RustShadowE2ETests.cs"
+      - "tests/SupportCaseManager.AiAssistant.App.Tests/Phase21PersistentRustWorkerWpfE2ETests.cs"
       - ".github/workflows/rag-selector-rust.yml"
   workflow_dispatch:
 
@@ -49,6 +51,10 @@ jobs:
       - name: Release build
         working-directory: tools/rag-selector-rs
         run: cargo build --release
+      - name: Package and version check
+        run: >-
+          pwsh -NoProfile -File tools/rag-selector-rs/package.ps1
+          -OutputRoot artifacts/rag-selector/win-x64
       - name: Python to Rust parity
         env:
           RAG_SELECTOR_RS_EXE: ${{ github.workspace }}\tools\rag-selector-rs\target\release\rag-selector-rs.exe
@@ -59,16 +65,22 @@ jobs:
         run: >-
           dotnet test tests/SupportCaseManager.Ai.Tests/SupportCaseManager.Ai.Tests.csproj
           -c Release
-          --filter "FullyQualifiedName~RustEvidenceSelectorRealCliTests|FullyQualifiedName~Phase20RustShadowRealCliTests"
+          --filter "FullyQualifiedName~RustEvidenceSelectorRealCliTests|FullyQualifiedName~Phase20RustShadowRealCliTests|FullyQualifiedName~RustEvidenceSelectorWorkerClientTests|FullyQualifiedName~Phase21PersistentRustWorkerRealTests"
+      - name: Persistent worker benchmark
+        run: >-
+          dotnet run --project tools/rag-selector-benchmark/SupportCaseManager.RagSelector.Benchmark.csproj
+          -c Release --
+          tools/rag-lab/samples/phase18_coverage_selection_cases.json
+          tools/rag-selector-rs/target/release/rag-selector-rs.exe
       - name: WPF selection shadow E2E
         env:
           RAG_SELECTOR_RS_EXE: ${{ github.workspace }}\tools\rag-selector-rs\target\release\rag-selector-rs.exe
         run: >-
           dotnet test tests/SupportCaseManager.AiAssistant.App.Tests/SupportCaseManager.AiAssistant.App.Tests.csproj
           -c Release
-          --filter FullyQualifiedName~Phase20RustShadowE2ETests
+          --filter "FullyQualifiedName~Phase20RustShadowE2ETests|FullyQualifiedName~Phase21PersistentRustWorkerWpfE2ETests"
       - uses: actions/upload-artifact@v4
         with:
           name: rag-selector-rs-win-x64
-          path: tools/rag-selector-rs/target/release/rag-selector-rs.exe
+          path: artifacts/rag-selector/win-x64
           if-no-files-found: error

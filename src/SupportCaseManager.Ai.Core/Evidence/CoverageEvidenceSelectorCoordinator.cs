@@ -23,6 +23,8 @@ public sealed record CoverageEvidenceSelectorExecution
     public RustSelectorShadowObservation? ShadowObservation { get; init; }
 
     public RustSelectorShadowStatistics? ShadowStatistics { get; init; }
+
+    public RustEvidenceSelectorWorkerHealth? PersistentWorkerHealth { get; init; }
 }
 
 public static class CoverageEvidenceSelectorCoordinator
@@ -30,7 +32,9 @@ public static class CoverageEvidenceSelectorCoordinator
     public static CoverageEvidenceSelectorExecution Select(
         CoverageEvidenceSelectionRequest request,
         RustEvidenceSelectorOptions? options = null,
-        IRustEvidenceSelectorClient? rustClient = null)
+        IRustEvidenceSelectorClient? rustClient = null,
+        IRustEvidenceSelectorWorkerClient? workerClient = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         options ??= new RustEvidenceSelectorOptions();
@@ -48,7 +52,8 @@ public static class CoverageEvidenceSelectorCoordinator
         if (options.EnableRustSelectorShadowMode)
         {
             var csharp = TimedCSharp(request);
-            var attempt = rustClient.TrySelect(request, options);
+            var (attempt, _, workerFallbackReason) = TryRust(
+                request, options, rustClient, workerClient, cancellationToken);
             var observation = BuildObservation(request, options, csharp, attempt);
             return new CoverageEvidenceSelectorExecution
             {
@@ -58,23 +63,27 @@ public static class CoverageEvidenceSelectorCoordinator
                 RustElapsedMilliseconds = attempt.ElapsedMilliseconds,
                 RustSelectorElapsedMilliseconds = attempt.SelectorElapsedMilliseconds,
                 RustExitCode = attempt.ExitCode,
-                FallbackReason = attempt.Success ? string.Empty : attempt.FailureReason,
+                FallbackReason = CombineReasons(workerFallbackReason, attempt.Success ? string.Empty : attempt.FailureReason),
                 ParityValidation = FormatParity(observation),
                 ShadowObservation = observation,
                 ShadowStatistics = RecordObservation(observation, options),
+                PersistentWorkerHealth = GetWorkerHealth(workerClient),
             };
         }
 
-        var rustAttempt = rustClient.TrySelect(request, options);
+        var (rustAttempt, engine, workerFailure) = TryRust(
+            request, options, rustClient, workerClient, cancellationToken);
         if (rustAttempt.Success)
         {
             return new CoverageEvidenceSelectorExecution
             {
                 Selection = rustAttempt.Selection!,
-                Engine = "Rust",
+                Engine = engine,
                 RustElapsedMilliseconds = rustAttempt.ElapsedMilliseconds,
                 RustSelectorElapsedMilliseconds = rustAttempt.SelectorElapsedMilliseconds,
                 RustExitCode = rustAttempt.ExitCode,
+                FallbackReason = workerFailure,
+                PersistentWorkerHealth = GetWorkerHealth(workerClient),
             };
         }
 
@@ -87,8 +96,58 @@ public static class CoverageEvidenceSelectorCoordinator
             RustElapsedMilliseconds = rustAttempt.ElapsedMilliseconds,
             RustSelectorElapsedMilliseconds = rustAttempt.SelectorElapsedMilliseconds,
             RustExitCode = rustAttempt.ExitCode,
-            FallbackReason = rustAttempt.FailureReason,
+            FallbackReason = CombineReasons(workerFailure, rustAttempt.FailureReason),
+            PersistentWorkerHealth = GetWorkerHealth(workerClient),
         };
+    }
+
+    private static (RustEvidenceSelectorAttempt Attempt, string Engine, string WorkerFallbackReason) TryRust(
+        CoverageEvidenceSelectionRequest request,
+        RustEvidenceSelectorOptions options,
+        IRustEvidenceSelectorClient rustClient,
+        IRustEvidenceSelectorWorkerClient? workerClient,
+        CancellationToken cancellationToken)
+    {
+        if (!options.UsePersistentRustEvidenceSelector)
+        {
+            return (rustClient.TrySelect(request, options), "Rust", string.Empty);
+        }
+
+        var workerAttempt = workerClient is null
+            ? RustEvidenceSelectorClient.CreateFailure(
+                "WorkerClientUnavailable",
+                category: RustSelectorFailureCategory.StartFailure)
+            : workerClient.TrySelect(request, options, cancellationToken);
+        if (workerAttempt.Success)
+        {
+            return (workerAttempt, "PersistentRust", string.Empty);
+        }
+
+        workerClient?.RecordFallback();
+        var singleShotAttempt = rustClient.TrySelect(request, options);
+        return (singleShotAttempt, "Rust", $"Worker:{workerAttempt.FailureReason}");
+    }
+
+    private static RustEvidenceSelectorWorkerHealth? GetWorkerHealth(
+        IRustEvidenceSelectorWorkerClient? workerClient)
+    {
+        try
+        {
+            return workerClient?.GetHealth();
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+    }
+
+    private static string CombineReasons(string first, string second)
+    {
+        if (string.IsNullOrWhiteSpace(first))
+        {
+            return second;
+        }
+        return string.IsNullOrWhiteSpace(second) ? first : $"{first}; SingleShot:{second}";
     }
 
     private static (CoverageEvidenceSelectionResult Selection, double ElapsedMilliseconds) TimedCSharp(

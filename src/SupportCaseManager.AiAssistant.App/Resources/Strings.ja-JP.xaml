@@ -29,6 +29,8 @@
     <sys:String x:Key="UseCoverageAwareEvidenceSelectionLabel">Coverage重視の根拠集合選定 (Phase 18)</sys:String>
     <sys:String x:Key="CoverageAwareMaxEvidenceItemsLabel">不足時の最大件数 (3-5)</sys:String>
     <sys:String x:Key="UseRustEvidenceSelectorLabel">Rust Evidence Selectorを使用</sys:String>
+    <sys:String x:Key="UsePersistentRustEvidenceSelectorLabel">Rust常駐workerを使用</sys:String>
+    <sys:String x:Key="MaxWorkerRestartsPerMinuteLabel">worker再起動/分</sys:String>
     <sys:String x:Key="EnableRustSelectorShadowModeLabel">Rust Shadow比較</sys:String>
     <sys:String x:Key="RustEvidenceSelectorTimeoutLabel">Rust timeout (ms)</sys:String>
     <sys:String x:Key="ShadowMinimumRunsLabel">Shadow最低実運用件数</sys:String>

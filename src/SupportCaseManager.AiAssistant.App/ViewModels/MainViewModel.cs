@@ -42,7 +42,8 @@ public sealed class MainViewModel : ObservableObject
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate), nameof(UsePhase175QualityControls),
         nameof(UseCoverageAwareEvidenceSelection), nameof(CoverageAwareMaxEvidenceItems),
-        nameof(UseRustEvidenceSelector), nameof(EnableRustSelectorShadowMode),
+        nameof(UseRustEvidenceSelector), nameof(UsePersistentRustEvidenceSelector),
+        nameof(MaxWorkerRestartsPerMinute), nameof(EnableRustSelectorShadowMode),
         nameof(RustEvidenceSelectorTimeoutMs), nameof(RustEvidenceSelectorExecutablePath),
         nameof(ShadowMinimumRunsForReadiness), nameof(ShadowMaxStoredRecords),
         nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
@@ -80,6 +81,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly Func<string, IAiDiagnosticLogger> loggerFactory;
     private readonly IAppAppearanceService appearanceService;
     private readonly ILlmClientFactory llmClientFactory;
+    private readonly IRustEvidenceSelectorWorkerClient persistentRustEvidenceSelectorWorkerClient;
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
@@ -129,6 +131,8 @@ public sealed class MainViewModel : ObservableObject
     private bool useCoverageAwareEvidenceSelection;
     private int coverageAwareMaxEvidenceItems = 5;
     private bool useRustEvidenceSelector;
+    private bool usePersistentRustEvidenceSelector;
+    private int maxWorkerRestartsPerMinute = 3;
     private bool enableRustSelectorShadowMode;
     private int rustEvidenceSelectorTimeoutMs = 2000;
     private string rustEvidenceSelectorExecutablePath = string.Empty;
@@ -237,7 +241,8 @@ public sealed class MainViewModel : ObservableObject
         IAiDraftStore draftStore,
         Func<string, IAiDiagnosticLogger> loggerFactory,
         IAppAppearanceService appearanceService,
-        ILlmClientFactory? llmClientFactory = null)
+        ILlmClientFactory? llmClientFactory = null,
+        IRustEvidenceSelectorWorkerClient? persistentRustEvidenceSelectorWorkerClient = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -258,6 +263,8 @@ public sealed class MainViewModel : ObservableObject
         this.loggerFactory = loggerFactory;
         this.appearanceService = appearanceService;
         this.llmClientFactory = llmClientFactory ?? new LlmClientFactory();
+        this.persistentRustEvidenceSelectorWorkerClient = persistentRustEvidenceSelectorWorkerClient ??
+            new RustEvidenceSelectorWorkerClient();
 
         LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
@@ -365,6 +372,11 @@ public sealed class MainViewModel : ObservableObject
     {
         codex = codexViewModel ?? throw new ArgumentNullException(nameof(codexViewModel));
         OnPropertyChanged(nameof(Codex));
+    }
+
+    public void ShutdownEvidenceSelector()
+    {
+        persistentRustEvidenceSelectorWorkerClient.Dispose();
     }
 
     public CodexCaseSnapshot BuildCodexCaseSnapshot()
@@ -832,6 +844,18 @@ public sealed class MainViewModel : ObservableObject
     {
         get => useRustEvidenceSelector;
         set => SetProperty(ref useRustEvidenceSelector, value);
+    }
+
+    public bool UsePersistentRustEvidenceSelector
+    {
+        get => usePersistentRustEvidenceSelector;
+        set => SetProperty(ref usePersistentRustEvidenceSelector, value);
+    }
+
+    public int MaxWorkerRestartsPerMinute
+    {
+        get => maxWorkerRestartsPerMinute;
+        set => SetProperty(ref maxWorkerRestartsPerMinute, Math.Clamp(value, 0, 60));
     }
 
     public bool EnableRustSelectorShadowMode
@@ -2810,6 +2834,8 @@ public sealed class MainViewModel : ObservableObject
         UseCoverageAwareEvidenceSelection = settings.UseCoverageAwareEvidenceSelection;
         CoverageAwareMaxEvidenceItems = settings.CoverageAwareMaxEvidenceItems;
         UseRustEvidenceSelector = settings.UseRustEvidenceSelector;
+        UsePersistentRustEvidenceSelector = settings.UsePersistentRustEvidenceSelector;
+        MaxWorkerRestartsPerMinute = settings.MaxWorkerRestartsPerMinute;
         EnableRustSelectorShadowMode = settings.EnableRustSelectorShadowMode;
         RustEvidenceSelectorTimeoutMs = settings.RustEvidenceSelectorTimeoutMs;
         RustEvidenceSelectorExecutablePath = settings.RustEvidenceSelectorExecutablePath;
@@ -3014,6 +3040,8 @@ public sealed class MainViewModel : ObservableObject
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
             CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
             UseRustEvidenceSelector = UseRustEvidenceSelector,
+            UsePersistentRustEvidenceSelector = UsePersistentRustEvidenceSelector,
+            MaxWorkerRestartsPerMinute = MaxWorkerRestartsPerMinute,
             EnableRustSelectorShadowMode = EnableRustSelectorShadowMode,
             RustEvidenceSelectorTimeoutMs = RustEvidenceSelectorTimeoutMs,
             RustEvidenceSelectorExecutablePath = RustEvidenceSelectorExecutablePath,
@@ -4067,6 +4095,9 @@ public sealed class MainViewModel : ObservableObject
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
             CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
             UseRustEvidenceSelector = UseRustEvidenceSelector,
+            UsePersistentRustEvidenceSelector = UsePersistentRustEvidenceSelector,
+            MaxWorkerRestartsPerMinute = MaxWorkerRestartsPerMinute,
+            RustEvidenceSelectorWorkerClient = persistentRustEvidenceSelectorWorkerClient,
             EnableRustSelectorShadowMode = EnableRustSelectorShadowMode,
             RustEvidenceSelectorTimeoutMs = RustEvidenceSelectorTimeoutMs,
             RustEvidenceSelectorExecutablePath = RustEvidenceSelectorExecutablePath,
@@ -5055,6 +5086,15 @@ public sealed class MainViewModel : ObservableObject
                 builder.AppendLine($"C# selector elapsed: {selection.CSharpSelectorElapsedMilliseconds:0.000} ms");
                 builder.AppendLine($"Fallback reason: {(string.IsNullOrWhiteSpace(selection.RustSelectorFallbackReason) ? "(none)" : selection.RustSelectorFallbackReason)}");
                 builder.AppendLine($"Parity validation: {selection.RustSelectorParityValidation}");
+                if (selection.PersistentRustWorkerHealth is { } worker)
+                {
+                    builder.AppendLine("Persistent Rust worker:");
+                    builder.AppendLine($"- Mode/status/PID: {worker.Mode} / {worker.Status} / {(worker.ProcessId?.ToString() ?? "-")}");
+                    builder.AppendLine($"- Protocol/version: {worker.ProtocolVersion} / {(string.IsNullOrWhiteSpace(worker.WorkerVersion) ? "-" : worker.WorkerVersion)}");
+                    builder.AppendLine($"- Requests/restarts/fallbacks: {worker.Requests}/{worker.Restarts}/{worker.Fallbacks}");
+                    builder.AppendLine($"- Protocol errors/timeouts: {worker.ProtocolErrors}/{worker.Timeouts}");
+                    builder.AppendLine($"- Median/p95/p99: {worker.MedianElapsedMilliseconds:0.000}/{worker.P95ElapsedMilliseconds:0.000}/{worker.P99ElapsedMilliseconds:0.000} ms");
+                }
                 if (selection.RustShadowStatistics is { } shadow)
                 {
                     builder.AppendLine("Rust Selector Shadow summary:");

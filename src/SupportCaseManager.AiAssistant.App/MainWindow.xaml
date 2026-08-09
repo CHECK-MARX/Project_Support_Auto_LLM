@@ -546,6 +546,14 @@
                                       IsChecked="{Binding UseRustEvidenceSelector}"
                                       IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"
                                       Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UsePersistentRustEvidenceSelectorLabel}"
+                                      IsChecked="{Binding UsePersistentRustEvidenceSelector}"
+                                      IsEnabled="{Binding UseRustEvidenceSelector}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource MaxWorkerRestartsPerMinuteLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="42"
+                                     Text="{Binding MaxWorkerRestartsPerMinute, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UsePersistentRustEvidenceSelector}" />
                             <CheckBox Content="{DynamicResource EnableRustSelectorShadowModeLabel}"
                                       IsChecked="{Binding EnableRustSelectorShadowMode}"
                                       IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"

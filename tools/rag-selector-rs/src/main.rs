@@ -1,10 +1,23 @@
-use std::io;
+use std::io::{self, BufReader};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    if std::env::args().nth(1).as_deref() == Some("--version") {
+    let mode = std::env::args().nth(1);
+    if mode.as_deref() == Some("--version") {
         println!("rag-selector-rs {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+
+    if mode.as_deref() == Some("--worker") {
+        let stdin = io::stdin();
+        let mut reader = BufReader::new(stdin.lock());
+        return match rag_selector_rs::run_worker(&mut reader, &mut io::stdout().lock()) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(error.exit_code())
+            }
+        };
     }
 
     match rag_selector_rs::run_cli(&mut io::stdin().lock(), &mut io::stdout().lock()) {

@@ -19,6 +19,8 @@ public sealed class AiAssistantSettingsTests
         Assert.False(settings.UseCoverageAwareEvidenceSelection);
         Assert.Equal(5, settings.CoverageAwareMaxEvidenceItems);
         Assert.False(settings.UseRustEvidenceSelector);
+        Assert.False(settings.UsePersistentRustEvidenceSelector);
+        Assert.Equal(3, settings.MaxWorkerRestartsPerMinute);
         Assert.False(settings.EnableRustSelectorShadowMode);
         Assert.Equal(2000, settings.RustEvidenceSelectorTimeoutMs);
         Assert.Empty(settings.RustEvidenceSelectorExecutablePath);
@@ -34,6 +36,8 @@ public sealed class AiAssistantSettingsTests
         var restored = JsonSerializer.Deserialize<AiAssistantSettings>(JsonSerializer.Serialize(new AiAssistantSettings
         {
             UseRustEvidenceSelector = true,
+            UsePersistentRustEvidenceSelector = true,
+            MaxWorkerRestartsPerMinute = 5,
             EnableRustSelectorShadowMode = true,
             RustEvidenceSelectorTimeoutMs = 1200,
             RustEvidenceSelectorExecutablePath = @"C:\tools\rag-selector-rs.exe",
@@ -43,12 +47,16 @@ public sealed class AiAssistantSettingsTests
 
         Assert.NotNull(oldSettings);
         Assert.False(oldSettings.UseRustEvidenceSelector);
+        Assert.False(oldSettings.UsePersistentRustEvidenceSelector);
+        Assert.Equal(3, oldSettings.MaxWorkerRestartsPerMinute);
         Assert.False(oldSettings.EnableRustSelectorShadowMode);
         Assert.Equal(2000, oldSettings.RustEvidenceSelectorTimeoutMs);
         Assert.Equal(50, oldSettings.ShadowMinimumRunsForReadiness);
         Assert.Equal(500, oldSettings.ShadowMaxStoredRecords);
         Assert.NotNull(restored);
         Assert.True(restored.UseRustEvidenceSelector);
+        Assert.True(restored.UsePersistentRustEvidenceSelector);
+        Assert.Equal(5, restored.MaxWorkerRestartsPerMinute);
         Assert.True(restored.EnableRustSelectorShadowMode);
         Assert.Equal(1200, restored.RustEvidenceSelectorTimeoutMs);
         Assert.Equal(@"C:\tools\rag-selector-rs.exe", restored.RustEvidenceSelectorExecutablePath);

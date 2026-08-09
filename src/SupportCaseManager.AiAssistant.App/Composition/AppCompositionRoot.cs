@@ -79,7 +79,8 @@ public static class AppCompositionRoot
             CreateAnswerService,
             draftStore,
             CreateLogger,
-            appearanceService);
+            appearanceService,
+            persistentRustEvidenceSelectorWorkerClient: new RustEvidenceSelectorWorkerClient());
 
         var codexLogger = new CodexDiagnosticLogger();
         var codexProcessHost = new CodexAppServerProcessHost();

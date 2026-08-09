@@ -36,6 +36,25 @@ if (File.Exists(rustExecutable))
     }
     var processTimings = Measure(processSamples, () => Ensure(client.TrySelect(request, options)));
     Console.WriteLine(JsonSerializer.Serialize(Result("RustCliTotal", warmup, processTimings, true), JsonSerializerOptions.Web));
+
+    using var worker = new RustEvidenceSelectorWorkerClient();
+    var workerOptions = options with { UsePersistentRustEvidenceSelector = true };
+    for (var index = 0; index < warmup; index++)
+    {
+        Ensure(worker.TrySelect(request, workerOptions));
+    }
+    var workerPid = worker.GetHealth().ProcessId;
+    var workerTimings = Measure(processSamples, () =>
+    {
+        Ensure(worker.TrySelect(request, workerOptions));
+        if (worker.GetHealth().ProcessId != workerPid)
+        {
+            throw new InvalidOperationException("Persistent Rust worker restarted during benchmark.");
+        }
+    });
+    Console.WriteLine(JsonSerializer.Serialize(
+        Result("RustPersistentWorker", warmup, workerTimings, false),
+        JsonSerializerOptions.Web));
 }
 
 static List<double> Measure(int samples, Action action)
@@ -58,6 +77,7 @@ static object Result(string engine, int warmup, IReadOnlyList<double> timings, b
     Samples = timings.Count,
     MedianMs = Percentile(timings, 0.50),
     P95Ms = Percentile(timings, 0.95),
+    P99Ms = Percentile(timings, 0.99),
     ProcessStartupIncluded = process,
 };
 

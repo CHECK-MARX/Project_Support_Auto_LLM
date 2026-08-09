@@ -29,6 +29,8 @@
     <sys:String x:Key="UseCoverageAwareEvidenceSelectionLabel">Coverage-aware evidence set selection (Phase 18)</sys:String>
     <sys:String x:Key="CoverageAwareMaxEvidenceItemsLabel">Max items when coverage is missing (3-5)</sys:String>
     <sys:String x:Key="UseRustEvidenceSelectorLabel">Use Rust evidence selector</sys:String>
+    <sys:String x:Key="UsePersistentRustEvidenceSelectorLabel">Use persistent Rust worker</sys:String>
+    <sys:String x:Key="MaxWorkerRestartsPerMinuteLabel">worker restarts/min</sys:String>
     <sys:String x:Key="EnableRustSelectorShadowModeLabel">Rust shadow comparison</sys:String>
     <sys:String x:Key="RustEvidenceSelectorTimeoutLabel">Rust timeout (ms)</sys:String>
     <sys:String x:Key="ShadowMinimumRunsLabel">Shadow minimum production runs</sys:String>

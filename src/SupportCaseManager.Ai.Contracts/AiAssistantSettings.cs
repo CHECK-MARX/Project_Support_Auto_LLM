@@ -76,6 +76,12 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("useRustEvidenceSelector")]
     public bool UseRustEvidenceSelector { get; init; }
 
+    [JsonPropertyName("usePersistentRustEvidenceSelector")]
+    public bool UsePersistentRustEvidenceSelector { get; init; }
+
+    [JsonPropertyName("maxWorkerRestartsPerMinute")]
+    public int MaxWorkerRestartsPerMinute { get; init; } = 3;
+
     [JsonPropertyName("enableRustSelectorShadowMode")]
     public bool EnableRustSelectorShadowMode { get; init; }
 
