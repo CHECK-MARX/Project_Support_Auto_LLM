@@ -98,7 +98,8 @@ public static class AppCompositionRoot
             viewModel.ApplyCodexMemo,
             viewModel.UndoCodexApplication,
             excelTranslationService: new ExcelTranslationService(),
-            artifactPromptComposer: new ArtifactPromptComposer());
+            artifactPromptComposer: new ArtifactPromptComposer(),
+            ragLabEvidenceLoader: new RagLabEvidenceLoader());
         viewModel.AttachCodex(codexViewModel);
 
         return new MainWindow(viewModel);

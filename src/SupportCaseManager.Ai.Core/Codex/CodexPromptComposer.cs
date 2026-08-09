@@ -22,6 +22,7 @@ public sealed record CodexInitialPromptContext
     public IReadOnlyList<CodexPromptAttachment> Attachments { get; init; } = [];
     public IReadOnlyList<CodexReadableAttachmentContent> AttachmentContents { get; init; } = [];
     public IReadOnlyList<SearchSource> Evidence { get; init; } = [];
+    public IReadOnlyList<RagLabEvidenceItem> RagLabEvidence { get; init; } = [];
     public string UserInstruction { get; init; } = string.Empty;
 }
 
@@ -40,10 +41,14 @@ public interface ICodexPromptComposer
 public sealed class CodexPromptComposer : ICodexPromptComposer
 {
     private readonly string applicationBaseDirectory;
+    private readonly IRagLabEvidencePromptFormatter ragLabEvidenceFormatter;
 
-    public CodexPromptComposer(string? applicationBaseDirectory = null)
+    public CodexPromptComposer(
+        string? applicationBaseDirectory = null,
+        IRagLabEvidencePromptFormatter? ragLabEvidenceFormatter = null)
     {
         this.applicationBaseDirectory = applicationBaseDirectory ?? AppContext.BaseDirectory;
+        this.ragLabEvidenceFormatter = ragLabEvidenceFormatter ?? new RagLabEvidencePromptFormatter();
     }
 
     public CodexPromptCompositionResult ComposeInitialPrompt(CodexInitialPromptContext context)
@@ -61,6 +66,11 @@ public sealed class CodexPromptComposer : ICodexPromptComposer
         AppendSection(builder, "5. 選択された添付ファイル一覧", BuildAttachments(context.Attachments), "(選択ファイルなし)");
         AppendSection(builder, "6. アプリが読取・UTF-8正規化した添付本文", BuildAttachmentContents(context.AttachmentContents), "(抽出本文なし。画像は別入力として送信)");
         AppendSection(builder, "7. 既存RAGが選定した参考情報", BuildEvidence(context.Evidence), "(参考情報なし。案件ファイルだけで調査可能)");
+        if (context.RagLabEvidence.Count > 0)
+        {
+            builder.AppendLine(ragLabEvidenceFormatter.Format(context.RagLabEvidence));
+            builder.AppendLine();
+        }
         AppendSection(builder, "8. 今回の指示", context.UserInstruction, "案件全体を読み取り専用で調査し、根拠と回答案を示してください。");
         return new CodexPromptCompositionResult(
             builder.ToString().Trim(),

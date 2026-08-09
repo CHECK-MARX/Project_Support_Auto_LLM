@@ -22,6 +22,11 @@
     <sys:String x:Key="ClosedCasesFolderLabel">クローズ案件フォルダ</sys:String>
     <sys:String x:Key="ClosedFolderLabel">クローズフォルダ</sys:String>
     <sys:String x:Key="SelectButton">選択</sys:String>
+    <sys:String x:Key="RagLabEvidenceSettingsHeader">RAG Lab Evidence（追加根拠）</sys:String>
+    <sys:String x:Key="UseRagLabEvidenceLabel">RAG Lab EvidenceをCodex調査へ追加する</sys:String>
+    <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
+    <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
+    <sys:String x:Key="RagLabEvidenceMaxItemsLabel">最大追加件数（1～5）</sys:String>
 
     <sys:String x:Key="CaseNoteIndexHeader">過去案件ノートインデックス</sys:String>
     <sys:String x:Key="BuildPastCaseIndexButton">過去案件インデックス作成</sys:String>

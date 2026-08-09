@@ -75,4 +75,16 @@ public sealed record class AiAssistantSettings
 
     [JsonPropertyName("codexExecutablePath")]
     public string CodexExecutablePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("useRagLabEvidence")]
+    public bool UseRagLabEvidence { get; init; }
+
+    [JsonPropertyName("ragLabEvidenceFilePath")]
+    public string RagLabEvidenceFilePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("ragLabBaselineReadinessFilePath")]
+    public string RagLabBaselineReadinessFilePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("ragLabEvidenceMaxItems")]
+    public int RagLabEvidenceMaxItems { get; init; } = 3;
 }

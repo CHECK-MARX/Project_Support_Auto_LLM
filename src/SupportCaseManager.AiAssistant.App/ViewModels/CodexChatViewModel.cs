@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using SupportCaseManager.Ai.Core.Artifacts;
@@ -11,12 +12,24 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
 public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposable
 {
+    private static readonly string[] RagLabInternalMarkers =
+    [
+        "[RAG Evidence]",
+        "[End RAG Evidence]",
+        "Selection reason:",
+        "Product match:",
+        "Version match:",
+        "Evidence 1",
+    ];
+
     private readonly ICodexAppServerClient client;
     private readonly ICodexCaseFileScanner fileScanner;
     private readonly ICodexPromptComposer promptComposer;
     private readonly ICodexSessionStore sessionStore;
     private readonly ICodexTechnicalValueDiffDetector diffDetector;
+    private readonly ICodexEvidenceAbComparisonService abComparisonService;
     private readonly ICodexAttachmentContentReader attachmentContentReader;
+    private readonly IRagLabEvidenceLoader ragLabEvidenceLoader;
     private readonly ICodexDiagnosticLogger logger;
     private readonly Func<CodexCaseSnapshot> caseProvider;
     private readonly Func<string> executablePathProvider;
@@ -57,6 +70,16 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private readonly HashSet<string> confirmedFiles = new(StringComparer.OrdinalIgnoreCase);
     private bool disposed;
     private bool hasSentInitialContext;
+    private long? activeTurnStartedTimestamp;
+    private string activeComparisonKey = string.Empty;
+    private IReadOnlyList<string> activeExistingEvidenceSourceTypes = [];
+    private IReadOnlyList<RagLabEvidenceItem> activeRagLabEvidence = [];
+    private CodexAbAnswerSample? latestCompletedAbSample;
+    private CodexAbAnswerSample? baselineAbSample;
+    private CodexAbAnswerSample? evidenceAbSample;
+    private string baselineAbStatus = "未記録";
+    private string evidenceAbStatus = "未記録";
+    private string abComparisonText = "A/B回答を記録すると比較できます。";
 
     public CodexChatViewModel(
         ICodexAppServerClient client,
@@ -75,14 +98,18 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         IArtifactPromptComposer? artifactPromptComposer = null,
         ArtifactRequestDetector? artifactRequestDetector = null,
         ExcelTranslationJsonParser? translationJsonParser = null,
-        CaseArtifactPathPolicy? artifactPathPolicy = null)
+        CaseArtifactPathPolicy? artifactPathPolicy = null,
+        IRagLabEvidenceLoader? ragLabEvidenceLoader = null,
+        ICodexEvidenceAbComparisonService? abComparisonService = null)
     {
         this.client = client;
         this.fileScanner = fileScanner;
         this.promptComposer = promptComposer;
         this.sessionStore = sessionStore;
         this.diffDetector = diffDetector;
+        this.abComparisonService = abComparisonService ?? new CodexEvidenceAbComparisonService(diffDetector);
         this.attachmentContentReader = attachmentContentReader ?? new CodexAttachmentContentReader();
+        this.ragLabEvidenceLoader = ragLabEvidenceLoader ?? new RagLabEvidenceLoader();
         this.logger = logger;
         this.caseProvider = caseProvider;
         this.executablePathProvider = executablePathProvider;
@@ -108,6 +135,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         UndoMemoCommand = new RelayCommand(() => undoApplication(false));
         CopyAnswerCommand = new RelayCommand(CopyLatestAnswer, HasLatestAnswer);
         FinalReviewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(FinalReviewAsync), () => !turnActive && HasLatestAnswer());
+        CaptureAbBaselineCommand = new RelayCommand(CaptureAbBaseline, CanCaptureAbBaseline);
+        CaptureAbEvidenceCommand = new RelayCommand(CaptureAbEvidence, CanCaptureAbEvidence);
+        CompareAbCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(CompareAbAsync), CanCompareAb);
         InitializeArtifactCommands();
 
         client.StateChanged += OnStateChanged;
@@ -136,6 +166,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     public RelayCommand UndoMemoCommand { get; }
     public RelayCommand CopyAnswerCommand { get; }
     public AsyncRelayCommand FinalReviewCommand { get; }
+    public RelayCommand CaptureAbBaselineCommand { get; }
+    public RelayCommand CaptureAbEvidenceCommand { get; }
+    public AsyncRelayCommand CompareAbCommand { get; }
 
     public CodexConnectionState ConnectionState
     {
@@ -277,6 +310,24 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         private set => SetProperty(ref reviewWarnings, value);
     }
 
+    public string BaselineAbStatus
+    {
+        get => baselineAbStatus;
+        private set => SetProperty(ref baselineAbStatus, value);
+    }
+
+    public string EvidenceAbStatus
+    {
+        get => evidenceAbStatus;
+        private set => SetProperty(ref evidenceAbStatus, value);
+    }
+
+    public string AbComparisonText
+    {
+        get => abComparisonText;
+        private set => SetProperty(ref abComparisonText, value);
+    }
+
     public string FileScanStatus
     {
         get => fileScanStatus;
@@ -388,8 +439,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         {
             Messages.Clear();
             hasSentInitialContext = false;
+            latestCompletedAbSample = null;
             TechnicalAnswer = string.Empty;
             ReviewAnswer = string.Empty;
+            activeComparisonKey = string.Empty;
+            activeExistingEvidenceSourceTypes = [];
+            activeRagLabEvidence = [];
             ThreadId = result.ThreadId;
             Model = string.IsNullOrWhiteSpace(result.Model) ? Model : result.Model;
             ConnectionDetails = "新しい読み取り専用Threadを開始しました。指示を送信できます。";
@@ -422,6 +477,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             RunOnUi(() =>
             {
                 Messages.Clear();
+                latestCompletedAbSample = null;
+                activeComparisonKey = string.Empty;
+                activeExistingEvidenceSourceTypes = [];
+                activeRagLabEvidence = [];
                 foreach (var message in previous.Messages)
                 {
                     Messages.Add(new CodexChatMessageViewModel
@@ -484,6 +543,15 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         IReadOnlyList<string> compositionWarnings = [];
         if (firstTurn)
         {
+            var ragLabEvidence = await LoadRagLabEvidenceSafelyAsync(currentSnapshot).ConfigureAwait(false);
+            activeComparisonKey = CodexEvidenceAbComparisonService.CreateComparisonKey(
+                currentSnapshot.ProductName,
+                currentSnapshot.InquiryText);
+            activeExistingEvidenceSourceTypes = currentSnapshot.Evidence
+                .Select(static source => source.SourceType)
+                .Where(static sourceType => !string.IsNullOrWhiteSpace(sourceType))
+                .ToArray();
+            activeRagLabEvidence = ragLabEvidence.Evidence.ToArray();
             var composition = promptComposer.ComposeInitialPrompt(new CodexInitialPromptContext
             {
                 ProductId = currentSnapshot.ProductId,
@@ -502,10 +570,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     .ToArray(),
                 AttachmentContents = attachmentRead.Contents,
                 Evidence = currentSnapshot.Evidence,
+                RagLabEvidence = ragLabEvidence.Evidence,
                 UserInstruction = instruction,
             });
             prompt = composition.Prompt;
-            compositionWarnings = composition.Warnings;
+            compositionWarnings = composition.Warnings.Concat(ragLabEvidence.Warnings).Distinct().ToArray();
         }
         else
         {
@@ -543,6 +612,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             Messages.Add(userMessage);
             Messages.Add(assistantMessage);
             currentAssistantMessage = assistantMessage;
+            latestCompletedAbSample = null;
             PromptInput = string.Empty;
             turnActive = true;
             confirmedFiles.Clear();
@@ -557,6 +627,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             RaiseCommandStates();
         });
 
+        activeTurnStartedTimestamp = Stopwatch.GetTimestamp();
         try
         {
             var turn = await client.StartTurnAsync(prompt, imagePaths).ConfigureAwait(false);
@@ -569,6 +640,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
         catch
         {
+            activeTurnStartedTimestamp = null;
             RunOnUi(() =>
             {
                 turnActive = false;
@@ -576,6 +648,44 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 RaiseCommandStates();
             });
             throw;
+        }
+    }
+
+    private async Task<RagLabEvidenceLoadResult> LoadRagLabEvidenceSafelyAsync(CodexCaseSnapshot snapshot)
+    {
+        if (!snapshot.UseRagLabEvidence)
+        {
+            return new RagLabEvidenceLoadResult
+            {
+                IsEnabled = false,
+                FallbackReason = "Disabled",
+            };
+        }
+
+        try
+        {
+            return await ragLabEvidenceLoader.LoadAsync(new RagLabEvidenceLoadRequest
+            {
+                IsEnabled = true,
+                EvidenceFilePath = snapshot.RagLabEvidenceFilePath,
+                BaselineReadinessFilePath = snapshot.RagLabBaselineReadinessFilePath,
+                MaxItems = snapshot.RagLabEvidenceMaxItems,
+                ExpectedProduct = snapshot.ProductName,
+                ExpectedVersion = snapshot.TargetVersion,
+            }).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await logger.WriteAsync(
+                "rag-lab-evidence",
+                $"RAG Lab Evidence loading failed; continuing without additional evidence. {ex.GetType().Name}",
+                ex).ConfigureAwait(false);
+            return new RagLabEvidenceLoadResult
+            {
+                IsEnabled = true,
+                Warnings = [$"RAG Lab Evidenceの追加に失敗したため、従来経路で続行します: {ex.GetType().Name}"],
+                FallbackReason = "UnexpectedLoadFailure",
+            };
         }
     }
 
@@ -703,6 +813,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     {
         var artifactCompletion = artifactTurnCompletion;
         var artifactResponse = string.Empty;
+        var generationDuration = activeTurnStartedTimestamp.HasValue
+            ? Stopwatch.GetElapsedTime(activeTurnStartedTimestamp.Value)
+            : TimeSpan.Zero;
+        activeTurnStartedTimestamp = null;
         if (currentSession is not null)
         {
             currentSession = currentSession with { LastTurnId = eventArgs.TurnId };
@@ -730,6 +844,20 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 else
                 {
                     TechnicalAnswer = currentAssistantMessage.Text;
+                }
+
+                if (artifactCompletion is null
+                    && eventArgs.Status.Equals("completed", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(activeComparisonKey))
+                {
+                    latestCompletedAbSample = new CodexAbAnswerSample
+                    {
+                        ComparisonKey = activeComparisonKey,
+                        AnswerText = currentAssistantMessage.Text,
+                        GenerationDuration = generationDuration,
+                        ExistingEvidenceSourceTypes = activeExistingEvidenceSourceTypes.ToArray(),
+                        RagLabEvidence = activeRagLabEvidence.ToArray(),
+                    };
                 }
             }
 
@@ -810,6 +938,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private void OnError(object? sender, string error)
     {
+        activeTurnStartedTimestamp = null;
         artifactTurnCompletion?.TrySetException(new InvalidOperationException(error));
         RunOnUi(() =>
         {
@@ -840,6 +969,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             };
         RunOnUi(() =>
         {
+            latestCompletedAbSample = null;
+            activeComparisonKey = string.Empty;
+            activeExistingEvidenceSourceTypes = [];
+            activeRagLabEvidence = [];
             hasPreviousSession = previous is not null && !string.IsNullOrWhiteSpace(previous.CodexThreadId);
             if (hasPreviousSession)
             {
@@ -922,10 +1055,21 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private void ApplyLatestReply()
     {
         var value = LatestAnswer();
+        if (currentSnapshot?.UseRagLabEvidence == true && ContainsRagLabInternalMarker(value))
+        {
+            WarningText = "お客様向け回答にRAG Labの内部処理用語が含まれているため、返信案への反映を中止しました。Codexで最終レビューしてください。";
+            ConnectionDetails = "返信案へ反映していません。内部処理用語を除去してから再確認してください。";
+            return;
+        }
         if (applyReply(value))
         {
             ConnectionDetails = "回答を返信案編集欄へ反映しました。案件ファイルはまだ変更していません。";
         }
+    }
+
+    private static bool ContainsRagLabInternalMarker(string value)
+    {
+        return RagLabInternalMarkers.Any(marker => value.Contains(marker, StringComparison.OrdinalIgnoreCase));
     }
 
     private void ApplyLatestMemo()
@@ -946,6 +1090,114 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             ConnectionDetails = "Codex回答をクリップボードへコピーしました。";
         }
     }
+
+    private void CaptureAbBaseline()
+    {
+        if (latestCompletedAbSample is null || latestCompletedAbSample.RagLabEvidence.Count > 0)
+        {
+            return;
+        }
+
+        baselineAbSample = latestCompletedAbSample with { Variant = "A" };
+        BaselineAbStatus = BuildAbCaptureStatus(baselineAbSample);
+        AbComparisonText = "Aを記録しました。Evidence付き回答Bを記録すると比較できます。";
+        RaiseCommandStates();
+    }
+
+    private void CaptureAbEvidence()
+    {
+        if (latestCompletedAbSample is null || latestCompletedAbSample.RagLabEvidence.Count == 0)
+        {
+            return;
+        }
+
+        evidenceAbSample = latestCompletedAbSample with { Variant = "B" };
+        EvidenceAbStatus = BuildAbCaptureStatus(evidenceAbSample);
+        AbComparisonText = "Bを記録しました。AとBが同一問い合わせの場合に比較できます。";
+        RaiseCommandStates();
+    }
+
+    private async Task CompareAbAsync()
+    {
+        if (baselineAbSample is null || evidenceAbSample is null)
+        {
+            return;
+        }
+
+        var result = abComparisonService.Compare(
+            baselineAbSample,
+            evidenceAbSample,
+            [currentSnapshot?.ProductName ?? string.Empty]);
+        RunOnUi(() => AbComparisonText = BuildAbComparisonText(result));
+        await logger.WriteAsync(
+            "rag-lab-ab-comparison",
+            $"A/B metrics only. A_answerability={result.Baseline.Answerability} A_evidence={result.Baseline.UsedEvidenceCount} "
+            + $"A_chars={result.Baseline.AnswerLength} A_confirmations={result.Baseline.ConfirmationCount} A_ms={result.Baseline.GenerationMilliseconds} "
+            + $"B_answerability={result.WithEvidence.Answerability} B_evidence={result.WithEvidence.UsedEvidenceCount} "
+            + $"B_chars={result.WithEvidence.AnswerLength} B_confirmations={result.WithEvidence.ConfirmationCount} B_ms={result.WithEvidence.GenerationMilliseconds} "
+            + $"technical_added={result.TechnicalValueDiff.AddedValues.Count} technical_removed={result.TechnicalValueDiff.RemovedValues.Count} "
+            + $"conflicts={result.WithEvidence.EvidenceConflictCount} unverified_fields={result.WithEvidence.UnverifiedEvidenceFieldCount}")
+            .ConfigureAwait(false);
+    }
+
+    private bool CanCaptureAbBaseline() =>
+        !turnActive && latestCompletedAbSample is { RagLabEvidence.Count: 0 };
+
+    private bool CanCaptureAbEvidence() =>
+        !turnActive && latestCompletedAbSample is { RagLabEvidence.Count: > 0 };
+
+    private bool CanCompareAb() =>
+        !turnActive
+        && baselineAbSample is not null
+        && evidenceAbSample is not null
+        && string.Equals(baselineAbSample.ComparisonKey, evidenceAbSample.ComparisonKey, StringComparison.Ordinal);
+
+    private static string BuildAbCaptureStatus(CodexAbAnswerSample sample) =>
+        $"記録済み / 追加Evidence: {sample.RagLabEvidence.Count}件 / 生成時間: {Math.Max(0, sample.GenerationDuration.TotalSeconds):0.0}秒";
+
+    private static string BuildAbComparisonText(CodexEvidenceAbComparisonResult result)
+    {
+        var builder = new StringBuilder();
+        AppendAbMetrics(builder, result.Baseline);
+        builder.AppendLine();
+        AppendAbMetrics(builder, result.WithEvidence);
+        builder.AppendLine();
+        builder.AppendLine("技術値・コマンド差分 (B - A):");
+        builder.AppendLine(result.TechnicalValueDiff.AddedValues.Count == 0
+            ? "  追加: なし"
+            : $"  追加: {string.Join(", ", result.TechnicalValueDiff.AddedValues)}");
+        builder.AppendLine(result.TechnicalValueDiff.RemovedValues.Count == 0
+            ? "  削除: なし"
+            : $"  削除: {string.Join(", ", result.TechnicalValueDiff.RemovedValues)}");
+        builder.AppendLine();
+        builder.AppendLine("品質確認:");
+        builder.AppendLine("- 質問へ直接回答しているか: 要手動確認");
+        builder.AppendLine($"- 具体的な手順を検出: A={YesNo(result.Baseline.HasConcreteSteps)} / B={YesNo(result.WithEvidence.HasConcreteSteps)}");
+        builder.AppendLine($"- 製品不一致の追加根拠: B={result.WithEvidence.ProductMismatchCount}件");
+        builder.AppendLine($"- バージョン不一致の追加根拠: B={result.WithEvidence.VersionMismatchCount}件");
+        builder.AppendLine($"- 根拠の矛盾警告: B={result.WithEvidence.EvidenceConflictCount}件");
+        builder.AppendLine($"- 未確認フィールド: B={result.WithEvidence.UnverifiedEvidenceFieldCount}件 / 断定有無は要手動確認");
+        builder.AppendLine($"- お客様向け日本語を検出: A={YesNo(result.Baseline.HasJapaneseText)} / B={YesNo(result.WithEvidence.HasJapaneseText)}");
+        builder.AppendLine($"- 内部RAG用語を検出: A={YesNo(result.Baseline.ContainsInternalRagTerms)} / B={YesNo(result.WithEvidence.ContainsInternalRagTerms)}");
+        builder.AppendLine($"判定: {result.QualityDecision}");
+        return builder.ToString().TrimEnd();
+    }
+
+    private static void AppendAbMetrics(StringBuilder builder, CodexAbVariantMetrics metrics)
+    {
+        builder.AppendLine($"{metrics.Variant}: 回答可能判定={AnswerabilityText(metrics.Answerability)}");
+        builder.AppendLine($"  使用根拠={metrics.UsedEvidenceCount}件 (公式={metrics.OfficialCount}, Manual={metrics.ManualCount}, PastCase={metrics.PastCaseCount}, その他={metrics.OtherEvidenceCount})");
+        builder.AppendLine($"  回答文字数={metrics.AnswerLength} / 要確認事項={metrics.ConfirmationCount} / 生成時間={metrics.GenerationMilliseconds}ms");
+    }
+
+    private static string AnswerabilityText(CodexAbAnswerability value) => value switch
+    {
+        CodexAbAnswerability.Answerable => "回答あり",
+        CodexAbAnswerability.InsufficientEvidence => "根拠不足表現あり",
+        _ => "回答なし",
+    };
+
+    private static string YesNo(bool value) => value ? "あり" : "なし";
 
     private async Task EnsureConnectedAsync()
     {
@@ -993,6 +1245,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         ApplyMemoCommand.RaiseCanExecuteChanged();
         CopyAnswerCommand.RaiseCanExecuteChanged();
         FinalReviewCommand.RaiseCanExecuteChanged();
+        CaptureAbBaselineCommand.RaiseCanExecuteChanged();
+        CaptureAbEvidenceCommand.RaiseCanExecuteChanged();
+        CompareAbCommand.RaiseCanExecuteChanged();
         RaiseArtifactCommandStates();
         OnPropertyChanged(nameof(SelectedFilesSummary));
     }

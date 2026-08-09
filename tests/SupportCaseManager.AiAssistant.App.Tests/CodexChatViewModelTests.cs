@@ -1,4 +1,5 @@
 using System.Text;
+using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.AiAssistant.App.ViewModels;
@@ -173,6 +174,211 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
+    public async Task SendCommand_RagLabEvidenceOff_DoesNotCallLoaderOrChangePrompt()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var loader = new FakeRagLabEvidenceLoader(CreateEvidenceResult());
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "Checkmarx",
+            SupportId = "SYN-CASE",
+            CaseFolder = temp.Path,
+            InquiryText = "人工問い合わせ",
+            UseRagLabEvidence = false,
+        };
+        var viewModel = CreateViewModel(temp, fakeClient, snapshot, loader);
+        viewModel.PromptInput = "調査してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        var expected = new CodexPromptComposer(temp.Path).ComposeInitialPrompt(new CodexInitialPromptContext
+        {
+            ProductName = snapshot.ProductName,
+            SupportId = snapshot.SupportId,
+            CaseFolder = snapshot.CaseFolder,
+            InquiryText = snapshot.InquiryText,
+            UserInstruction = "調査してください",
+        }).Prompt;
+        Assert.Equal(0, loader.CallCount);
+        Assert.Equal(expected, fakeClient.LastTurnText);
+        Assert.DoesNotContain("[RAG Evidence]", fakeClient.LastTurnText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendCommand_RagLabEvidenceOn_AddsEvidenceToCodexPrompt()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var loader = new FakeRagLabEvidenceLoader(CreateEvidenceResult());
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "Checkmarx",
+            SupportId = "SYN-CASE",
+            CaseFolder = temp.Path,
+            InquiryText = "人工問い合わせ",
+            UseRagLabEvidence = true,
+            RagLabEvidenceFilePath = "evidence.json",
+            RagLabBaselineReadinessFilePath = "readiness.json",
+            RagLabEvidenceMaxItems = 3,
+            TargetVersion = "SYNTHETIC-1.0",
+        };
+        var viewModel = CreateViewModel(temp, fakeClient, snapshot, loader);
+        viewModel.PromptInput = "調査してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, loader.CallCount);
+        Assert.Equal("Checkmarx", loader.LastRequest?.ExpectedProduct);
+        Assert.Equal("SYNTHETIC-1.0", loader.LastRequest?.ExpectedVersion);
+        Assert.Contains("[RAG Evidence]", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("人工追加根拠", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("[End RAG Evidence]", fakeClient.LastTurnText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SendCommand_RagLabLoaderThrows_ContinuesUsingExistingPrompt()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var loader = new FakeRagLabEvidenceLoader(new IOException("人工読込失敗"));
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "Checkmarx",
+            SupportId = "SYN-CASE",
+            CaseFolder = temp.Path,
+            InquiryText = "人工問い合わせ",
+            UseRagLabEvidence = true,
+        };
+        var viewModel = CreateViewModel(temp, fakeClient, snapshot, loader);
+        viewModel.PromptInput = "調査してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, loader.CallCount);
+        Assert.DoesNotContain("[RAG Evidence]", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("従来経路で続行", viewModel.WarningText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApplyReply_WhenRagLabInternalTermsRemain_DoesNotUpdateCustomerDraft()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        fakeClient.EnqueueResponse("[RAG Evidence] 内部情報を含む回答");
+        string? applied = null;
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "Checkmarx",
+            SupportId = "SYN-CASE",
+            CaseFolder = temp.Path,
+            InquiryText = "人工問い合わせ",
+            UseRagLabEvidence = true,
+        };
+        var viewModel = CreateViewModel(
+            temp,
+            fakeClient,
+            snapshot,
+            new FakeRagLabEvidenceLoader(CreateEvidenceResult()),
+            text => { applied = text; return true; });
+        viewModel.PromptInput = "調査してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer.Contains("[RAG Evidence]", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+        viewModel.ApplyReplyCommand.Execute(null);
+
+        Assert.Null(applied);
+        Assert.Contains("返信案への反映を中止", viewModel.WarningText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AbComparison_WithSyntheticData_RecordsTwoUserRunsWithoutPersistingAnswerText()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var logger = new FakeLogger(temp.Path);
+        var loader = new FakeRagLabEvidenceLoader(CreateEvidenceResult());
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "SyntheticProduct",
+            SupportId = "SYN-AB-001",
+            CompanyName = "Synthetic Company",
+            CaseFolder = temp.Path,
+            InquiryText = "人工機能の生成方法を教えてください。",
+            Evidence =
+            [
+                new SearchSource { SourceType = "OfficialDoc", Title = "Synthetic Official", Text = "人工公式根拠" },
+                new SearchSource { SourceType = "PastCaseNote", Title = "Synthetic Case", Text = "人工過去案件" },
+            ],
+            UseRagLabEvidence = false,
+        };
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            logger,
+            () => snapshot,
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            ragLabEvidenceLoader: loader);
+        await viewModel.InitializeAsync();
+
+        fakeClient.EnqueueResponse("手順:\n1. version 1.0 を確認します。\n要確認: 人工OS");
+        viewModel.PromptInput = "人工調査を実行してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer.Contains("version 1.0", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.True(viewModel.CaptureAbBaselineCommand.CanExecute(null));
+        Assert.False(viewModel.CaptureAbEvidenceCommand.CanExecute(null));
+        viewModel.CaptureAbBaselineCommand.Execute(null);
+
+        snapshot = snapshot with
+        {
+            UseRagLabEvidence = true,
+            RagLabEvidenceFilePath = "synthetic-evidence.json",
+            RagLabBaselineReadinessFilePath = "synthetic-readiness.json",
+            TargetVersion = "SYNTHETIC-1.0",
+        };
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(
+            () => string.IsNullOrEmpty(viewModel.TechnicalAnswer)
+                && viewModel.ConnectionDetails.Contains("新しい読み取り専用Thread", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5));
+
+        fakeClient.EnqueueResponse("手順:\n1. version 2.0 を確認します。\n2. `synthetic-cli run` を実行します。");
+        viewModel.PromptInput = "人工調査を実行してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer.Contains("version 2.0", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.True(viewModel.CaptureAbEvidenceCommand.CanExecute(null));
+        viewModel.CaptureAbEvidenceCommand.Execute(null);
+        Assert.True(viewModel.CompareAbCommand.CanExecute(null));
+        viewModel.CompareAbCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.AbComparisonText.Contains("技術値・コマンド差分", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, fakeClient.TurnCount);
+        Assert.Contains("A: 回答可能判定=回答あり", viewModel.AbComparisonText, StringComparison.Ordinal);
+        Assert.Contains("B: 回答可能判定=回答あり", viewModel.AbComparisonText, StringComparison.Ordinal);
+        Assert.Contains("公式=1, Manual=1, PastCase=1", viewModel.AbComparisonText, StringComparison.Ordinal);
+        Assert.Contains("自動判定しません", viewModel.AbComparisonText, StringComparison.Ordinal);
+        var comparisonLog = Assert.Single(logger.Entries, entry => entry.Category == "rag-lab-ab-comparison");
+        Assert.DoesNotContain("version 1.0", comparisonLog.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("version 2.0", comparisonLog.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("Synthetic Company", comparisonLog.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ArtifactCommands_RequirePlanThenCreateExcelAndManufacturerMail()
     {
         using var temp = new TempDirectory();
@@ -278,6 +484,51 @@ public sealed class CodexChatViewModelTests
             _ => { });
     }
 
+    private static CodexChatViewModel CreateViewModel(
+        TempDirectory temp,
+        FakeClient fakeClient,
+        CodexCaseSnapshot snapshot,
+        IRagLabEvidenceLoader loader,
+        Func<string, bool>? applyReply = null)
+    {
+        return new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => snapshot,
+            () => "fake.exe",
+            applyReply ?? (_ => true),
+            _ => true,
+            _ => { },
+            ragLabEvidenceLoader: loader);
+    }
+
+    private static RagLabEvidenceLoadResult CreateEvidenceResult()
+    {
+        return new RagLabEvidenceLoadResult
+        {
+            IsEnabled = true,
+            IsBaselineReady = true,
+            Query = "人工問い合わせ",
+            Evidence =
+            [
+                new RagLabEvidenceItem
+                {
+                    SourceType = "SyntheticManual",
+                    DocumentId = "doc-1",
+                    Product = "Checkmarx",
+                    Version = "SYNTHETIC-1.0",
+                    Score = 0.9,
+                    SelectionReason = "人工選定理由",
+                    Text = "人工追加根拠",
+                },
+            ],
+        };
+    }
+
     private sealed class FakeClient : ICodexAppServerClient
     {
         private readonly Queue<string> responses = new();
@@ -296,6 +547,7 @@ public sealed class CodexChatViewModelTests
         public string? WorkingDirectory { get; private set; }
         public string LastTurnText { get; private set; } = string.Empty;
         public IReadOnlyList<string> LastImagePaths { get; private set; } = [];
+        public int TurnCount { get; private set; }
 
         public void EnqueueResponse(string response)
         {
@@ -338,6 +590,7 @@ public sealed class CodexChatViewModelTests
 
         public Task<CodexTurnStartResult> StartTurnAsync(string text, IReadOnlyList<string>? localImagePaths = null, CancellationToken cancellationToken = default)
         {
+            TurnCount++;
             LastTurnText = text;
             LastImagePaths = localImagePaths?.ToArray() ?? [];
             CurrentTurnId = "turn-1";
@@ -355,7 +608,43 @@ public sealed class CodexChatViewModelTests
     private sealed class FakeLogger(string path) : ICodexDiagnosticLogger
     {
         public string LogDirectory { get; } = path;
-        public Task WriteAsync(string category, string message, Exception? exception = null, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public List<(string Category, string Message)> Entries { get; } = [];
+
+        public Task WriteAsync(string category, string message, Exception? exception = null, CancellationToken cancellationToken = default)
+        {
+            Entries.Add((category, message));
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeRagLabEvidenceLoader : IRagLabEvidenceLoader
+    {
+        private readonly RagLabEvidenceLoadResult? result;
+        private readonly Exception? exception;
+
+        public FakeRagLabEvidenceLoader(RagLabEvidenceLoadResult result)
+        {
+            this.result = result;
+        }
+
+        public FakeRagLabEvidenceLoader(Exception exception)
+        {
+            this.exception = exception;
+        }
+
+        public int CallCount { get; private set; }
+        public RagLabEvidenceLoadRequest? LastRequest { get; private set; }
+
+        public Task<RagLabEvidenceLoadResult> LoadAsync(
+            RagLabEvidenceLoadRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastRequest = request;
+            return exception is null
+                ? Task.FromResult(result!)
+                : Task.FromException<RagLabEvidenceLoadResult>(exception);
+        }
     }
 
     private sealed class FakeExcelTranslationService : IExcelTranslationService

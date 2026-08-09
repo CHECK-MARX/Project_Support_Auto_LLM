@@ -84,6 +84,50 @@ public sealed class ProgressBindingTests
         }
     }
 
+    [Fact]
+    public void MainWindow_RagLabEvidenceSettingsAreOptionalAndBound()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var attributes = document.Descendants().SelectMany(static element => element.Attributes()).ToArray();
+
+        foreach (var bindingName in new[]
+                 {
+                     "UseRagLabEvidence",
+                     "RagLabEvidenceFilePath",
+                     "RagLabBaselineReadinessFilePath",
+                     "RagLabEvidenceMaxItems",
+                     "SelectRagLabEvidenceFileCommand",
+                     "SelectRagLabBaselineReadinessFileCommand",
+                 })
+        {
+            Assert.Contains(attributes, attribute => attribute.Value.Contains(bindingName, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void MainWindow_RagLabAbComparisonUsesExplicitUserCommandsAndReadOnlyResult()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var attributes = document.Descendants().SelectMany(static element => element.Attributes()).ToArray();
+
+        foreach (var commandName in new[]
+                 {
+                     "Codex.CaptureAbBaselineCommand",
+                     "Codex.CaptureAbEvidenceCommand",
+                     "Codex.CompareAbCommand",
+                 })
+        {
+            Assert.Contains(attributes, attribute => attribute.Value.Contains(commandName, StringComparison.Ordinal));
+        }
+
+        var comparisonText = Assert.Single(
+            document.Descendants(),
+            element => element.Name.LocalName == "TextBox"
+                && element.Attributes().Any(attribute => attribute.Value.Contains("Codex.AbComparisonText", StringComparison.Ordinal)));
+        Assert.Equal("True", comparisonText.Attribute("IsReadOnly")?.Value);
+        Assert.Contains("Mode=OneWay", comparisonText.Attribute("Text")?.Value, StringComparison.Ordinal);
+    }
+
     private static XElement FindProgressBar(XDocument document, string bindingText)
     {
         return Assert.Single(

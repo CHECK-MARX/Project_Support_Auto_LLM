@@ -26,6 +26,10 @@ public class AiSettingsStoreTests
         Assert.True(settings.DisableThinking);
         Assert.True(settings.SkipGenerationWhenNoEvidence);
         Assert.True(settings.EnableTopNFallback);
+        Assert.False(settings.UseRagLabEvidence);
+        Assert.Equal(3, settings.RagLabEvidenceMaxItems);
+        Assert.Empty(settings.RagLabEvidenceFilePath);
+        Assert.Empty(settings.RagLabBaselineReadinessFilePath);
         Assert.Equal("Ollama", settings.LlmProvider.Provider);
         Assert.False(File.Exists(System.IO.Path.Combine(aiDataFolder, "settings.json")));
     }
@@ -49,6 +53,10 @@ public class AiSettingsStoreTests
             MaxPromptChars = 12000,
             SkipGenerationWhenNoEvidence = false,
             EnableTopNFallback = false,
+            UseRagLabEvidence = true,
+            RagLabEvidenceFilePath = Path.Combine(temp.Path, "evidence.json"),
+            RagLabBaselineReadinessFilePath = Path.Combine(temp.Path, "readiness.json"),
+            RagLabEvidenceMaxItems = 5,
             AnswerQualityMode = AnswerQualityModes.Quality,
             ModelCapabilityProfiles =
             [
@@ -84,6 +92,10 @@ public class AiSettingsStoreTests
         Assert.Equal(settings.MaxPromptChars, restored.MaxPromptChars);
         Assert.Equal(settings.SkipGenerationWhenNoEvidence, restored.SkipGenerationWhenNoEvidence);
         Assert.Equal(settings.EnableTopNFallback, restored.EnableTopNFallback);
+        Assert.True(restored.UseRagLabEvidence);
+        Assert.Equal(settings.RagLabEvidenceFilePath, restored.RagLabEvidenceFilePath);
+        Assert.Equal(settings.RagLabBaselineReadinessFilePath, restored.RagLabBaselineReadinessFilePath);
+        Assert.Equal(5, restored.RagLabEvidenceMaxItems);
         Assert.Equal(AnswerQualityModes.Quality, restored.AnswerQualityMode);
         var profile = Assert.Single(restored.ModelCapabilityProfiles);
         Assert.Equal("gemma4:31b", profile.ModelName);
@@ -92,6 +104,29 @@ public class AiSettingsStoreTests
         Assert.Equal("nomic-embed-text", restored.LlmProvider.EmbeddingModel);
         Assert.Equal(16384, restored.LlmProvider.ContextWindowTokens);
         Assert.Equal("SUPPORT_AI_API_KEY", restored.LlmProvider.ApiKeyEnvironmentVariable);
+    }
+
+    [Fact]
+    public async Task LoadAsync_LegacySettingsWithoutRagLabProperties_DefaultsEvidenceIntegrationOff()
+    {
+        using var temp = new TempDirectory();
+        var aiDataFolder = Path.Combine(temp.Path, "ai-data");
+        Directory.CreateDirectory(aiDataFolder);
+        await File.WriteAllTextAsync(
+            Path.Combine(aiDataFolder, "settings.json"),
+            $$"""
+            {
+              "aiDataFolder": {{JsonSerializer.Serialize(aiDataFolder)}},
+              "maxEvidenceItems": 2
+            }
+            """);
+
+        var restored = await new AiSettingsStore().LoadAsync(aiDataFolder);
+
+        Assert.False(restored.UseRagLabEvidence);
+        Assert.Equal(3, restored.RagLabEvidenceMaxItems);
+        Assert.Empty(restored.RagLabEvidenceFilePath);
+        Assert.Empty(restored.RagLabBaselineReadinessFilePath);
     }
 
     [Fact]

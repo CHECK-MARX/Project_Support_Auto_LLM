@@ -214,6 +214,54 @@
                             </Grid>
                         </GroupBox>
 
+                        <GroupBox Header="{DynamicResource RagLabEvidenceSettingsHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <CheckBox Grid.ColumnSpan="3"
+                                          Content="{DynamicResource UseRagLabEvidenceLabel}"
+                                          IsChecked="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource RagLabEvidenceFileLabel}" />
+                                <TextBox Grid.Row="1"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabEvidenceFilePath, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="2"
+                                        Content="{DynamicResource SelectButton}"
+                                        Command="{Binding SelectRagLabEvidenceFileCommand}"
+                                        IsEnabled="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource RagLabReadinessFileLabel}" />
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabBaselineReadinessFilePath, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
+                                <Button Grid.Row="2"
+                                        Grid.Column="2"
+                                        Content="{DynamicResource SelectButton}"
+                                        Command="{Binding SelectRagLabBaselineReadinessFileCommand}"
+                                        IsEnabled="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource RagLabEvidenceMaxItemsLabel}" />
+                                <TextBox Grid.Row="3"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabEvidenceMaxItems, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
+                            </Grid>
+                        </GroupBox>
+
                         <GroupBox Header="現在の使用コンテキスト">
                             <StackPanel>
                                 <TextBox Text="{Binding CurrentProductContextText, Mode=OneWay}"
@@ -1241,6 +1289,39 @@
                                 <TextBox Text="{Binding Codex.ReviewChanges, Mode=OneWay}"
                                          IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
                                 <TextBlock Text="{Binding Codex.ReviewWarnings, Mode=OneWay}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="RAG Lab Evidence A/B比較">
+                            <StackPanel>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <Button Content="A（Evidenceなし）として記録"
+                                            Command="{Binding Codex.CaptureAbBaselineCommand}" />
+                                    <Button Content="B（Evidenceあり）として記録"
+                                            Command="{Binding Codex.CaptureAbEvidenceCommand}" />
+                                    <Button Content="A/Bを比較"
+                                            Command="{Binding Codex.CompareAbCommand}" />
+                                </WrapPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="A: " />
+                                    <TextBlock Grid.Column="1" Text="{Binding Codex.BaselineAbStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Row="1" Text="B: " />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Codex.EvidenceAbStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                </Grid>
+                                <TextBox Text="{Binding Codex.AbComparisonText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="180" />
                             </StackPanel>
                         </GroupBox>
 

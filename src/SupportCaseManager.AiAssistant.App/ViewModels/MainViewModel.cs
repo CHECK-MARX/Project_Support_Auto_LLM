@@ -41,7 +41,8 @@ public sealed class MainViewModel : ObservableObject
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
         nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode),
-        nameof(CodexExecutablePath),
+        nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
+        nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
     ];
     private const int ProductionMiniTestMinTimeoutSeconds = 60;
     private const int ProductionMiniTestMaxTimeoutSeconds = 60;
@@ -116,6 +117,10 @@ public sealed class MainViewModel : ObservableObject
     private bool disableThinking = true;
     private bool skipGenerationWhenNoEvidence = true;
     private bool enableTopNFallback = true;
+    private bool useRagLabEvidence;
+    private string ragLabEvidenceFilePath = string.Empty;
+    private string ragLabBaselineReadinessFilePath = string.Empty;
+    private int ragLabEvidenceMaxItems = 3;
     private string caseFolderPath = string.Empty;
     private string productName = "製品A";
     private string companyName = "株式会社サンプル";
@@ -250,6 +255,12 @@ public sealed class MainViewModel : ObservableObject
         SelectManualFolderCommand = new RelayCommand(() => SelectFolder(value => ManualFolder = value));
         SelectSupportToolSettingsFileCommand = new RelayCommand(SelectSupportToolSettingsFile);
         SelectCodexExecutableCommand = new RelayCommand(SelectCodexExecutable);
+        SelectRagLabEvidenceFileCommand = new RelayCommand(() => SelectJsonFile(
+            "RAG Lab Evidence JSONを選択",
+            value => RagLabEvidenceFilePath = value));
+        SelectRagLabBaselineReadinessFileCommand = new RelayCommand(() => SelectJsonFile(
+            "RAG Lab baseline-readiness JSONを選択",
+            value => RagLabBaselineReadinessFilePath = value));
         LoadSupportToolSettingsCommand = new AsyncRelayCommand(LoadSupportToolSettingsAsync);
         AddProductManualFolderCommand = new RelayCommand(AddProductManualFolder);
         RemoveProductManualFolderCommand = new RelayCommand(RemoveProductManualFolder);
@@ -367,6 +378,13 @@ public sealed class MainViewModel : ObservableObject
             CustomerReplyDraft = CustomerReplyDraft,
             InternalMemo = InternalMemo,
             Evidence = selectedEvidence,
+            UseRagLabEvidence = UseRagLabEvidence,
+            RagLabEvidenceFilePath = RagLabEvidenceFilePath,
+            RagLabBaselineReadinessFilePath = RagLabBaselineReadinessFilePath,
+            RagLabEvidenceMaxItems = RagLabEvidenceMaxItems,
+            TargetVersion = lastInquiryFocus?.TargetVersions.Count == 1
+                ? lastInquiryFocus.TargetVersions[0]
+                : string.Empty,
         };
     }
 
@@ -724,6 +742,30 @@ public sealed class MainViewModel : ObservableObject
     {
         get => ollamaProductionMiniTestResultText;
         private set => SetProperty(ref ollamaProductionMiniTestResultText, value);
+    }
+
+    public bool UseRagLabEvidence
+    {
+        get => useRagLabEvidence;
+        set => SetProperty(ref useRagLabEvidence, value);
+    }
+
+    public string RagLabEvidenceFilePath
+    {
+        get => ragLabEvidenceFilePath;
+        set => SetProperty(ref ragLabEvidenceFilePath, value?.Trim() ?? string.Empty);
+    }
+
+    public string RagLabBaselineReadinessFilePath
+    {
+        get => ragLabBaselineReadinessFilePath;
+        set => SetProperty(ref ragLabBaselineReadinessFilePath, value?.Trim() ?? string.Empty);
+    }
+
+    public int RagLabEvidenceMaxItems
+    {
+        get => ragLabEvidenceMaxItems;
+        set => SetProperty(ref ragLabEvidenceMaxItems, Math.Clamp(value <= 0 ? 3 : value, 1, 5));
     }
 
     public string ModelCompatibilityTestResultText
@@ -1213,6 +1255,8 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand WriteTestLogCommand { get; }
     public RelayCommand OpenLogCommand { get; }
     public RelayCommand SelectCodexExecutableCommand { get; }
+    public RelayCommand SelectRagLabEvidenceFileCommand { get; }
+    public RelayCommand SelectRagLabBaselineReadinessFileCommand { get; }
 
     public async Task InitializeFromCommandLineAsync(CommandLineOptions options)
     {
@@ -2626,6 +2670,10 @@ public sealed class MainViewModel : ObservableObject
             ? settings.ModelCapabilityProfiles
             : ModelCapabilityProfiles.GetDefaults();
         CodexExecutablePath = settings.CodexExecutablePath;
+        UseRagLabEvidence = settings.UseRagLabEvidence;
+        RagLabEvidenceFilePath = settings.RagLabEvidenceFilePath;
+        RagLabBaselineReadinessFilePath = settings.RagLabBaselineReadinessFilePath;
+        RagLabEvidenceMaxItems = settings.RagLabEvidenceMaxItems;
         RefreshProductContextComputedProperties();
         }
         finally
@@ -2819,6 +2867,10 @@ public sealed class MainViewModel : ObservableObject
                 ? modelCapabilityProfiles
                 : ModelCapabilityProfiles.GetDefaults(),
             CodexExecutablePath = CodexExecutablePath,
+            UseRagLabEvidence = UseRagLabEvidence,
+            RagLabEvidenceFilePath = RagLabEvidenceFilePath,
+            RagLabBaselineReadinessFilePath = RagLabBaselineReadinessFilePath,
+            RagLabEvidenceMaxItems = RagLabEvidenceMaxItems,
             LlmProvider = new LlmProviderSettings
             {
                 Provider = string.IsNullOrWhiteSpace(this.LlmProvider) ? "Fake" : this.LlmProvider,
@@ -4985,6 +5037,21 @@ public sealed class MainViewModel : ObservableObject
         {
             CodexExecutablePath = dialog.FileName;
             StatusMessage = "Codex実行ファイルを設定しました。接続テストで確認してください。";
+        }
+    }
+
+    private static void SelectJsonFile(string title, Action<string> setter)
+    {
+        using var dialog = new WinForms.OpenFileDialog
+        {
+            Title = title,
+            Filter = "JSON files (*.json)|*.json|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog() == WinForms.DialogResult.OK)
+        {
+            setter(dialog.FileName);
         }
     }
 
