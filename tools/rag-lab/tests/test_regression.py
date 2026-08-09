@@ -10,6 +10,8 @@ from rag_lab.regression import (
     RegressionThresholds,
     compare_reports,
     run_regression_comparison,
+    run_tracked_baseline_validation,
+    validate_tracked_baseline,
 )
 
 
@@ -42,6 +44,30 @@ def _report(rows: list[dict[str, object]], fingerprint: str = "same") -> dict[st
         "data_classification": "synthetic",
         "input_fingerprints": [{"file_name": "data.json", "sha256": fingerprint}],
         "summary": rows,
+    }
+
+
+def _tracked_baseline() -> dict[str, object]:
+    row = _row()
+    for metric in (
+        "chunk_generation_time_ms",
+        "index_build_time_ms",
+        "mean_search_time_ms",
+    ):
+        row.pop(metric)
+    row.update(document_count=2, chunk_count=2, query_count=2)
+    return {
+        "schema_version": 3,
+        "data_classification": "synthetic",
+        "report_name": "reference-baseline",
+        "input_fingerprints": [
+            {
+                "file_name": "documents.json",
+                "size_bytes": 100,
+                "sha256": "a" * 64,
+            }
+        ],
+        "summary": [row],
     }
 
 
@@ -183,11 +209,12 @@ def test_runner_accepts_tracked_synthetic_baseline(tmp_path: Path) -> None:
     generated = tmp_path / "reports" / "generated"
     baselines.mkdir()
     generated.mkdir(parents=True)
+    baseline = _tracked_baseline()
     (baselines / "reference.json").write_text(
-        json.dumps(_report([_row()])), encoding="utf-8"
+        json.dumps(baseline), encoding="utf-8"
     )
     (generated / "candidate.json").write_text(
-        json.dumps(_report([_row()])), encoding="utf-8"
+        json.dumps(baseline), encoding="utf-8"
     )
 
     output = run_regression_comparison(
@@ -200,3 +227,100 @@ def test_runner_accepts_tracked_synthetic_baseline(tmp_path: Path) -> None:
     assert output.report["status"] == "passed"
     assert output.report["baseline_file_name"] == "reference.json"
     assert all(path.parent == generated for path in output.files.values())
+
+
+def test_comparison_rejects_unsafe_tracked_baseline(tmp_path: Path) -> None:
+    baselines = tmp_path / "baselines"
+    generated = tmp_path / "reports" / "generated"
+    baselines.mkdir()
+    generated.mkdir(parents=True)
+    unsafe = _tracked_baseline()
+    unsafe["source_text"] = "must not be tracked"
+    (baselines / "unsafe.json").write_text(json.dumps(unsafe), encoding="utf-8")
+    (generated / "candidate.json").write_text(
+        json.dumps(_tracked_baseline()), encoding="utf-8"
+    )
+
+    with pytest.raises(DataValidationError, match="unexpected fields"):
+        run_regression_comparison(
+            tmp_path,
+            baseline_path="baselines/unsafe.json",
+            candidate_path="candidate.json",
+        )
+
+
+def test_tracked_baseline_safe_schema_is_accepted(tmp_path: Path) -> None:
+    baselines = tmp_path / "baselines"
+    baselines.mkdir()
+    source = baselines / "reference.json"
+    source.write_text(json.dumps(_tracked_baseline()), encoding="utf-8")
+
+    output = run_tracked_baseline_validation(
+        tmp_path,
+        baseline_path="baselines/reference.json",
+    )
+
+    assert output.file == source
+    assert output.fingerprint_count == 1
+    assert output.configuration_count == 1
+
+
+@pytest.mark.parametrize(
+    ("target", "field"),
+    (
+        ("root", "source_text"),
+        ("summary", "source_path"),
+        ("summary", "mean_search_time_ms"),
+    ),
+)
+def test_tracked_baseline_rejects_unexpected_fields(
+    target: str, field: str
+) -> None:
+    baseline = _tracked_baseline()
+    if target == "root":
+        baseline[field] = "must not be tracked"
+    else:
+        baseline["summary"][0][field] = "must not be tracked"  # type: ignore[index]
+
+    with pytest.raises(DataValidationError, match="unexpected fields"):
+        validate_tracked_baseline(baseline)
+
+
+def test_tracked_baseline_rejects_path_and_invalid_fingerprint() -> None:
+    baseline = _tracked_baseline()
+    fingerprint = baseline["input_fingerprints"][0]  # type: ignore[index]
+    fingerprint["file_name"] = r"C:\customer\documents.json"
+
+    with pytest.raises(DataValidationError, match="base file name"):
+        validate_tracked_baseline(baseline)
+
+    fingerprint["file_name"] = "documents.json"
+    fingerprint["sha256"] = "NOT-A-SHA"
+    with pytest.raises(DataValidationError, match="sha256"):
+        validate_tracked_baseline(baseline)
+
+
+def test_tracked_baseline_rejects_invalid_metric_and_duplicate_configuration() -> None:
+    baseline = _tracked_baseline()
+    baseline["summary"][0]["mrr"] = 1.01  # type: ignore[index]
+    with pytest.raises(DataValidationError, match="outside 0..1"):
+        validate_tracked_baseline(baseline)
+
+    baseline = _tracked_baseline()
+    baseline["summary"].append(dict(baseline["summary"][0]))  # type: ignore[union-attr,index]
+    with pytest.raises(DataValidationError, match="duplicate configurations"):
+        validate_tracked_baseline(baseline)
+
+
+def test_baseline_validation_runner_rejects_files_outside_baselines(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "baselines").mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps(_tracked_baseline()), encoding="utf-8")
+
+    with pytest.raises(PathValidationError, match="outside"):
+        run_tracked_baseline_validation(
+            tmp_path,
+            baseline_path=outside,
+        )

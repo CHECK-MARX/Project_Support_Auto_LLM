@@ -3,7 +3,7 @@
 `rag-lab` is an offline evaluation environment for comparing RAG behavior without
 changing the SupportCaseManager WPF application or its production indexes.
 
-## Implemented scope (Phases 2 through 8)
+## Implemented scope (Phases 2 through 9)
 
 Implemented in this phase:
 
@@ -29,10 +29,13 @@ Implemented in this phase:
 - Top 1-5 Codex evidence JSON with match reasons and warnings
 - Configurable quality gates with a deterministic recommended configuration
 - SHA-256 input fingerprints for repeatable evaluation runs
+- Line-ending-independent fingerprints for repeatable Windows and CI comparison
 - A `verify` command suitable for a local quality check or CI job
 - A path-filtered GitHub Actions workflow for tests and the synthetic quality gate
 - Offline regression comparison between two generated evaluation reports
 - A reviewed synthetic reference baseline enforced by GitHub Actions
+- Strict tracked-baseline validation that rejects source text, paths, timings, and
+  unexpected fields
 
 The token-hash vector baseline verifies the embedding integration path but is not a
 semantic language model. No model is downloaded. A local semantic model can be
@@ -132,8 +135,10 @@ reports are local artifacts and are not committed.
 
 Each JSON report records the configured quality thresholds, pass/fail result,
 violations, the recommended passing configuration for the preferred Top-K, and
-SHA-256 fingerprints of the synthetic input files. Fingerprints contain only the
-file name, byte size, and digest; absolute paths and source content are omitted.
+SHA-256 fingerprints of the synthetic input files. CRLF and CR are normalized to
+LF before the byte size and digest are calculated, so checkout settings do not
+create false regressions. Fingerprints contain only the file name, normalized byte
+size, and digest; absolute paths and source content are omitted.
 
 Run the quality gate as a command-line verification step:
 
@@ -159,6 +164,16 @@ changed. It installs only `requirements.txt`, runs all unit tests, and then runs
 `python run_rag_lab.py verify` against synthetic data. It then compares the
 candidate report with `baselines/phase8-reference.json`. It can also be started
 manually with `workflow_dispatch`.
+
+Before evaluation, CI validates the tracked baseline with:
+
+```powershell
+python run_rag_lab.py validate-baseline --baseline baselines/phase8-reference.json
+```
+
+Only the compact synthetic schema is accepted. Source text, absolute or relative
+paths, query details, timing values, unknown fields, malformed fingerprints, and
+out-of-range metrics cause validation to fail.
 
 The existing .NET CI workflow remains separate and unchanged. The RAG workflow
 does not load customer data, call a network API from the evaluation tool, publish

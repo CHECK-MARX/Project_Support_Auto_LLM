@@ -8,3 +8,12 @@ data, absolute paths, or performance timing values.
 Update a baseline only after reviewing an intentional retrieval-quality change.
 The RAG Lab treats these files as read-only inputs and writes all generated
 candidate and regression reports below `reports/generated/`.
+
+Validate a reviewed baseline before committing it:
+
+```powershell
+python run_rag_lab.py validate-baseline --baseline baselines/phase8-reference.json
+```
+
+Regression comparison applies the same strict validation automatically whenever
+its baseline is loaded from this directory.

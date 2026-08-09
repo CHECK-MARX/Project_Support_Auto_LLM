@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from rag_lab.runner import run_evaluation, run_evidence
+from rag_lab.runner import _fingerprint, run_evaluation, run_evidence
 
 
 def _write_synthetic_lab(root: Path) -> Path:
@@ -112,6 +112,17 @@ def test_runner_writes_three_redacted_comparison_reports(tmp_path: Path) -> None
     assert "| chunk_strategy |" in output.files["markdown"].read_text(
         encoding="utf-8"
     )
+
+
+def test_input_fingerprint_is_independent_of_line_ending_style(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "synthetic.json"
+    source.write_bytes(b'{\n  "value": 1\n}\n')
+    lf_fingerprint = _fingerprint(source)
+    source.write_bytes(b'{\r\n  "value": 1\r\n}\r\n')
+
+    assert _fingerprint(source) == lf_fingerprint
 
 
 def test_runner_rejects_report_name_path_traversal(tmp_path: Path) -> None:

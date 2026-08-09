@@ -102,14 +102,12 @@ def _filters(mode: str, product: str, target_version: str | None) -> SearchFilte
 
 
 def _fingerprint(path: Path) -> dict[str, Any]:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
+    content = path.read_bytes()
+    canonical_content = content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     return {
         "file_name": path.name,
-        "size_bytes": path.stat().st_size,
-        "sha256": digest.hexdigest(),
+        "size_bytes": len(canonical_content),
+        "sha256": hashlib.sha256(canonical_content).hexdigest(),
     }
 
 

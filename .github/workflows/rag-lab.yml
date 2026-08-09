@@ -5,6 +5,7 @@ on:
     paths:
       - "tools/rag-lab/**"
       - ".github/workflows/rag-lab.yml"
+      - ".gitattributes"
       - ".gitignore"
   pull_request:
     branches:
@@ -12,6 +13,7 @@ on:
     paths:
       - "tools/rag-lab/**"
       - ".github/workflows/rag-lab.yml"
+      - ".gitattributes"
       - ".gitignore"
   workflow_dispatch:
 
@@ -47,6 +49,11 @@ jobs:
 
       - name: Unit tests
         run: python -m pytest
+
+      - name: Validate tracked synthetic baseline
+        run: >-
+          python run_rag_lab.py validate-baseline
+          --baseline baselines/phase8-reference.json
 
       - name: Synthetic quality gate
         run: python run_rag_lab.py verify --report-name ci-candidate

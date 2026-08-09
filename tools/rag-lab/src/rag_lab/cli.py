@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .regression import run_regression_comparison
+from .regression import run_regression_comparison, run_tracked_baseline_validation
 from .runner import run_evaluation, run_evidence
 
 
@@ -31,6 +31,11 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--max-quality-drop", type=float, default=0.0)
     compare.add_argument("--max-count-increase", type=int, default=0)
     compare.add_argument("--allow-input-change", action="store_true")
+    validate_baseline = subcommands.add_parser(
+        "validate-baseline",
+        help="validate a tracked synthetic baseline against the compact safe schema",
+    )
+    validate_baseline.add_argument("--baseline", required=True)
     evidence = subcommands.add_parser(
         "evidence", help="write top evidence in the future Codex input shape"
     )
@@ -106,6 +111,15 @@ def main(argv: list[str] | None = None) -> int:
         for format_name, path in output.files.items():
             print(f"{format_name}: {path.relative_to(lab_root)}")
         return 0 if output.report["status"] == "passed" else 1
+    if args.command == "validate-baseline":
+        output = run_tracked_baseline_validation(
+            lab_root,
+            baseline_path=args.baseline,
+        )
+        print("Baseline validation: passed")
+        print(f"Fingerprints: {output.fingerprint_count}")
+        print(f"Configurations: {output.configuration_count}")
+        return 0
     if args.command == "verify":
         output = run_evaluation(
             lab_root,

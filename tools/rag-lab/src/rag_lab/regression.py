@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 from .io import (
@@ -39,6 +40,33 @@ _TIMING_METRICS = (
     "index_build_time_ms",
     "mean_search_time_ms",
 )
+_BASELINE_ROOT_FIELDS = {
+    "schema_version",
+    "data_classification",
+    "report_name",
+    "input_fingerprints",
+    "summary",
+}
+_FINGERPRINT_FIELDS = {"file_name", "size_bytes", "sha256"}
+_BASELINE_COUNT_METRICS = (
+    "document_count",
+    "chunk_count",
+    "query_count",
+    *_COUNT_METRICS,
+)
+_BASELINE_SUMMARY_FIELDS = {
+    *_IDENTITY_FIELDS,
+    *_QUALITY_METRICS,
+    *_BASELINE_COUNT_METRICS,
+}
+_SAFE_REPORT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}\Z")
+_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+_ALLOWED_IDENTITY_VALUES = {
+    "chunk_strategy": {"fixed", "paragraph", "heading", "structured"},
+    "search_method": {"keyword", "bm25", "hash_embedding", "hybrid"},
+    "reranker": {"none", "lexical"},
+    "filter_mode": {"none", "product", "product_and_version"},
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +89,120 @@ class RegressionThresholds:
 class RegressionRunOutput:
     report: dict[str, Any]
     files: dict[str, Path]
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineValidationOutput:
+    file: Path
+    fingerprint_count: int
+    configuration_count: int
+
+
+def _require_exact_fields(
+    value: Mapping[str, Any], allowed: set[str], label: str
+) -> None:
+    actual = set(value)
+    missing = sorted(allowed - actual)
+    unexpected = sorted(actual - allowed)
+    if missing:
+        raise DataValidationError(f"{label} is missing fields: {', '.join(missing)}")
+    if unexpected:
+        raise DataValidationError(
+            f"{label} contains unexpected fields: {', '.join(unexpected)}"
+        )
+
+
+def validate_tracked_baseline(report: Any) -> tuple[int, int]:
+    """Validate the compact, synthetic-only schema allowed in source control."""
+    if not isinstance(report, Mapping):
+        raise DataValidationError("baseline root must be an object")
+    _require_exact_fields(report, _BASELINE_ROOT_FIELDS, "baseline root")
+    if report["schema_version"] != 3:
+        raise DataValidationError("baseline schema_version must be exactly 3")
+    if report["data_classification"] != "synthetic":
+        raise DataValidationError("baseline must contain synthetic data only")
+    report_name = report["report_name"]
+    if not isinstance(report_name, str) or not _SAFE_REPORT_NAME.fullmatch(report_name):
+        raise DataValidationError("baseline report_name is not a safe simple name")
+
+    fingerprints = report["input_fingerprints"]
+    if not isinstance(fingerprints, list) or not fingerprints:
+        raise DataValidationError("baseline input_fingerprints must be non-empty")
+    seen_files: set[str] = set()
+    for index, fingerprint in enumerate(fingerprints):
+        label = f"baseline fingerprint {index}"
+        if not isinstance(fingerprint, Mapping):
+            raise DataValidationError(f"{label} must be an object")
+        _require_exact_fields(fingerprint, _FINGERPRINT_FIELDS, label)
+        file_name = fingerprint["file_name"]
+        if (
+            not isinstance(file_name, str)
+            or not file_name
+            or len(file_name) > 255
+            or "/" in file_name
+            or "\\" in file_name
+            or Path(file_name).name != file_name
+        ):
+            raise DataValidationError(f"{label} file_name must be a base file name")
+        if file_name.casefold() in seen_files:
+            raise DataValidationError("baseline contains duplicate fingerprint files")
+        seen_files.add(file_name.casefold())
+        size_bytes = fingerprint["size_bytes"]
+        if (
+            not isinstance(size_bytes, int)
+            or isinstance(size_bytes, bool)
+            or size_bytes < 0
+        ):
+            raise DataValidationError(f"{label} size_bytes must be a non-negative integer")
+        sha256 = fingerprint["sha256"]
+        if not isinstance(sha256, str) or not _SHA256.fullmatch(sha256):
+            raise DataValidationError(f"{label} sha256 must be lowercase hexadecimal")
+
+    summary = report["summary"]
+    if not isinstance(summary, list) or not summary:
+        raise DataValidationError("baseline summary must be non-empty")
+    seen_configurations: set[tuple[str, str, str, str, int]] = set()
+    for index, row in enumerate(summary):
+        label = f"baseline summary row {index}"
+        if not isinstance(row, Mapping):
+            raise DataValidationError(f"{label} must be an object")
+        _require_exact_fields(row, _BASELINE_SUMMARY_FIELDS, label)
+        identity = _identity(row, label)
+        for field, allowed in _ALLOWED_IDENTITY_VALUES.items():
+            if row[field] not in allowed:
+                raise DataValidationError(f"{label} has unsupported {field}")
+        if identity in seen_configurations:
+            raise DataValidationError("baseline contains duplicate configurations")
+        seen_configurations.add(identity)
+        for metric in _QUALITY_METRICS:
+            value = _number(row, metric, label)
+            if not 0.0 <= value <= 1.0:
+                raise DataValidationError(f"{label} metric is outside 0..1: {metric}")
+        for metric in _BASELINE_COUNT_METRICS:
+            value = row[metric]
+            if (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+            ):
+                raise DataValidationError(
+                    f"{label} count must be a non-negative integer: {metric}"
+                )
+    return len(fingerprints), len(summary)
+
+
+def run_tracked_baseline_validation(
+    lab_root: str | Path, *, baseline_path: str | Path
+) -> BaselineValidationOutput:
+    paths = LabPaths.create(lab_root, input_roots=("baselines",))
+    source = paths.resolve_input(baseline_path)
+    report = read_json(paths, source)
+    fingerprint_count, configuration_count = validate_tracked_baseline(report)
+    return BaselineValidationOutput(
+        file=source,
+        fingerprint_count=fingerprint_count,
+        configuration_count=configuration_count,
+    )
 
 
 def _validated_summary(report: Any, label: str) -> list[Mapping[str, Any]]:
@@ -279,6 +421,7 @@ def run_regression_comparison(
         baseline_paths = LabPaths.create(lab_root, input_roots=("baselines",))
         try:
             baseline = read_json(baseline_paths, baseline_path)
+            validate_tracked_baseline(baseline)
         except PathValidationError:
             raise generated_error
     candidate = read_generated_json(paths, candidate_path)
