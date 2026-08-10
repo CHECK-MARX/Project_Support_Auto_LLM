@@ -24,6 +24,7 @@ public static partial class CoverageAnalyzer
     public const string BuildName = "BuildName";
     public const string IncrementalBuild = "IncrementalBuild";
     public const string Overview = "Overview";
+    public const string PriorCaseSupplement = "PriorCaseSupplement";
 
     private static readonly string[] UploadRequirements =
     [
@@ -132,9 +133,52 @@ public static partial class CoverageAnalyzer
         }
 
         if (profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase) ||
-            ContainsAny(question, "Validate Stream", "Validateストリーム", "Validate Stream"))
+            ContainsAny(question, "Validate Stream", "Validateストリーム", "ストリーム"))
         {
-            return CoverageSelectionStreamRequirements;
+            var required = new List<string>();
+            var asksForOverview = ContainsAny(
+                question,
+                "overview", "purpose", "what is", "function",
+                "概要", "目的", "どのような機能", "機能について", "とは");
+            var asksForConfiguration = ContainsAny(
+                question,
+                "configuration", "configure", "setup", "setting", "how to",
+                "設定", "構成", "方法", "手順");
+            var asksForCreation = ContainsAny(question, "create", "creation", "作成", "生成");
+            var asksForAssociation = ContainsAny(
+                question,
+                "association", "associate", "link", "mapping",
+                "関連付け", "紐付け", "連携");
+            var asksForVerification = ContainsAny(
+                question,
+                "verification", "verify", "check", "confirm",
+                "確認", "検証");
+
+            if (asksForOverview)
+            {
+                required.Add(Overview);
+                required.Add(Purpose);
+            }
+            if (asksForConfiguration)
+            {
+                required.Add(Configuration);
+            }
+            if (asksForCreation)
+            {
+                required.Add(StreamCreation);
+            }
+            if (asksForAssociation)
+            {
+                required.Add(QacAssociation);
+            }
+            if (asksForVerification)
+            {
+                required.Add(Verification);
+            }
+
+            return required.Count > 0
+                ? required.Distinct(StringComparer.Ordinal).ToList()
+                : CoverageSelectionStreamRequirements;
         }
 
         return [];
@@ -167,10 +211,20 @@ public static partial class CoverageAnalyzer
         }
         if (legacy.Contains(Troubleshooting)) observed.Add(Troubleshooting);
 
-        if (hasStream && legacy.Contains(StreamOverview)) observed.Add(Overview);
-        if (hasStream && legacy.Contains(Purpose)) observed.Add(Purpose);
+        var describesStreamFunction = hasStream && ContainsAny(
+            value,
+            "overview", "definition", "purpose", "function", "tracking", "track",
+            "概要", "目的", "機能", "とは", "履歴", "追跡");
+        if (describesStreamFunction || legacy.Contains(StreamOverview)) observed.Add(Overview);
+        if (describesStreamFunction || legacy.Contains(Purpose)) observed.Add(Purpose);
         if (hasStream && legacy.Contains(StreamCreation)) observed.Add(StreamCreation);
-        if (hasStream && legacy.Contains(Configuration)) observed.Add(Configuration);
+        if (hasStream && (legacy.Contains(Configuration) || ContainsAny(
+            value,
+            "configuration", "configure", "setup", "setting", "create",
+            "設定", "構成", "手順", "作成", "生成")))
+        {
+            observed.Add(Configuration);
+        }
         if (hasStream && legacy.Contains(QacAssociation)) observed.Add(QacAssociation);
         if (hasStream && legacy.Contains(Verification)) observed.Add(Verification);
         return observed;

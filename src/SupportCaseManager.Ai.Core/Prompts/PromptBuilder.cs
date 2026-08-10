@@ -230,6 +230,15 @@ public sealed class PromptBuilder : IPromptBuilder
                 """);
         }
 
+        if (IsStreamOverviewAndConfigurationQuestion(request.InquiryText))
+        {
+            builder.AppendLine("# Compound feature question response plan");
+            builder.AppendLine("Answer the customer's question directly in this order: feature overview, configuration procedure, then cautions or confirmation items.");
+            builder.AppendLine("Synthesize the selected sources into a coherent answer. Do not output a list of source titles or copied excerpts.");
+            builder.AppendLine("Do not claim a setup step unless it is supported by the supplied evidence. Clearly identify any missing step as a confirmation item.");
+            builder.AppendLine();
+        }
+
         builder.AppendLine(PromptTemplateProvider.SupportAnswerOutputPrompt);
 
         return builder.ToString();
@@ -239,6 +248,25 @@ public sealed class PromptBuilder : IPromptBuilder
         request.Settings.UseCoverageAwareEvidenceSelection
             ? request.Sources.Count
             : Math.Max(0, request.Settings.MaxEvidenceItems);
+
+    private static bool IsStreamOverviewAndConfigurationQuestion(string? inquiryText)
+    {
+        var value = inquiryText ?? string.Empty;
+        var hasStream = value.Contains("Stream", StringComparison.OrdinalIgnoreCase) ||
+            value.Contains("ストリーム", StringComparison.OrdinalIgnoreCase);
+        var asksForOverview = ContainsAny(
+            value,
+            "overview", "purpose", "what is", "function",
+            "概要", "目的", "どのような機能", "機能について", "とは");
+        var asksForConfiguration = ContainsAny(
+            value,
+            "configuration", "configure", "setup", "setting", "how to",
+            "設定", "構成", "方法", "手順");
+        return hasStream && asksForOverview && asksForConfiguration;
+    }
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private static void AppendField(StringBuilder builder, string name, string? value)
     {

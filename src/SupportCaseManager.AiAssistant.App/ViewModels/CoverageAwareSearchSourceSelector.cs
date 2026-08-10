@@ -8,6 +8,28 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
 public static class CoverageAwareSearchSourceSelector
 {
+    private const double CoverageSelectorMinimumQualityCeiling = 0.20;
+
+    public static bool ShouldApplyAutomatically(string? inquiryText, string? productName)
+    {
+        if (string.IsNullOrWhiteSpace(inquiryText))
+        {
+            return false;
+        }
+
+        var catalog = SupportTopicCatalog.Create(productName);
+        var analysis = NegationAwareTopicAnalyzer.Analyze(inquiryText, catalog);
+        var profile = analysis.PrimaryProfile ?? TopicEntityAnalyzer.Extract(inquiryText, catalog);
+        if (!profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var required = CoverageAnalyzer.RequiredForCoverageSelection(inquiryText, profile);
+        return required.Contains(CoverageAnalyzer.Overview, StringComparer.Ordinal) &&
+            required.Contains(CoverageAnalyzer.Configuration, StringComparer.Ordinal);
+    }
+
     public static SearchSourceSelectionResult Select(
         IReadOnlyList<SearchSourceViewModel> items,
         int baseMaxItems,
@@ -56,11 +78,61 @@ public static class CoverageAwareSearchSourceSelector
             Candidates = rankingCandidates,
             MaxItems = Math.Clamp(context.CoverageAwareMaxEvidenceItems, 1, 5),
         });
-        var requiredCoverage = CoverageAnalyzer.RequiredForCoverageSelection(context.InquiryText, queryProfile);
+        var compoundFeatureQuestion = ShouldApplyAutomatically(context.InquiryText, context.ProductName);
+        var requiredCoverage = CoverageAnalyzer.RequiredForCoverageSelection(context.InquiryText, queryProfile).ToList();
         var assessments = ranked.Assessed.ToDictionary(static item => item.CandidateIndex);
+        var nonPastCoverage = items
+            .Select((item, index) => (Item: item, Assessment: assessments[index]))
+            .Where(item => item.Assessment.HasTopicMatch && !IsPastEvidenceSourceType(item.Item.SourceType))
+            .SelectMany(item => CoverageAnalyzer.ObserveForCoverageSelection(DocumentText(item.Item)))
+            .ToHashSet(StringComparer.Ordinal);
+        var nonPastSourcesCoverRequestedContent = requiredCoverage.Count > 0 &&
+            requiredCoverage.All(nonPastCoverage.Contains);
+        var streamRoleAssignments = compoundFeatureQuestion
+            ? AssignStreamCoverageRoles(items, assessments)
+            : (OverviewCandidateIndex: (int?)null, ConfigurationCandidateIndex: (int?)null);
+        if (compoundFeatureQuestion &&
+            baseMaxItems >= 3 &&
+            items.Select((item, index) => (Item: item, Assessment: assessments[index]))
+                .Any(item => item.Assessment.HasTopicMatch && IsPastEvidenceSourceType(item.Item.SourceType)))
+        {
+            requiredCoverage.Add(CoverageAnalyzer.PriorCaseSupplement);
+        }
+        requiredCoverage = requiredCoverage.Distinct(StringComparer.Ordinal).ToList();
         var candidates = items.Select((item, index) =>
         {
             var assessment = assessments[index];
+            var coverage = CoverageAnalyzer.ObserveForCoverageSelection(DocumentText(item)).ToList();
+            if (compoundFeatureQuestion &&
+                assessment.HasTopicMatch &&
+                !IsPastEvidenceSourceType(item.SourceType))
+            {
+                coverage.RemoveAll(static value =>
+                    value is CoverageAnalyzer.Overview or
+                        CoverageAnalyzer.Purpose or
+                        CoverageAnalyzer.Configuration);
+                if (index == streamRoleAssignments.OverviewCandidateIndex)
+                {
+                    coverage.Add(CoverageAnalyzer.Overview);
+                    coverage.Add(CoverageAnalyzer.Purpose);
+                }
+
+                if (index == streamRoleAssignments.ConfigurationCandidateIndex)
+                {
+                    coverage.Add(CoverageAnalyzer.Configuration);
+                }
+            }
+
+            if (compoundFeatureQuestion &&
+                assessment.HasTopicMatch &&
+                IsPastEvidenceSourceType(item.SourceType))
+            {
+                if (nonPastSourcesCoverRequestedContent)
+                {
+                    coverage.RemoveAll(requiredCoverage.Contains);
+                }
+                coverage.Add(CoverageAnalyzer.PriorCaseSupplement);
+            }
             return new CoverageEvidenceCandidate
             {
                 CandidateId = CandidateId(item, index),
@@ -72,7 +144,7 @@ public static class CoverageAwareSearchSourceSelector
                 Text = DocumentText(item),
                 ContentHash = item.Source.ContentHash ?? assessment.TextFingerprint,
                 TechnicalTokens = assessment.ExactTechnicalTokens,
-                Coverage = CoverageAnalyzer.ObserveForCoverageSelection(DocumentText(item)).ToList(),
+                Coverage = coverage.Distinct(StringComparer.Ordinal).ToList(),
                 RankingScore = assessment.FinalScore,
                 TopicScore = assessment.TopicScore,
                 EntityScore = assessment.EntityScore,
@@ -81,7 +153,8 @@ public static class CoverageAwareSearchSourceSelector
                 VersionScore = assessment.VersionScore,
                 ConflictPenalty = assessment.ConflictPenalty,
                 ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded,
-                TopicConflict = assessment.TopicConflict,
+                TopicConflict = assessment.TopicConflict ||
+                    (queryProfile.Features.Count > 0 && !assessment.HasTopicMatch),
                 ProductMismatch = assessment.ProductMatch is false,
                 IsManuallySelected = item.IsManuallySelected,
                 EstimatedChars = item.Title.Length + item.Text.Length,
@@ -95,7 +168,12 @@ public static class CoverageAwareSearchSourceSelector
             BaseMaxItems = Math.Clamp(baseMaxItems, 1, 5),
             ExpansionMaxItems = Math.Clamp(context.CoverageAwareMaxEvidenceItems, 1, 5),
             CharacterBudget = Math.Max(600, context.MaxPromptChars / 2),
-            MinimumQualityScore = Math.Clamp(minimumScore, 0, 1),
+            // The UI threshold applies to the upstream search score. The coverage selector uses
+            // a separately normalized quality score, so reusing values such as 0.65 here drops
+            // relevant past cases before set-level coverage can be evaluated.
+            MinimumQualityScore = Math.Min(
+                Math.Clamp(minimumScore, 0, 1),
+                CoverageSelectorMinimumQualityCeiling),
         };
         var execution = CoverageEvidenceSelectorCoordinator.Select(request, new RustEvidenceSelectorOptions
         {
@@ -210,6 +288,81 @@ public static class CoverageAwareSearchSourceSelector
 
     private static bool IsSourceType(string? actual, string expected) =>
         string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPastEvidenceSourceType(string? sourceType) => sourceType is not null &&
+        (sourceType.Equals("PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
+         sourceType.Equals("PastAnswer", StringComparison.OrdinalIgnoreCase) ||
+         sourceType.Equals("ExactPastAnswer", StringComparison.OrdinalIgnoreCase));
+
+    private static (int? OverviewCandidateIndex, int? ConfigurationCandidateIndex) AssignStreamCoverageRoles(
+        IReadOnlyList<SearchSourceViewModel> items,
+        IReadOnlyDictionary<int, TopicEntityRankingAssessment> assessments)
+    {
+        var eligible = items
+            .Select((item, index) => new
+            {
+                Item = item,
+                Index = index,
+                Assessment = assessments[index],
+                Text = DocumentText(item),
+            })
+            .Where(candidate =>
+                candidate.Assessment.HasTopicMatch &&
+                !candidate.Item.IsManuallyExcluded &&
+                !IsPastEvidenceSourceType(candidate.Item.SourceType))
+            .ToList();
+        if (eligible.Count == 0)
+        {
+            return (null, null);
+        }
+
+        var configuration = eligible
+            .OrderByDescending(candidate => StreamConfigurationScore(candidate.Text))
+            .ThenByDescending(candidate => candidate.Assessment.FinalScore)
+            .ThenBy(candidate => candidate.Index)
+            .First();
+        var overview = eligible
+            .Where(candidate => candidate.Index != configuration.Index)
+            .OrderByDescending(candidate => StreamOverviewScore(candidate.Text))
+            .ThenByDescending(candidate => candidate.Assessment.FinalScore)
+            .ThenBy(candidate => candidate.Index)
+            .FirstOrDefault();
+
+        return (overview?.Index ?? configuration.Index, configuration.Index);
+    }
+
+    private static int StreamOverviewScore(string text) =>
+        CountOccurrences(text, "トラッキング") * 6 +
+        CountOccurrences(text, "追跡") * 5 +
+        CountOccurrences(text, "新しい問題") * 5 +
+        CountOccurrences(text, "変更") * 2 +
+        CountOccurrences(text, "機能") * 2 +
+        CountOccurrences(text, "目的") * 2 +
+        CountOccurrences(text, "track") * 4;
+
+    private static int StreamConfigurationScore(string text) =>
+        CountOccurrences(text, "設定") * 5 +
+        CountOccurrences(text, "作成") * 3 +
+        CountOccurrences(text, "生成") * 3 +
+        CountOccurrences(text, "接合") * 5 +
+        CountOccurrences(text, "結合") * 5 +
+        CountOccurrences(text, "オプション") * 3 +
+        CountOccurrences(text, "コマンド") * 2 +
+        CountOccurrences(text, "configure") * 4 +
+        CountOccurrences(text, "create") * 3;
+
+    private static int CountOccurrences(string text, string value)
+    {
+        var count = 0;
+        var startIndex = 0;
+        while ((startIndex = text.IndexOf(value, startIndex, StringComparison.OrdinalIgnoreCase)) >= 0)
+        {
+            count++;
+            startIndex += value.Length;
+        }
+
+        return count;
+    }
 
     private static int FindIndex(
         this IReadOnlyList<CoverageEvidenceCandidate> items,

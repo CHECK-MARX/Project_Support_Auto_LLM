@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -55,7 +56,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             .ThenByDescending(item => item.Document.RetrievedAt)
             .ThenBy(item => item.Document.Title, StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
-            .Select(item => ToSearchSource(item.Document, item.Score))
+            .Select(item => ToSearchSource(item.Document, item.Score, inquiryFocus))
             .ToList();
     }
 
@@ -157,14 +158,17 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         };
     }
 
-    private static SearchSource ToSearchSource(AiIndexedOfficialDocument document, SearchScoreDetails score)
+    private static SearchSource ToSearchSource(
+        AiIndexedOfficialDocument document,
+        SearchScoreDetails score,
+        InquiryFocus inquiryFocus)
     {
         return new SearchSource
         {
             SourceId = document.Id,
             SourceType = "OfficialDoc",
             Title = BuildTitle(document),
-            Text = BuildExcerpt(document.Text),
+            Text = BuildExcerpt(document.Text, inquiryFocus, document.ProductName),
             FilePath = null,
             Url = document.Url,
             RetrievedAt = document.RetrievedAt,
@@ -186,7 +190,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             : $"{document.Title} - {document.SectionTitle}";
     }
 
-    private static string BuildExcerpt(string text)
+    private static string BuildExcerpt(string text, InquiryFocus inquiryFocus, string productName)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -196,9 +200,40 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         var normalized = string.Join(
             " ",
             text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        return normalized.Length <= SearchTextMaxLength
-            ? normalized
-            : normalized[..SearchTextMaxLength] + "...";
+        if (normalized.Length <= SearchTextMaxLength)
+        {
+            return normalized;
+        }
+
+        var catalog = SupportTopicCatalog.Create(productName);
+        var profile = TopicEntityAnalyzer.Extract(inquiryFocus.FocusText, catalog);
+        var featureTerms = catalog.Features
+            .Where(feature => profile.Features.Contains(
+                feature.CanonicalName,
+                StringComparer.OrdinalIgnoreCase))
+            .SelectMany(feature => new[] { feature.CanonicalName }.Concat(feature.Aliases))
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var matchIndex = featureTerms
+            .Select(term => normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase))
+            .Where(static index => index >= 0)
+            .DefaultIfEmpty(-1)
+            .Min();
+        if (matchIndex < 0)
+        {
+            return normalized[..SearchTextMaxLength] + "...";
+        }
+
+        var startIndex = Math.Max(0, matchIndex - 240);
+        if (startIndex + SearchTextMaxLength > normalized.Length)
+        {
+            startIndex = normalized.Length - SearchTextMaxLength;
+        }
+
+        var prefix = startIndex > 0 ? "..." : string.Empty;
+        var suffix = startIndex + SearchTextMaxLength < normalized.Length ? "..." : string.Empty;
+        return $"{prefix}{normalized.Substring(startIndex, SearchTextMaxLength)}{suffix}";
     }
 
     private sealed record ScoredOfficialDocument(

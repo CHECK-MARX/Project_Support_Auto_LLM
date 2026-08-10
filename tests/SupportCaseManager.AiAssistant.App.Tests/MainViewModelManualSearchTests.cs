@@ -309,13 +309,12 @@ public sealed class MainViewModelManualSearchTests
         var prompt = new PromptBuilder().Build(request);
 
         Assert.Equal(36, services.ViewModel.SearchResultCount);
-        Assert.Equal(3, request.Sources.Count);
         Assert.InRange(request.Sources.Count, 2, 5);
         Assert.True(request.Settings.MaxPromptChars >= 8000);
         Assert.True(request.Settings.LlmProvider.MaxOutputTokens >= 600);
         Assert.Equal(AnswerReadiness.NeedsConfirmation, request.FactResolution?.AnswerReadiness);
         Assert.Empty(request.FactResolution!.CandidateFacts);
-        Assert.Equal(3, prompt.Diagnostics.EvidenceCount);
+        Assert.Equal(request.Sources.Count, prompt.Diagnostics.EvidenceCount);
         Assert.All(request.Sources, source => Assert.Contains(source.SourceId, prompt.UserPrompt));
         Assert.Contains("\"customerReplyDraft\": \"string\"", prompt.UserPrompt);
     }

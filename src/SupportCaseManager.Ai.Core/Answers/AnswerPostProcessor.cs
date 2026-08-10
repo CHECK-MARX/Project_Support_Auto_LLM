@@ -65,17 +65,24 @@ internal static partial class AnswerPostProcessor
 
                 if (finalEvidence.Count > 0)
                 {
-                    var usedProcedureFallback = TryBuildValidateUploadProcedureReply(request, out var procedureReply);
-                    customerReply = usedProcedureFallback
-                        ? procedureReply
-                        : BuildEvidenceBackedCustomerReply(request, finalEvidence);
+                    var usedStreamFallback = TryBuildValidateStreamReply(request, out var streamReply);
+                    var procedureReply = string.Empty;
+                    var usedProcedureFallback = !usedStreamFallback &&
+                        TryBuildValidateUploadProcedureReply(request, out procedureReply);
+                    customerReply = usedStreamFallback
+                        ? streamReply
+                        : usedProcedureFallback
+                            ? procedureReply
+                            : BuildEvidenceBackedCustomerReply(request, finalEvidence);
                     internalMemo = BuildInternalMemo(
                         request,
                         finalEvidence,
                         "LLM回答が送信済み根拠を十分に活用できていなかったため、根拠タイトル/抜粋から保守的に回答案を補完しました。");
-                    mergedWarnings.Add(usedProcedureFallback
-                        ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
-                        : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                    mergedWarnings.Add(usedStreamFallback
+                        ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
+                        : usedProcedureFallback
+                            ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
+                            : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -369,6 +376,117 @@ internal static partial class AnswerPostProcessor
         return builder.ToString();
     }
 
+    private static bool TryBuildValidateStreamReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        var inquiry = NormalizeWhitespace(request.InquiryText);
+        var asksAboutStream = ContainsAny(inquiry, "Stream", "stream", "ストリーム");
+        var asksForOverview = ContainsAny(inquiry, "機能", "概要", "どのような", "what is", "purpose");
+        var asksForConfiguration = ContainsAny(inquiry, "設定", "手順", "方法", "configure", "configuration", "setup");
+        if (!inquiry.Contains("Validate", StringComparison.OrdinalIgnoreCase) ||
+            !asksAboutStream ||
+            !asksForOverview ||
+            !asksForConfiguration)
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources
+                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+                .Select(static source => source.Text));
+        var compactSource = NormalizeWhitespace(sourceText);
+        if (!ContainsAny(compactSource, "Stream", "stream", "ストリーム"))
+        {
+            return false;
+        }
+
+        var supportsTracking =
+            ContainsAny(compactSource, "ストリームのビルドをトラッキング", "track stream builds", "tracking builds in a stream") ||
+            (ContainsAny(compactSource, "トラッキング", "tracking") && ContainsAny(compactSource, "ストリーム", "stream"));
+        var supportsNewIssueFocus = ContainsAny(
+            compactSource,
+            "新しい問題点に集中",
+            "新しい問題に集中",
+            "focus on new issues",
+            "focus on possible new issues");
+        var supportsStreamAssociation =
+            ContainsAny(compactSource, "特定のストリームに接合", "特定のストリームに関連", "associate", "join") &&
+            ContainsAny(compactSource, "Perforce QACプロジェクト", "Perforce QAC project");
+        var supportsStreamCreation =
+            ContainsAny(compactSource, "Validate内でストリームを生成", "Validateでストリームを生成", "create a stream in Validate") ||
+            supportsStreamAssociation;
+        var supportsCliStream =
+            ContainsAny(compactSource, "qacli validate build", "qaclivalidatebuild") &&
+            compactSource.Contains("--stream", StringComparison.OrdinalIgnoreCase);
+        var supportsValidateProjectOption =
+            compactSource.Contains("qacli validate config", StringComparison.OrdinalIgnoreCase) &&
+            compactSource.Contains("--validate-project", StringComparison.OrdinalIgnoreCase);
+        var supportsProjectConnection =
+            supportsValidateProjectOption ||
+            ContainsAny(compactSource, "qacli validate connect", "qaclivalidateconnect", "プロジェクト間の接続", "プロジェクトを結合");
+
+        if ((!supportsTracking && !supportsNewIssueFocus) ||
+            (!supportsStreamCreation && !supportsStreamAssociation && !supportsCliStream && !supportsValidateProjectOption))
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいたValidateのストリーム機能と設定方法について、確認した根拠に基づきご案内します。");
+        builder.AppendLine();
+        builder.AppendLine("【概要】");
+        if (supportsTracking && supportsNewIssueFocus)
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトのビルドを継続的に追跡し、開発者がローカルコピーで作業している間に発生した可能性のある新しい問題へ集中して確認するための機能です。");
+        }
+        else if (supportsTracking)
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトのビルドを継続的に追跡するための機能です。");
+        }
+        else
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトの異なるバージョンを追跡し、対象のPerforce QACプロジェクトを特定のストリームへ関連付けて管理するための機能です。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【設定方法】");
+        var step = 1;
+        if (supportsProjectConnection)
+        {
+            if (supportsValidateProjectOption)
+            {
+                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトをValidateへ接続します。CLIでは qacli validate config --create -P <project_dir> --url <validate_url> --validate-project <Validateプロジェクト/ストリーム名> を使用します。");
+            }
+            else
+            {
+                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトとValidateプロジェクトの接続を作成します。");
+            }
+        }
+
+        if (supportsStreamCreation || supportsStreamAssociation)
+        {
+            builder.AppendLine($"{step++}. Validateでストリームを作成し、対象のPerforce QACプロジェクトをそのストリームへ関連付けます。");
+        }
+
+        if (supportsCliStream)
+        {
+            builder.AppendLine($"{step}. コマンドラインからビルドを登録する場合は、qacli validate build の --stream オプションで登録先ストリームを指定します。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【注意点】");
+        builder.AppendLine("・設定前に、対象プロジェクトがValidateへ接続されていることと、ストリームを利用できる権限があることをご確認ください。");
+        builder.AppendLine("・画面項目や利用可能なオプションは製品バージョンによって異なる場合があるため、ご利用バージョンのマニュアルで最終確認してください。");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
+    }
+
     private static bool TryBuildValidateUploadProcedureReply(
         AnswerDraftRequest request,
         out string customerReply)
@@ -431,6 +549,12 @@ internal static partial class AnswerPostProcessor
         builder.AppendLine("以上、よろしくお願いいたします。");
         customerReply = builder.ToString();
         return true;
+    }
+
+    private static bool ContainsAny(string value, params string[] candidates)
+    {
+        return candidates.Any(candidate =>
+            value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsCustomerVisibleSourceType(string sourceType)

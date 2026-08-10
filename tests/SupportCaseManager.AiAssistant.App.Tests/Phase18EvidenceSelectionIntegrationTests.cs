@@ -108,6 +108,51 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
     }
 
     [Fact]
+    public void StreamOverviewAndSetup_AutomaticallyUsesCoverageSelectionOnlyForCompoundFeatureQuestion()
+    {
+        Assert.True(CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
+            "Validateのストリーム機能についてどのような機能かを教えてください。また、設定方法について教えてください。",
+            "HelixQAC"));
+        Assert.False(CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
+            "QACの解析結果をqacli validate buildでアップロードする方法を教えてください。",
+            "HelixQAC"));
+        Assert.False(CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
+            "Validateのバックアップ手順を教えてください。",
+            "HelixQAC"));
+    }
+
+    [Fact]
+    public void StreamOverviewAndSetup_MaximizesCoverageAndRetainsRelevantPastEvidence()
+    {
+        const string question = "Validateのストリーム機能についてどのような機能かを教えてください。また、設定方法について教えてください。";
+        var items = new[]
+        {
+            Item("backup", 0.99, "Validateの一般的なバックアップ手順と復元方法です。", "Manual"),
+            Item("overview", 0.61, "Validate Streamの機能概要です。開発中の変更とビルド履歴を追跡します。", "OfficialDoc"),
+            Item("setup", 0.58, "Validate ストリームの設定方法です。Streamを作成してプロジェクトを設定します。", "Manual"),
+            Item("past", 0.41, "過去案件ではValidateストリームを設定し、対象プロジェクトの履歴を確認しました。", "PastCaseNote"),
+            Item("generic", 0.88, "Validateの利用手順とプロジェクト設定の一般説明です。", "Manual"),
+        };
+
+        var result = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.65,
+            questionAwareContext: Phase18Context(question, 3));
+
+        Assert.Equal(3, result.Sources.Count);
+        Assert.Contains(result.Sources, static source => source.SourceId == "overview");
+        Assert.Contains(result.Sources, static source => source.SourceId == "setup");
+        Assert.Contains(result.Sources, static source => source.SourceId == "past");
+        Assert.DoesNotContain(result.Sources, static source => source.SourceId is "backup" or "generic");
+        Assert.Contains(CoverageAnalyzer.PriorCaseSupplement, result.RequiredCoverage);
+        Assert.Contains(CoverageAnalyzer.PriorCaseSupplement, result.FinalCoverage);
+        Assert.Equal(1, result.PastCaseNoteSendCount);
+        Assert.Equal(1, result.ManualSendCount);
+        Assert.Equal(1, result.OfficialDocSendCount);
+    }
+
+    [Fact]
     public void E2eA_QacToValidateCli_CoverageDoesNotRegressFromPhase175()
     {
         const string question = "QAC解析結果をCLIからValidateへアップロードするため、auth、接続、プロジェクト関連付け、build-name、incremental build、確認方法、エラー対処を知りたい。";
@@ -304,11 +349,15 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
     private static int EstimatedChars(IEnumerable<SearchSource> sources) =>
         sources.Sum(static source => source.Title.Length + source.Text.Length);
 
-    private static SearchSourceViewModel Item(string id, double score, string text) => new(
+    private static SearchSourceViewModel Item(
+        string id,
+        double score,
+        string text,
+        string sourceType = "Manual") => new(
         new SearchSource
         {
             SourceId = id,
-            SourceType = "Manual",
+            SourceType = sourceType,
             ProductName = "HelixQAC",
             Title = id,
             Text = text,

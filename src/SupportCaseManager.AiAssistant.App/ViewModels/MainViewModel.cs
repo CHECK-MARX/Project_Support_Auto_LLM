@@ -3789,10 +3789,7 @@ public sealed class MainViewModel : ObservableObject
                 item.Source,
                 lastInquiryFocus?.IsFreshnessSensitive == true,
                 HighScoreThreshold))
-            .OrderBy(item => FreshnessEvidenceAutoSelector.GetSourcePriority(
-                item.Source.SourceType,
-                lastInquiryFocus?.IsFreshnessSensitive == true))
-            .ThenByDescending(static item => item.Source.Score ?? 0)
+            .OrderByDescending(static item => item.Source.Score ?? 0)
             .ThenBy(static item => item.Index)
             .Take(Math.Max(0, MaxEvidenceItems))
             .Select(static item => item.Index)
@@ -3845,17 +3842,10 @@ public sealed class MainViewModel : ObservableObject
 
     private IReadOnlyList<SearchSource> BuildCombinedSearchSources()
     {
-        var questionTypes = new QuestionClassifier()
-            .Classify(InquiryText, lastInquiryFocus)
-            .QuestionTypes;
         return lastOfficialDocumentSearchSources
             .Concat(lastManualSearchSources)
             .Concat(lastSearchSources)
-            .OrderBy(source => GetSourcePriority(
-                source.SourceType,
-                questionTypes,
-                lastInquiryFocus?.IsFreshnessSensitive == true))
-            .ThenByDescending(static source => source.Score ?? 0)
+            .OrderByDescending(static source => source.Score ?? 0)
             .ThenBy(static source => source.SourceType, StringComparer.Ordinal)
             .ThenBy(static source => source.SourceId, StringComparer.Ordinal)
             .ToList();
@@ -3873,6 +3863,16 @@ public sealed class MainViewModel : ObservableObject
 
         var inquiryFocus = lastInquiryFocus ?? inquiryFocusExtractor.Extract(InquiryText, caseContext, UsePhase175QualityControls);
         var settings = ApplyAutomaticGenerationRoute(BuildSettings(), sources, inquiryFocus);
+        if (ShouldUseAutomaticCoverageSelection())
+        {
+            settings = settings with
+            {
+                UseCoverageAwareEvidenceSelection = true,
+                CoverageAwareMaxEvidenceItems = Math.Clamp(MaxEvidenceItems, 1, 5),
+                UsePhase175QualityControls = true,
+                EvidenceRankingMode = EvidenceRankingModes.Phase16,
+            };
+        }
         var factResolution = new FactResolver().Resolve(
             effectiveProductName,
             settings.AiIndexFolder,
@@ -4109,7 +4109,10 @@ public sealed class MainViewModel : ObservableObject
 
     private QuestionAwareEvidenceSelectionContext? BuildQuestionAwareSelectionContext()
     {
-        if (!UseQuestionAwareEvidenceSelection && !UseCoverageAwareEvidenceSelection)
+        var automaticCoverageSelection = ShouldUseAutomaticCoverageSelection();
+        if (!UseQuestionAwareEvidenceSelection &&
+            !UseCoverageAwareEvidenceSelection &&
+            !automaticCoverageSelection)
         {
             return null;
         }
@@ -4122,10 +4125,12 @@ public sealed class MainViewModel : ObservableObject
             TargetVersion = lastInquiryFocus?.TargetVersions.Count == 1
                 ? lastInquiryFocus.TargetVersions[0]
                 : null,
-            RankingMode = EvidenceRankingMode,
-            UsePhase175QualityControls = UsePhase175QualityControls,
-            UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
-            CoverageAwareMaxEvidenceItems = CoverageAwareMaxEvidenceItems,
+            RankingMode = automaticCoverageSelection ? EvidenceRankingModes.Phase16 : EvidenceRankingMode,
+            UsePhase175QualityControls = UsePhase175QualityControls || automaticCoverageSelection,
+            UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection || automaticCoverageSelection,
+            CoverageAwareMaxEvidenceItems = automaticCoverageSelection
+                ? Math.Clamp(MaxEvidenceItems, 1, 5)
+                : CoverageAwareMaxEvidenceItems,
             UseRustEvidenceSelector = UseRustEvidenceSelector,
             UsePersistentRustEvidenceSelector = UsePersistentRustEvidenceSelector,
             MaxWorkerRestartsPerMinute = MaxWorkerRestartsPerMinute,
@@ -4140,6 +4145,11 @@ public sealed class MainViewModel : ObservableObject
             MaxPromptChars = MaxPromptChars,
         };
     }
+
+    private bool ShouldUseAutomaticCoverageSelection() =>
+        CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
+            InquiryText,
+            ResolveEffectiveProductName());
 
     private void ApplyDraftResult(AnswerDraftResult result)
     {

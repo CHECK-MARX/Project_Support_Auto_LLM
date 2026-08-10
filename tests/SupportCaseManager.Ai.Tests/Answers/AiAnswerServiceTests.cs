@@ -328,6 +328,61 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_RecoversValidateStreamOverviewAndConfigurationWhenJsonIsTruncated()
+    {
+        var service = CreateService("""
+            { "customerReplyDraft": "回答を作成中です
+            """);
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "official-stream-cli",
+                    SourceType = "OfficialDoc",
+                    Title = "qacli validate build",
+                    Text = "qacli validate config --create -P <project_dir> --url <validate_url> --validate-project <validate_project_name> を使用します。--validate-projectは、Validateに保存されているPerforce QACプロジェクトの生成時に使用するValidateプロジェクト/ストリーム名です。",
+                    Score = 0.96,
+                },
+                new SearchSource
+                {
+                    SourceId = "manual-stream-overview",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    Text = "ストリームのビルドをトラッキングします。これは、開発者がプロジェクトのローカルコピーで開発をしている間に起きた可能性のある新しい問題点に集中することを可能にします。プロジェクトの異なるバージョンをトラッキングし、Perforce QACプロジェクトを特定のストリームに接合するために、Validate内でストリームを生成できます。qacli validate connectでプロジェクト間の接続を作成します。",
+                    Score = 0.92,
+                },
+                new SearchSource
+                {
+                    SourceId = "past-stream-case",
+                    SourceType = "PastCaseNote",
+                    Title = "類似案件",
+                    Text = "Validateのストリーム設定を確認した過去案件です。",
+                    Score = 0.73,
+                },
+            ]) with
+            {
+                InquiryText = "Validateのストリーム機能についてどのような機能かを教えてください。また、設定方法について教えてください。",
+                InquiryFocus = new InquiryFocusExtractor().Extract("Validateのストリーム機能についてどのような機能かを教えてください。また、設定方法について教えてください。"),
+                Settings = new AiAssistantSettings
+                {
+                    MaxEvidenceItems = 3,
+                    UseCoverageAwareEvidenceSelection = true,
+                },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("【概要】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【設定方法】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【注意点】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("新しい問題", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("--validate-project", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("確認できた内容", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("Perforce-QAC-Manual（", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains(result.Warnings, warning => warning.Contains("Validate Streamの概要と設定方法を補完", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_UsesSelectedPastCaseTechnicalContentWhenOfficialDocExistsAndLlmRefuses()
     {
         var service = CreateService("""
