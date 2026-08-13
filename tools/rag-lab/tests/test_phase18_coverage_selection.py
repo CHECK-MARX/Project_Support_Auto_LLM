@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -98,6 +99,31 @@ def test_manual_items_are_never_removed_by_limit_or_budget():
     ]
     assert "ManualSelectionExceedsLimit" in result.warnings
     assert "ManualSelectionExceedsCharacterBudget" in result.warnings
+
+
+def test_one_generic_technical_token_does_not_make_distinct_documents_duplicates():
+    install = _candidate("install", 1, ("A",), 0.9)
+    license_item = _candidate("license", 2, (), 0.8)
+    install = replace(
+        install,
+        text="Install and configure a QAC project.",
+        technical_tokens=("QAC",),
+    )
+    license_item = replace(
+        license_item,
+        text="Verify the QAC license before analysis.",
+        technical_tokens=("QAC",),
+    )
+
+    result = select_coverage_evidence(
+        CoverageEvidenceSelectionRequest(
+            required_coverage=("A",),
+            base_max_items=2,
+            candidates=(install, license_item),
+        )
+    )
+
+    assert [item.candidate_id for item in result.selected] == ["install", "license"]
 
 
 def _request(case: dict[str, object]) -> CoverageEvidenceSelectionRequest:

@@ -89,5 +89,7 @@ public sealed record TopicConflictAssessment
 
     public IReadOnlyList<string> MatchedFeatures { get; init; } = [];
 
+    public IReadOnlyList<string> MatchedOperations { get; init; } = [];
+
     public IReadOnlyList<TopicEntityValue> MatchedEntities { get; init; } = [];
 }

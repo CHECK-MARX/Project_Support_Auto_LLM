@@ -90,6 +90,28 @@ public sealed class TopicEntityAnalyzerTests
     }
 
     [Fact]
+    public void Extract_RecognizesProjectAnalysisAsOperation()
+    {
+        var profile = TopicEntityAnalyzer.Extract(
+            "QACで、プロジェクトを解析するための手順を教えてください。",
+            Catalog);
+
+        Assert.Contains("Analysis", profile.Operations);
+        Assert.Contains("HowTo", profile.Intents);
+    }
+
+    [Fact]
+    public void Extract_DoesNotTreatAnalysisResultUploadAsAnalysisOperation()
+    {
+        var profile = TopicEntityAnalyzer.Extract(
+            "Dashboardで解析結果をアップロードして表示します。",
+            Catalog);
+
+        Assert.DoesNotContain("Analysis", profile.Operations);
+        Assert.Contains("Upload", profile.Operations);
+    }
+
+    [Fact]
     public void Extract_NormalizesCaseWidthAndCommandPrefix()
     {
         var profile = TopicEntityAnalyzer.Extract(

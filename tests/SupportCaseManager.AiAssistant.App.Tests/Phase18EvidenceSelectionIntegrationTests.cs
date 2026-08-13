@@ -119,6 +119,9 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
         Assert.False(CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
             "Validateのバックアップ手順を教えてください。",
             "HelixQAC"));
+        Assert.True(CoverageAwareSearchSourceSelector.ShouldApplyAutomatically(
+            "QACで、プロジェクトを解析するための手順を教えてください。",
+            "HelixQAC"));
     }
 
     [Fact]
@@ -150,6 +153,32 @@ public sealed class Phase18EvidenceSelectionIntegrationTests
         Assert.Equal(1, result.PastCaseNoteSendCount);
         Assert.Equal(1, result.ManualSendCount);
         Assert.Equal(1, result.OfficialDocSendCount);
+    }
+
+    [Fact]
+    public void ProjectAnalysis_PrefersExplicitOperationAndRejectsDashboardManual()
+    {
+        const string question = "QACで、プロジェクトを解析するための手順を教えてください。";
+        var items = new[]
+        {
+            Item("dashboard", 0.99, "Dashboard manual for a QAC project. View uploaded analysis results.", "Manual"),
+            Item("generic", 0.92, "A QAC project can be analyzed after its compiler settings are configured.", "OfficialDoc"),
+            Item("official", 0.70, "Run qacli analyze -P PROJECT and verify the generated analysis results.", "OfficialDoc"),
+            Item("manual", 0.69, "Project analysis procedure: configure source files, execute qacli analyze, then inspect messages.", "Manual"),
+            Item("past", 0.61, "Past support case confirmed qacli analyze for project analysis and checked the report.", "PastCaseNote"),
+        };
+
+        var result = SearchSourceSelectionBuilder.Build(
+            items,
+            3,
+            0.10,
+            questionAwareContext: Phase18Context(question, 3));
+
+        Assert.Equal(3, result.Sources.Count);
+        Assert.Contains(result.Sources, static source => source.SourceId == "official");
+        Assert.Contains(result.Sources, static source => source.SourceId == "manual");
+        Assert.Contains(result.Sources, static source => source.SourceId == "past");
+        Assert.DoesNotContain(result.Sources, static source => source.SourceId is "dashboard" or "generic");
     }
 
     [Fact]

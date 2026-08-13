@@ -10,6 +10,53 @@ public sealed class CoverageAwareEvidenceSelectorTests
         PropertyNameCaseInsensitive = true,
     };
 
+    [Fact]
+    public void Select_DoesNotTreatDifferentDocumentsAsDuplicatesForOneGenericTechnicalToken()
+    {
+        var request = new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisCommand", "AnalysisVerification"],
+            BaseMaxItems = 3,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("official", 1, ["AnalysisProcedure", "AnalysisCommand", "AnalysisVerification"], 0.9) with
+                {
+                    SourceType = "OfficialDoc",
+                    DocumentId = "official-doc",
+                    Text = "Official qacli analyze procedure",
+                    TechnicalTokens = ["QAC"],
+                    EstimatedChars = 500,
+                },
+                Candidate("manual", 2, ["AnalysisProcedure", "AnalysisCommand"], 0.8) with
+                {
+                    SourceType = "Manual",
+                    DocumentId = "manual-doc",
+                    Text = "Manual qacli analyze procedure",
+                    TechnicalTokens = ["QAC"],
+                    EstimatedChars = 500,
+                },
+                Candidate("past", 3, ["AnalysisVerification"], 0.7) with
+                {
+                    SourceType = "PastCaseNote",
+                    DocumentId = "past-case",
+                    Text = "Past QAC analysis verification",
+                    TechnicalTokens = ["QAC"],
+                    EstimatedChars = 500,
+                },
+            ],
+        };
+
+        var result = CoverageAwareEvidenceSelector.Select(request);
+
+        Assert.Equal(3, result.Selected.Count);
+        Assert.Contains(result.Selected, static item => item.SourceType == "OfficialDoc");
+        Assert.Contains(result.Selected, static item => item.SourceType == "Manual");
+        Assert.Contains(result.Selected, static item => item.SourceType == "PastCaseNote");
+    }
+
     public static IEnumerable<object[]> FixtureCases() => LoadCases()
         .Select(static item => new object[] { item });
 

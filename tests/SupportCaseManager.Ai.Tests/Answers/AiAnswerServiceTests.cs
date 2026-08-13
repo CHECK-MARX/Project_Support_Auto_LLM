@@ -383,6 +383,50 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_RecoversQacAnalysisProcedureWhenJsonIsTruncated()
+    {
+        var service = CreateService("""
+            { "customerReplyDraft": "TOYO\nご担当者様\n回答を作成中です
+            """);
+        var question = "QACで、プロジェクトを解析するための手順を教えてください。";
+        var request = CreateRequest(
+            [
+                new SearchSource
+                {
+                    SourceId = "analysis-official",
+                    SourceType = "OfficialDoc",
+                    Title = "Analyze a project",
+                    Text = "Run qacli analyze -P <project-directory> to analyze the QAC project, then check the analysis result.",
+                    Score = 0.95,
+                },
+                new SearchSource
+                {
+                    SourceId = "analysis-manual",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    Text = "QACプロジェクトを解析する前にソース、インクルードパス、マクロ定義、コンパイラ設定を確認し、解析を実行します。",
+                    Score = 0.90,
+                },
+            ]) with
+            {
+                Case = new CaseContext { ProductName = "HelixQAC" },
+                InquiryText = question,
+                InquiryFocus = new InquiryFocusExtractor().Extract(question),
+                Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+            };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.StartsWith($"[会社名]{Environment.NewLine}[お客様名] 様", result.CustomerReplyDraft);
+        Assert.Contains("【概要】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("qacli analyze -P <project-directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("【注意点】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(result.Warnings, warning => warning.Contains("QACプロジェクト解析手順を補完", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_UsesSelectedPastCaseTechnicalContentWhenOfficialDocExistsAndLlmRefuses()
     {
         var service = CreateService("""

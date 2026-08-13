@@ -4153,7 +4153,9 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyDraftResult(AnswerDraftResult result)
     {
-        CustomerReplyDraft = result.CustomerReplyDraft;
+        CustomerReplyDraft = CustomerReplyRecipientFormatter.EnsureHeader(
+            BuildCurrentCaseContext(),
+            result.CustomerReplyDraft);
         InternalMemo = result.InternalMemo;
         NeedConfirmationsText = result.NeedConfirmations.Count == 0
             ? "(なし)"

@@ -25,6 +25,9 @@ public static partial class CoverageAnalyzer
     public const string IncrementalBuild = "IncrementalBuild";
     public const string Overview = "Overview";
     public const string PriorCaseSupplement = "PriorCaseSupplement";
+    public const string AnalysisProcedure = "AnalysisProcedure";
+    public const string AnalysisCommand = "AnalysisCommand";
+    public const string AnalysisVerification = "AnalysisVerification";
 
     private static readonly string[] UploadRequirements =
     [
@@ -46,6 +49,11 @@ public static partial class CoverageAnalyzer
     private static readonly string[] CoverageSelectionStreamRequirements =
     [
         Overview, Purpose, StreamCreation, Configuration, QacAssociation, Verification,
+    ];
+
+    private static readonly string[] CoverageSelectionAnalysisRequirements =
+    [
+        AnalysisProcedure, AnalysisCommand, AnalysisVerification,
     ];
 
     public static IReadOnlyList<string> Required(string question, TopicEntityProfile profile)
@@ -181,6 +189,12 @@ public static partial class CoverageAnalyzer
                 : CoverageSelectionStreamRequirements;
         }
 
+        if (profile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
+            profile.Intents.Contains("HowTo", StringComparer.Ordinal))
+        {
+            return CoverageSelectionAnalysisRequirements;
+        }
+
         return [];
     }
 
@@ -227,6 +241,24 @@ public static partial class CoverageAnalyzer
         }
         if (hasStream && legacy.Contains(QacAssociation)) observed.Add(QacAssociation);
         if (hasStream && legacy.Contains(Verification)) observed.Add(Verification);
+
+        var hasAnalysisOperation = ContainsAny(
+            value,
+            "qacli analyze", "qaclianalyze", "プロジェクトを解析", "解析を実行", "解析の実行",
+            "解析する", "analyze project", "run analysis", "execute analysis");
+        if (hasAnalysisOperation)
+        {
+            observed.Add(AnalysisProcedure);
+            if (ContainsAny(value, "qacli analyze", "qaclianalyze", "command", "コマンド", "--", "-P", "-cf"))
+            {
+                observed.Add(AnalysisCommand);
+            }
+
+            if (ContainsAny(value, "結果", "確認", "レポート", "status", "result", "report", "verify", "check"))
+            {
+                observed.Add(AnalysisVerification);
+            }
+        }
         return observed;
     }
 

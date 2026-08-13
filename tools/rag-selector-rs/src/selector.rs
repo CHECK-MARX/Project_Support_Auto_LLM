@@ -293,7 +293,16 @@ fn is_redundant(
         {
             return true;
         }
+        let distinct_technical_tokens = candidate
+            .technical_tokens
+            .iter()
+            .chain(existing.technical_tokens.iter())
+            .filter(|token| !token.trim().is_empty())
+            .map(|token| token.trim().to_uppercase())
+            .collect::<BTreeSet<_>>()
+            .len();
         if !adds_required_coverage
+            && distinct_technical_tokens >= 2
             && jaccard(&candidate.technical_tokens, &existing.technical_tokens)
                 >= TECHNICAL_TOKEN_DUPLICATE_THRESHOLD
         {
@@ -555,6 +564,20 @@ mod tests {
         build.section = Some("build".to_owned());
         let result = select(&request(&["A", "B"], vec![auth, build], 2, 5, 1000));
         assert_eq!(ids(&result), ["auth", "build"]);
+    }
+
+    #[test]
+    fn one_generic_technical_token_does_not_make_distinct_documents_duplicates() {
+        let mut install = candidate("install", 1, &["A"], 0.9);
+        install.technical_tokens = vec!["QAC".to_owned()];
+        install.text = "Install and configure a QAC project.".to_owned();
+        let mut license = candidate("license", 2, &[], 0.8);
+        license.technical_tokens = vec!["QAC".to_owned()];
+        license.text = "Verify the QAC license before analysis.".to_owned();
+
+        let result = select(&request(&["A"], vec![install, license], 2, 5, 1000));
+
+        assert_eq!(ids(&result), ["install", "license"]);
     }
 
     #[test]

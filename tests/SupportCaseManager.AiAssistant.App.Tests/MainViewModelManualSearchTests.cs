@@ -320,23 +320,27 @@ public sealed class MainViewModelManualSearchTests
     }
 
     [Fact]
-    public async Task GenerateDraftAsync_TimeoutDisplaysManualEvidenceFallback()
+    public async Task GenerateDraftAsync_TimeoutFallbackUsesMissingRecipientPlaceholders()
     {
         var services = CreateViewModel(
             [CreateManualSource()],
             answerService: new FailingAnswerService(new InvalidOperationException("Ollama /api/chat timed out.")));
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen2.5:3b";
-        services.ViewModel.CompanyName = "お客様株式会社";
-        services.ViewModel.CustomerName = "山田 太郎";
+        services.ViewModel.CompanyName = "TOYO";
+        services.ViewModel.CustomerName = "ご担当者様";
         ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
 
         Assert.Equal("CompletedWithFallback", services.ViewModel.GenerationState);
-        Assert.Contains("お客様株式会社", services.ViewModel.CustomerReplyDraft);
-        Assert.Contains("山田 太郎 様", services.ViewModel.CustomerReplyDraft);
+        Assert.StartsWith(
+            $"[会社名]{Environment.NewLine}[お客様名] 様",
+            services.ViewModel.CustomerReplyDraft,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", services.ViewModel.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("東陽テクニカ", services.ViewModel.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("ライセンス認証エラー", services.ViewModel.CustomerReplyDraft);
         Assert.Contains("PDFマニュアル", services.ViewModel.StatusMessage);
         Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
@@ -355,6 +359,8 @@ public sealed class MainViewModelManualSearchTests
             }));
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen3:4b";
+        services.ViewModel.CompanyName = "TOYO";
+        services.ViewModel.CustomerName = "ご担当者様";
         ConfigureProduct(services.ViewModel, "HelixQAC");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
@@ -364,6 +370,12 @@ public sealed class MainViewModelManualSearchTests
         Assert.Equal("LlmResponseParseFallback", services.ViewModel.GenerationSkippedReason);
         Assert.Contains("送信済み根拠から回答案を補完", services.ViewModel.StatusMessage, StringComparison.Ordinal);
         Assert.Contains("grounded fallback", services.ViewModel.LastOperationResult, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(
+            $"[会社名]{Environment.NewLine}[お客様名] 様",
+            services.ViewModel.CustomerReplyDraft,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", services.ViewModel.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("東陽テクニカ", services.ViewModel.CustomerReplyDraft, StringComparison.Ordinal);
     }
 
     [Fact]

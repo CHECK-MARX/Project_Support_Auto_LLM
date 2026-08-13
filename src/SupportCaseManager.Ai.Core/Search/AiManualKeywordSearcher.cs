@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -126,8 +127,12 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
             return normalized;
         }
 
-        var candidates = new[] { "解析結果をアップロード", "アップロード", "Validate", "GUI", "CLI" }
-            .Where(term => query.Contains(term, StringComparison.OrdinalIgnoreCase))
+        var analysisTerms = TopicEntityAnalyzer.Extract(query).Operations.Contains("Analysis", StringComparer.Ordinal)
+            ? new[] { "qacli analyze", "qaclianalyze", "プロジェクトを解析", "解析を実行", "解析する", "run analysis" }
+            : [];
+        var candidates = analysisTerms
+            .Concat(new[] { "解析結果をアップロード", "アップロード", "Validate", "GUI", "CLI" }
+                .Where(term => query.Contains(term, StringComparison.OrdinalIgnoreCase)))
             .Concat(matchedTerms.OrderByDescending(static term => term.Length))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();

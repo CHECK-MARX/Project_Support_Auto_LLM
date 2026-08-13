@@ -256,6 +256,52 @@ public sealed class ProductScopedSearchTests
     }
 
     [Fact]
+    public async Task SearchAllAsync_ProjectAnalysis_PrefersOperationMatchedSourcesOverDashboard()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [
+                CreateManual(
+                    "dashboard-manual",
+                    "Dashboard利用手順書。QACプロジェクトの解析結果をアップロードし、Dashboardで表示する手順です。"),
+                CreateManual(
+                    "analysis-manual",
+                    "QACプロジェクトを解析する手順です。プロジェクト設定後に qacli analyze -P . を実行し、解析結果を確認します。"),
+            ]);
+        await WriteCaseIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateNote(
+                "analysis-past-case",
+                "QACプロジェクトの解析を実行した過去案件です。qacli analyzeの実行前に設定を確認しました。")]);
+        await WriteOfficialIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateOfficial(
+                "analysis-official",
+                "Analyze a project",
+                "Running analysis",
+                "Run qacli analyze -P <project-directory> to analyze the QAC project and then check the analysis result.")]);
+        var service = CreateService();
+        var focus = new InquiryFocusExtractor().Extract(
+            "QACで、プロジェクトを解析するための手順を教えてください。");
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            focus,
+            maxResults: 6);
+
+        Assert.Contains(results.Take(3), source => source.SourceId == "analysis-manual");
+        Assert.Contains(results.Take(3), source => source.SourceId == "analysis-official");
+        Assert.Contains(results.Take(3), source => source.SourceId == "analysis-past-case");
+        Assert.DoesNotContain(results.Take(3), source => source.SourceId == "dashboard-manual");
+    }
+
+    [Fact]
     public async Task SearchAllAsync_SuppressesExactContentDuplicates()
     {
         using var temp = new TempDirectory();

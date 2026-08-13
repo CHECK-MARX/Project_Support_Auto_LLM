@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Facts;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Answers;
 
@@ -65,24 +66,31 @@ internal static partial class AnswerPostProcessor
 
                 if (finalEvidence.Count > 0)
                 {
-                    var usedStreamFallback = TryBuildValidateStreamReply(request, out var streamReply);
+                    var usedAnalysisFallback = TryBuildQacAnalysisProcedureReply(request, out var analysisReply);
+                    var streamReply = string.Empty;
+                    var usedStreamFallback = !usedAnalysisFallback &&
+                        TryBuildValidateStreamReply(request, out streamReply);
                     var procedureReply = string.Empty;
-                    var usedProcedureFallback = !usedStreamFallback &&
+                    var usedProcedureFallback = !usedAnalysisFallback && !usedStreamFallback &&
                         TryBuildValidateUploadProcedureReply(request, out procedureReply);
-                    customerReply = usedStreamFallback
-                        ? streamReply
-                        : usedProcedureFallback
-                            ? procedureReply
-                            : BuildEvidenceBackedCustomerReply(request, finalEvidence);
+                    customerReply = usedAnalysisFallback
+                        ? analysisReply
+                        : usedStreamFallback
+                            ? streamReply
+                            : usedProcedureFallback
+                                ? procedureReply
+                                : BuildEvidenceBackedCustomerReply(request, finalEvidence);
                     internalMemo = BuildInternalMemo(
                         request,
                         finalEvidence,
                         "LLM回答が送信済み根拠を十分に活用できていなかったため、根拠タイトル/抜粋から保守的に回答案を補完しました。");
-                    mergedWarnings.Add(usedStreamFallback
-                        ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
-                        : usedProcedureFallback
-                            ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
-                            : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                    mergedWarnings.Add(usedAnalysisFallback
+                        ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からQACプロジェクト解析手順を補完しました。"
+                        : usedStreamFallback
+                            ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
+                            : usedProcedureFallback
+                                ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
+                                : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -104,7 +112,7 @@ internal static partial class AnswerPostProcessor
             }
         }
 
-        customerReply = EnsureCustomerReplyEmailHeader(request, customerReply);
+        customerReply = CustomerReplyRecipientFormatter.EnsureHeader(request.Case, customerReply);
 
         return result with
         {
@@ -481,6 +489,72 @@ internal static partial class AnswerPostProcessor
         builder.AppendLine("【注意点】");
         builder.AppendLine("・設定前に、対象プロジェクトがValidateへ接続されていることと、ストリームを利用できる権限があることをご確認ください。");
         builder.AppendLine("・画面項目や利用可能なオプションは製品バージョンによって異なる場合があるため、ご利用バージョンのマニュアルで最終確認してください。");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
+    }
+
+    private static bool TryBuildQacAnalysisProcedureReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        var profile = TopicEntityAnalyzer.Extract(
+            request.InquiryText,
+            SupportTopicCatalog.Create(request.Case.ProductName));
+        if (!profile.Operations.Contains("Analysis", StringComparer.Ordinal) ||
+            !profile.Intents.Contains("HowTo", StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources
+                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+                .Select(static source => string.Join(' ', source.Title, source.SectionTitle, source.Text)));
+        var compactSource = NormalizeWhitespace(sourceText);
+        var hasCliAnalysis = ContainsAny(compactSource, "qacli analyze", "qaclianalyze");
+        var hasGuiAnalysis = ContainsAny(
+            compactSource,
+            "プロジェクトを解析", "解析を実行", "解析の実行", "Analyze Project", "Run Analysis");
+        if (!hasCliAnalysis && !hasGuiAnalysis)
+        {
+            return false;
+        }
+
+        var command = "qacli analyze";
+        if (compactSource.Contains("-cf", StringComparison.OrdinalIgnoreCase))
+        {
+            command += " -cf";
+        }
+        if (compactSource.Contains("-P", StringComparison.Ordinal))
+        {
+            command += " -P <project-directory>";
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいた、QACでプロジェクトを解析する手順についてご案内します。");
+        builder.AppendLine();
+        builder.AppendLine("【概要】");
+        builder.AppendLine("QACプロジェクトに登録・設定したソースコードを対象に解析を実行し、検出結果を確認する操作です。");
+        builder.AppendLine();
+        builder.AppendLine("【手順】");
+        builder.AppendLine("1. 解析対象のQACプロジェクトを開き、ソースファイルとコンパイラ設定が登録されていることを確認します。");
+        if (hasCliAnalysis)
+        {
+            builder.AppendLine($"2. CLIで解析する場合は、対象プロジェクトに対して `{command}` を実行します。");
+        }
+        else
+        {
+            builder.AppendLine("2. QAC GUIで対象プロジェクトを選択し、解析の実行を開始します。");
+        }
+        builder.AppendLine("3. 解析終了後、QAC GUIまたは生成されたレポートでメッセージと解析結果を確認します。");
+        builder.AppendLine();
+        builder.AppendLine("【注意点】");
+        builder.AppendLine("・実行前に、対象ソース、インクルードパス、マクロ定義、コンパイラ設定が実際のビルド条件と一致していることをご確認ください。");
+        builder.AppendLine("・利用できる画面項目やCLIオプションは製品バージョンによって異なる場合があるため、ご利用バージョンのマニュアルで最終確認してください。");
         builder.AppendLine();
         builder.AppendLine("以上、よろしくお願いいたします。");
         customerReply = builder.ToString();

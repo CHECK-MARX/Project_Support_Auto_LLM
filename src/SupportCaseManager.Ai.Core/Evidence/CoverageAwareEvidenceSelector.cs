@@ -205,7 +205,14 @@ public static class CoverageAwareEvidenceSelector
             {
                 return true;
             }
-            if (!addsRequiredCoverage && Jaccard(candidate.TechnicalTokens, existing.TechnicalTokens) >= TechnicalTokenDuplicateThreshold)
+            var distinctTechnicalTokens = candidate.TechnicalTokens
+                .Concat(existing.TechnicalTokens)
+                .Where(static token => !string.IsNullOrWhiteSpace(token))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+            if (!addsRequiredCoverage &&
+                distinctTechnicalTokens >= 2 &&
+                Jaccard(candidate.TechnicalTokens, existing.TechnicalTokens) >= TechnicalTokenDuplicateThreshold)
             {
                 return true;
             }

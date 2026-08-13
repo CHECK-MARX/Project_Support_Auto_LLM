@@ -296,9 +296,16 @@ def _is_redundant(
             candidate.text, existing.text
         ) >= 0.88:
             return True
-        if not adds_required_coverage and _jaccard(
-            candidate.technical_tokens, existing.technical_tokens
-        ) >= 0.90:
+        distinct_technical_tokens = {
+            token.strip().casefold()
+            for token in (*candidate.technical_tokens, *existing.technical_tokens)
+            if token.strip()
+        }
+        if (
+            not adds_required_coverage
+            and len(distinct_technical_tokens) >= 2
+            and _jaccard(candidate.technical_tokens, existing.technical_tokens) >= 0.90
+        ):
             return True
     return False
 

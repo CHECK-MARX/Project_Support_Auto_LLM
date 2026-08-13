@@ -94,18 +94,20 @@ public static partial class TopicEntityRanker
             _ => 0,
         };
         var trust = SourceTrust(candidate.SourceType);
+        var analysisOperationRequested = request.QueryProfile.Operations.Contains("Analysis", StringComparer.Ordinal);
+        var operationWeight = analysisOperationRequested ? 0.30 : 0.10;
         var topicScore = WeightedAverage(
             (0.24, featureScore, request.QueryProfile.Features.Count > 0),
             (0.16, componentScore, request.QueryProfile.Components.Count > 0),
             (0.11, productScore, !string.IsNullOrWhiteSpace(request.RequestedProduct)),
-            (0.10, operationScore, request.QueryProfile.Operations.Count > 0));
+            (operationWeight, operationScore, request.QueryProfile.Operations.Count > 0));
         var weighted = new List<(double Weight, double Score, bool Applies)>
         {
             (0.24, featureScore, request.QueryProfile.Features.Count > 0),
             (0.16, componentScore, request.QueryProfile.Components.Count > 0),
             (0.11, productScore, !string.IsNullOrWhiteSpace(request.RequestedProduct)),
             (0.10, entityScore, queryEntities.Count > 0),
-            (0.10, operationScore, request.QueryProfile.Operations.Count > 0),
+            (operationWeight, operationScore, request.QueryProfile.Operations.Count > 0),
             (0.09, intentScore, request.QueryProfile.Intents.Count > 0),
             (0.08, technicalScore, request.TechnicalTokens.Count > 0),
             (0.02, trust, true),
@@ -113,7 +115,8 @@ public static partial class TopicEntityRanker
         };
         AddSearchScores(weighted, candidate);
         var score = WeightedAverage(weighted.ToArray());
-        var conflictPenalty = ConflictPenalty(comparison, productMatch, versionMatch);
+        var operationPenalty = analysisOperationRequested && operationScore <= 0 ? -0.42 : 0;
+        var conflictPenalty = ConflictPenalty(comparison, productMatch, versionMatch) + operationPenalty;
         var explicitlyExcluded = NegationAwareTopicAnalyzer.Overlaps(request.ExcludedProfile, candidate.Profile);
         var exclusionPenalty = explicitlyExcluded && !candidate.IsManuallySelected ? -0.90 : 0;
         score = Math.Clamp(score + conflictPenalty + exclusionPenalty, 0, 1);

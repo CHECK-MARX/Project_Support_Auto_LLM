@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -43,18 +44,18 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
             .OrderByDescending(item => item.Score.Score)
             .ThenByDescending(item => item.Note.LastModifiedAt)
             .Take(maxResults)
-            .Select(item => ToSearchSource(item.Note, item.Score))
+            .Select(item => ToSearchSource(item.Note, item.Score, query))
             .ToList();
     }
 
-    private static SearchSource ToSearchSource(AiIndexedNote note, SearchScoreDetails score)
+    private static SearchSource ToSearchSource(AiIndexedNote note, SearchScoreDetails score, string query)
     {
         return new SearchSource
         {
             SourceId = note.Id,
             SourceType = "PastCaseNote",
             Title = note.Title,
-            Text = BuildExcerpt(note.Text),
+            Text = BuildExcerpt(note.Text, query),
             FilePath = note.NoteFilePath,
             SupportNumber = note.SupportNumber,
             Score = score.Score,
@@ -80,7 +81,7 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
             ]);
     }
 
-    private static string BuildExcerpt(string text)
+    private static string BuildExcerpt(string text, string query)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -90,9 +91,21 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
         var normalized = string.Join(
             " ",
             text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        return normalized.Length <= SearchTextMaxLength
-            ? normalized
-            : normalized[..SearchTextMaxLength] + "...";
+        if (normalized.Length <= SearchTextMaxLength)
+        {
+            return normalized;
+        }
+
+        var focusTerms = TopicEntityAnalyzer.Extract(query).Operations.Contains("Analysis", StringComparer.Ordinal)
+            ? new[] { "qacli analyze", "qaclianalyze", "プロジェクトを解析", "解析を実行", "解析する", "run analysis" }
+            : [];
+        var matchIndex = focusTerms
+            .Select(term => normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase))
+            .FirstOrDefault(static index => index >= 0, -1);
+        var start = matchIndex < 0
+            ? 0
+            : Math.Clamp(matchIndex - 220, 0, normalized.Length - SearchTextMaxLength);
+        return $"{(start > 0 ? "..." : string.Empty)}{normalized.Substring(start, SearchTextMaxLength)}{(start + SearchTextMaxLength < normalized.Length ? "..." : string.Empty)}";
     }
 
     private sealed record ScoredNote(AiIndexedNote Note, SearchScoreDetails Score);

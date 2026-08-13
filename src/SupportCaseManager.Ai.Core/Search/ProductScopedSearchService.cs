@@ -287,6 +287,12 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             }
         }
 
+        if (queryProfile.Operations.Contains("Analysis", StringComparer.Ordinal))
+        {
+            variants.Add($"{query} qacli analyze project analysis run analysis");
+            variants.Add("qacli analyze project analysis procedure");
+        }
+
         return variants
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -393,6 +399,31 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             }
         }
 
+
+        if (queryAnalysis.PrimaryProfile.Operations.Contains("Analysis", StringComparer.Ordinal))
+        {
+            if (assessment.MatchedOperations.Contains("Analysis", StringComparer.Ordinal))
+            {
+                var analysisAdjustment = AnalysisOperationAdjustment(source, candidateText);
+                adjustment += analysisAdjustment;
+                reasons.Add(analysisAdjustment < 0
+                    ? "operation=analysis-secondary-in-unrelated-document"
+                    : "operation=analysis-match");
+            }
+            else
+            {
+                adjustment -= 0.42;
+                reasons.Add("operation=analysis-missing");
+            }
+
+            if (!assessment.MatchedOperations.Contains("Analysis", StringComparer.Ordinal) &&
+                ContainsUnrelatedAnalysisTopic(candidateText))
+            {
+                adjustment -= 0.28;
+                reasons.Add("operation=unrelated-topic");
+            }
+        }
+
         if (queryAnalysis.ExcludedProfile.Features.Count > 0 &&
             NegationAwareTopicAnalyzer.Overlaps(queryAnalysis.ExcludedProfile, candidateProfile))
         {
@@ -458,8 +489,58 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             return false;
         }
 
-        return queryProfile.Features.Count == 0 || item.Assessment.MatchedFeatures.Count > 0;
+        if (queryProfile.Features.Count > 0 && item.Assessment.MatchedFeatures.Count == 0)
+        {
+            return false;
+        }
+
+        return !queryProfile.Operations.Contains("Analysis", StringComparer.Ordinal) ||
+            item.Assessment.MatchedOperations.Contains("Analysis", StringComparer.Ordinal);
     }
+
+    private static bool ContainsUnrelatedAnalysisTopic(string value) =>
+        value.Contains("Dashboard", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("ライセンスサーバ", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("license server", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("Installation Notes", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("インストール", StringComparison.OrdinalIgnoreCase);
+
+    private static double AnalysisOperationAdjustment(SearchSource source, string candidateText)
+    {
+        var heading = string.Join(' ', source.Title, source.SectionTitle);
+        var operationInHeading = ContainsAny(
+            heading,
+            "qacli analyze", "analyze project", "project analysis",
+            "プロジェクトを解析", "プロジェクトの解析", "解析を実行");
+        var unrelatedHeading = ContainsAny(
+            heading,
+            "Dashboard", "ダッシュボード",
+            "License", "ライセンス",
+            "Installation", "インストール",
+            "qacli validate build", "qacli validate cibuild", "upload", "アップロード");
+
+        if (unrelatedHeading && !operationInHeading)
+        {
+            return -0.38;
+        }
+
+        if (operationInHeading)
+        {
+            return 0.22;
+        }
+
+        if (ContainsAny(candidateText, "qacli analyze", "qaclianalyze"))
+        {
+            return 0.42;
+        }
+
+        return ContainsAny(candidateText, "プロジェクトを解析", "analyze project")
+            ? 0.16
+            : 0.04;
+    }
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private static string SourceFamily(string? sourceType) => sourceType switch
     {

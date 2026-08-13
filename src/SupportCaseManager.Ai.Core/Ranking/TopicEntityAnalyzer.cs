@@ -13,6 +13,10 @@ public static partial class TopicEntityAnalyzer
         ("Upload", ["アップロード", "upload"]),
         ("Verification", ["確認", "検証", "verify", "verification", "check"]),
         ("Association", ["関連付け", "紐付け", "associate", "association", "link"]),
+        ("Analysis", [
+            "qacli analyze", "プロジェクトを解析", "プロジェクトの解析", "解析を実行", "解析の実行",
+            "解析する", "解析開始", "analyze project", "project analysis", "run analysis", "execute analysis",
+        ]),
         ("Execution", ["実行", "起動", "run", "execute", "launch"]),
         ("Troubleshooting", ["原因", "対処", "解決", "troubleshoot", "failure", "failed"]),
     ];
@@ -107,6 +111,7 @@ public static partial class TopicEntityAnalyzer
         var products = Intersect(query.Products, evidence.Products);
         var components = Intersect(query.Components, evidence.Components);
         var features = Intersect(query.Features, evidence.Features);
+        var operations = Intersect(query.Operations, evidence.Operations);
         var entities = IntersectEntities(query.Entities, evidence.Entities);
         var conflicts = new List<string>();
 
@@ -128,6 +133,7 @@ public static partial class TopicEntityAnalyzer
             MatchedProducts = products,
             MatchedComponents = components,
             MatchedFeatures = features,
+            MatchedOperations = operations,
             MatchedEntities = entities,
         };
     }

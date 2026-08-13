@@ -20,12 +20,20 @@ public static class CoverageAwareSearchSourceSelector
         var catalog = SupportTopicCatalog.Create(productName);
         var analysis = NegationAwareTopicAnalyzer.Analyze(inquiryText, catalog);
         var profile = analysis.PrimaryProfile ?? TopicEntityAnalyzer.Extract(inquiryText, catalog);
-        if (!profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase))
+        var analysisHowTo = profile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
+            profile.Intents.Contains("HowTo", StringComparer.Ordinal);
+        if (!profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase) && !analysisHowTo)
         {
             return false;
         }
 
         var required = CoverageAnalyzer.RequiredForCoverageSelection(inquiryText, profile);
+        if (analysisHowTo)
+        {
+            return required.Contains(CoverageAnalyzer.AnalysisProcedure, StringComparer.Ordinal) &&
+                required.Contains(CoverageAnalyzer.AnalysisCommand, StringComparer.Ordinal);
+        }
+
         return required.Contains(CoverageAnalyzer.Overview, StringComparer.Ordinal) &&
             required.Contains(CoverageAnalyzer.Configuration, StringComparer.Ordinal);
     }
@@ -79,6 +87,8 @@ public static class CoverageAwareSearchSourceSelector
             MaxItems = Math.Clamp(context.CoverageAwareMaxEvidenceItems, 1, 5),
         });
         var compoundFeatureQuestion = ShouldApplyAutomatically(context.InquiryText, context.ProductName);
+        var compoundStreamQuestion = compoundFeatureQuestion &&
+            queryProfile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase);
         var requiredCoverage = CoverageAnalyzer.RequiredForCoverageSelection(context.InquiryText, queryProfile).ToList();
         var assessments = ranked.Assessed.ToDictionary(static item => item.CandidateIndex);
         var nonPastCoverage = items
@@ -88,10 +98,10 @@ public static class CoverageAwareSearchSourceSelector
             .ToHashSet(StringComparer.Ordinal);
         var nonPastSourcesCoverRequestedContent = requiredCoverage.Count > 0 &&
             requiredCoverage.All(nonPastCoverage.Contains);
-        var streamRoleAssignments = compoundFeatureQuestion
+        var streamRoleAssignments = compoundStreamQuestion
             ? AssignStreamCoverageRoles(items, assessments)
             : (OverviewCandidateIndex: (int?)null, ConfigurationCandidateIndex: (int?)null);
-        if (compoundFeatureQuestion &&
+        if (compoundStreamQuestion &&
             baseMaxItems >= 3 &&
             items.Select((item, index) => (Item: item, Assessment: assessments[index]))
                 .Any(item => item.Assessment.HasTopicMatch && IsPastEvidenceSourceType(item.Item.SourceType)))
@@ -102,8 +112,9 @@ public static class CoverageAwareSearchSourceSelector
         var candidates = items.Select((item, index) =>
         {
             var assessment = assessments[index];
+            var analysisAdjustment = AnalysisSelectionAdjustment(queryProfile, item);
             var coverage = CoverageAnalyzer.ObserveForCoverageSelection(DocumentText(item)).ToList();
-            if (compoundFeatureQuestion &&
+            if (compoundStreamQuestion &&
                 assessment.HasTopicMatch &&
                 !IsPastEvidenceSourceType(item.SourceType))
             {
@@ -123,7 +134,7 @@ public static class CoverageAwareSearchSourceSelector
                 }
             }
 
-            if (compoundFeatureQuestion &&
+            if (compoundStreamQuestion &&
                 assessment.HasTopicMatch &&
                 IsPastEvidenceSourceType(item.SourceType))
             {
@@ -145,13 +156,13 @@ public static class CoverageAwareSearchSourceSelector
                 ContentHash = item.Source.ContentHash ?? assessment.TextFingerprint,
                 TechnicalTokens = assessment.ExactTechnicalTokens,
                 Coverage = coverage.Distinct(StringComparer.Ordinal).ToList(),
-                RankingScore = assessment.FinalScore,
-                TopicScore = assessment.TopicScore,
+                RankingScore = Math.Clamp(assessment.FinalScore + Math.Max(0, analysisAdjustment), 0, 1),
+                TopicScore = Math.Clamp(assessment.TopicScore + Math.Max(0, analysisAdjustment), 0, 1),
                 EntityScore = assessment.EntityScore,
                 TechnicalTokenScore = assessment.TechnicalTokenScore,
                 SourceTrust = assessment.SourceTrustScore,
                 VersionScore = assessment.VersionScore,
-                ConflictPenalty = assessment.ConflictPenalty,
+                ConflictPenalty = assessment.ConflictPenalty + Math.Min(0, analysisAdjustment),
                 ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded,
                 TopicConflict = assessment.TopicConflict ||
                     (queryProfile.Features.Count > 0 && !assessment.HasTopicMatch),
@@ -285,6 +296,53 @@ public static class CoverageAwareSearchSourceSelector
         item.Source.QuestionText,
         item.Source.InternalMemo,
         item.Text);
+
+    private static double AnalysisSelectionAdjustment(
+        TopicEntityProfile queryProfile,
+        SearchSourceViewModel item)
+    {
+        if (!queryProfile.Operations.Contains("Analysis", StringComparer.Ordinal))
+        {
+            return 0;
+        }
+
+        var heading = string.Join(' ', item.Title, item.Source.SectionTitle);
+        var text = DocumentText(item);
+        var operationInHeading = ContainsAny(
+            heading,
+            "qacli analyze", "analyze project", "project analysis",
+            "プロジェクトを解析", "プロジェクトの解析", "解析を実行");
+        var unrelatedHeading = ContainsAny(
+            heading,
+            "Dashboard", "ダッシュボード",
+            "License", "ライセンス",
+            "Installation", "インストール",
+            "qacli validate build", "qacli validate cibuild",
+            "upload", "アップロード");
+
+        if (unrelatedHeading && !operationInHeading)
+        {
+            return -0.55;
+        }
+
+        if (operationInHeading || ContainsAny(text, "qacli analyze", "qaclianalyze"))
+        {
+            return 0.30;
+        }
+
+        if (ContainsAny(
+            text,
+            "analyze project", "project analysis", "run analysis", "execute analysis",
+            "プロジェクトを解析", "プロジェクトの解析", "解析を実行", "解析開始"))
+        {
+            return 0.12;
+        }
+
+        return -0.35;
+    }
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsSourceType(string? actual, string expected) =>
         string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);

@@ -207,7 +207,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
 
         var catalog = SupportTopicCatalog.Create(productName);
         var profile = TopicEntityAnalyzer.Extract(inquiryFocus.FocusText, catalog);
-        var featureTerms = catalog.Features
+        var focusTerms = catalog.Features
             .Where(feature => profile.Features.Contains(
                 feature.CanonicalName,
                 StringComparer.OrdinalIgnoreCase))
@@ -215,7 +215,12 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var matchIndex = featureTerms
+        if (profile.Operations.Contains("Analysis", StringComparer.Ordinal))
+        {
+            focusTerms.InsertRange(0, ["qacli analyze", "qaclianalyze", "analyze project", "run analysis", "project analysis", "解析を実行"]);
+        }
+
+        var matchIndex = focusTerms
             .Select(term => normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase))
             .Where(static index => index >= 0)
             .DefaultIfEmpty(-1)
