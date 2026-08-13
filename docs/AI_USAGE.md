@@ -8,15 +8,18 @@ This document is for transparency, manual review, AI-BOM preparation, and AI Sup
 
 - AI provider: Ollama
 - AI client implementation: `src/SupportCaseManager.Ai.Core/Llm/OllamaClient.cs`
-- Local LLM endpoint: `http://localhost:11434/api/chat`
-- Default AI model: `qwen3:14b`
-- Thinking default: disabled (`think: false` when the application setting disables thinking)
+- Embedding client implementation: `src/SupportCaseManager.Ai.Core/Llm/OllamaEmbeddingClient.cs`
+- Local LLM endpoints: `http://localhost:11434/api/chat` and `http://localhost:11434/api/embed`
+- Quality presets: Fast `qwen3:8b`, Standard `gemma4:26b`, Quality `gemma4:31b`
+- Backward-compatible custom default: `qwen3:14b` for settings created by earlier versions
+- Custom model: any model already present in Ollama; the application never runs `ollama pull`
+- Thinking and structured-output parameters: selected from `ModelCapabilityProfile` per model
 - Default deployment: local LLM on the user's machine
 - Cloud LLM transmission: disabled by default
 
 The Ollama AI client sends prompts to `/api/chat` using UTF-8 JSON. The HTTP response is handled as an Ollama chat response first; the application extracts `message.content` before parsing the support answer JSON. The full Ollama response is not treated directly as the answer DTO.
 
-When thinking is disabled, the client sends `think: false`. For qwen3 models, the prompt also receives a `/no_think` prefix. If a model such as `gpt-oss:20b` returns only `message.thinking` and leaves `message.content` empty, the client retries once with a stronger no-think instruction. For `gpt-oss:*` retry requests, the output token budget is raised to at least `800` to avoid exhausting the response on thinking output only. If the retry still returns no `message.content`, answer generation fails safely instead of treating thinking text as a customer reply.
+The client does not assume that every model supports `think` or JSON mode. Gemma 4 and GPT-OSS profiles omit unsupported thinking and format parameters and use plain-text output. A legacy Qwen configuration can still use `think: false` and `/no_think`. If Ollama returns HTTP 400 for an unsupported parameter, the client retries once without `think` and `format`; the compatibility test records the safe profile. If a response contains only `message.thinking`, the client retries once with a stronger content instruction and fails safely if `message.content` remains empty.
 
 ## RAG and Evidence Retrieval
 
@@ -45,7 +48,11 @@ The product-scoped AI index is stored under:
 ai-index/products/<productName>/
 ```
 
-This is the AI index used for RAG evidence retrieval. It currently represents local searchable indexes for support cases, manuals, official documents, and curated fact catalogs. It is not documented as a vector database unless a real vector database implementation is added.
+This is the AI index used for RAG evidence retrieval. Each product folder contains `knowledge-manifest.json` with source fingerprints, timestamps, chunk counts, schema/chunking version, and embedding model metadata. Existing indexes are usable immediately at startup. Local manuals and closed cases are checked in the background and only added, changed, or deleted files are reprocessed. Index files and settings are written through temporary files and replaced only after a successful write.
+
+Search keeps the existing keyword retrieval and, when an embedding model is configured, calls the local Ollama `/api/embed` endpoint and combines cosine similarity with keyword rank using reciprocal-rank fusion. Vectors are stored in the product-scoped `embeddings-index.json`; only added or changed chunks are embedded, deleted chunks are removed, and unchanged vectors are reused. Source routing depends on the classified question type: current-version questions exclude past cases, while how-to and troubleshooting questions prefer manuals. When embedding is not configured or the endpoint fails, keyword plus local term-similarity ranking remains operational. No separate vector database is required.
+
+Official documentation is not crawled on every startup. A successful official index is reused for seven days, after which the UI reports that an update is available. Explicit official-document updates can refresh it, and a failed refresh retains the previous index and fact catalogs.
 
 ## Prompt Assets
 
@@ -87,6 +94,8 @@ Sensitive values such as API keys, phone numbers, and email addresses are masked
 
 Generated drafts are assistance outputs. A support engineer must review the customer reply draft, internal memo, required checks, evidence, confidence, and warnings before using the result.
 
+Explicit Excel translation requests use a separate artifact workflow. Codex remains in a `read-only` sandbox and returns structured translation JSON plus an editable manufacturer-mail draft. The WPF Open XML service displays a plan first and writes only after the user presses the execution button. It limits destinations to the current case folder, never overwrites or renames the source workbook, rejects existing output names, and does not send email or append the mail draft to case notes automatically.
+
 ## AI-BOM / AI Supply Chain Review
 
 For AI-BOM and AI Supply Chain review, use:
@@ -103,8 +112,10 @@ For AI-BOM and AI Supply Chain review, use:
 AI assets managed by this repository include:
 
 - Ollama local LLM provider
-- `qwen3:14b` default AI model
-- optional locally configured Ollama models, such as `gpt-oss:20b`, when selected by the user
+- `qwen3:8b`, `gemma4:26b`, and `gemma4:31b` quality-preset models
+- `qwen3:14b` backward-compatible custom/default model
+- `gpt-oss:120b-cloud` optional cloud-quality profile
+- optional locally installed Ollama models selected from `/api/tags`
 - RAG prompts
 - RAG search index / AI index
 - evidence data sources

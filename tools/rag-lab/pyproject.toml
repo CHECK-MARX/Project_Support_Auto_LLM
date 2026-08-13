@@ -1,0 +1,11 @@
+[project]
+name = "supportcase-rag-lab"
+version = "0.1.0"
+description = "Offline, read-only RAG quality evaluation lab for SupportCaseManager"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-ra --basetemp=.pytest-tmp-current -p no:cacheprovider"

@@ -22,6 +22,10 @@ public sealed record class AnswerDraftResult
     [JsonPropertyName("warnings")]
     public IReadOnlyList<string> Warnings { get; init; } = [];
 
+    [JsonPropertyName("answerQuality")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AnswerQualityEvaluationResult? AnswerQuality { get; init; }
+
     [JsonPropertyName("generatedAt")]
     public DateTimeOffset GeneratedAt { get; init; }
 }

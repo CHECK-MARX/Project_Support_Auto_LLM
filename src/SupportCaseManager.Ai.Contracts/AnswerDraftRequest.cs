@@ -16,6 +16,18 @@ public sealed record class AnswerDraftRequest
     [JsonPropertyName("userInstruction")]
     public string? UserInstruction { get; init; }
 
+    [JsonPropertyName("commonInstruction")]
+    public string CommonInstruction { get; init; } = string.Empty;
+
+    [JsonPropertyName("productInstruction")]
+    public string ProductInstruction { get; init; } = string.Empty;
+
+    [JsonPropertyName("attachmentFileNames")]
+    public IReadOnlyList<string> AttachmentFileNames { get; init; } = [];
+
+    [JsonPropertyName("instructionWarnings")]
+    public IReadOnlyList<string> InstructionWarnings { get; init; } = [];
+
     [JsonPropertyName("sources")]
     public IReadOnlyList<SearchSource> Sources { get; init; } = [];
 

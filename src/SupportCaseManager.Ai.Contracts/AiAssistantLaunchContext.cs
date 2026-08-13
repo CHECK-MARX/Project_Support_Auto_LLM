@@ -7,8 +7,17 @@ public sealed record class AiAssistantLaunchContext
     [JsonPropertyName("source")]
     public string Source { get; init; } = string.Empty;
 
+    [JsonPropertyName("productId")]
+    public Guid? ProductId { get; init; }
+
     [JsonPropertyName("productName")]
     public string ProductName { get; init; } = string.Empty;
+
+    [JsonPropertyName("productPromptFilePath")]
+    public string ProductPromptFilePath { get; init; } = string.Empty;
+
+    [JsonPropertyName("supportToolSettingsFilePath")]
+    public string SupportToolSettingsFilePath { get; init; } = string.Empty;
 
     [JsonPropertyName("baseFolder")]
     public string BaseFolder { get; init; } = string.Empty;

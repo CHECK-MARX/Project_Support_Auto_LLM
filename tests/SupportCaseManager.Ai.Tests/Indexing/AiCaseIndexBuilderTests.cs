@@ -186,6 +186,38 @@ public class AiCaseIndexBuilderTests
         Assert.Contains(result.Warnings, warning => warning.Contains("Support number", StringComparison.OrdinalIgnoreCase));
     }
 
+    [Fact]
+    public async Task BuildIncrementalAsync_TracksAddedChangedUnchangedAndDeletedCases()
+    {
+        using var temp = new TempDirectory();
+        var sourceFolder = Path.Combine(temp.Path, "closed");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var firstCaseFolder = CreateCaseFolder(sourceFolder);
+        var firstNote = Path.Combine(firstCaseFolder, "note.txt");
+        await File.WriteAllTextAsync(firstNote, "first response", Encoding.UTF8);
+        var builder = CreateBuilder();
+
+        var initial = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        var unchanged = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        await File.WriteAllTextAsync(firstNote, "changed response", Encoding.UTF8);
+        File.SetLastWriteTime(firstNote, File.GetLastWriteTime(firstNote).AddSeconds(2));
+        var changed = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        var secondCaseFolder = Path.Combine(sourceFolder, "20260603(株式会社サンプル_00005678)対応中_20260603");
+        Directory.CreateDirectory(secondCaseFolder);
+        await File.WriteAllTextAsync(Path.Combine(secondCaseFolder, "note.txt"), "second response", Encoding.UTF8);
+        var added = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        Directory.Delete(firstCaseFolder, recursive: true);
+        var deleted = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+
+        Assert.Equal(1, initial.AddedCaseCount);
+        Assert.Equal(1, unchanged.UnchangedCaseCount);
+        Assert.Equal(1, changed.ChangedCaseCount);
+        Assert.Equal(1, added.AddedCaseCount);
+        Assert.Equal(1, deleted.DeletedCaseCount);
+        var document = await ReadIndexAsync(deleted.IndexFilePath);
+        Assert.All(document.Notes, note => Assert.Equal("00005678", note.SupportNumber));
+    }
+
     private static AiCaseIndexBuilder CreateBuilder()
     {
         return new AiCaseIndexBuilder(

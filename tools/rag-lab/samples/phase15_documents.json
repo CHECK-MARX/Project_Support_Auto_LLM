@@ -1,0 +1,24 @@
+{
+  "documents": [
+    {
+      "document_id": "phase15-overview",
+      "text": "# Validate概要\nValidateへアップロードするQAC解析結果の概要です。ValidateアップロードとQACコマンドを利用するユーザー向けの製品紹介です。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "overview.md", "source_type": "OfficialDoc", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase15-command",
+      "text": "# アップロードコマンド\n```\nqacli validate upload --qaf-project Demo --build-name Build01\n```\n上記コマンドを実行します。オプションと引数は対象プロジェクトに合わせます。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "command.md", "source_type": "Manual", "command": "qacli validate upload --qaf-project Demo --build-name Build01", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase15-auth-project",
+      "text": "# 事前準備\n1. Validateへログインして認証tokenを取得します。\n2. QACプロジェクトとValidate projectを関連付けて接続します。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "auth-project.md", "source_type": "Manual", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase15-verify",
+      "text": "# 実行と確認\n3. アップロードコマンドを実行します。\n4. 完了後、Validate portalのBuild画面で解析結果が表示されることを確認します。失敗時はerrorログ、認証、project名を確認します。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "verify.md", "source_type": "Manual", "confidence": 1.0}
+    }
+  ]
+}

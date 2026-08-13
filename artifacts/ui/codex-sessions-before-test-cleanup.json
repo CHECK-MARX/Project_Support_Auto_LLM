@@ -1,0 +1,41 @@
+[
+  {
+    "supportId": "00015391",
+    "productId": "179dd5ca-7bf0-4f5b-935c-7753bb898a01",
+    "companyName": "\u6771\u6D0B\u96FB\u88C5\u682A\u5F0F\u4F1A\u793E",
+    "caseFolder": "C:\\Users\\itoke\\OneDrive - \u682A\u5F0F\u4F1A\u793E\u6771\u967D\u30C6\u30AF\u30CB\u30AB\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\\u696D\u52D9\\\u8CC7\u6599\u4F5C\u6210\\SS\\QAC\\QAC\u30B5\u30DD\u30FC\u30C8\u95A2\u9023\\\u25A0\u30AF\u30ED\u30FC\u30BA\u6848\u4EF6\\2026\\20260106(\u6771\u6D0B\u96FB\u88C5\u682A\u5F0F\u4F1A\u793E_00015391)\u30AF\u30ED\u30FC\u30BA_20260116",
+    "codexThreadId": "019f889e-5b5f-7333-bf6d-172d0fb4a8ea",
+    "lastTurnId": "",
+    "createdAt": "2026-07-22T15:58:27.9456031+09:00",
+    "lastUsedAt": "2026-07-22T15:59:10.2353954+09:00",
+    "codexVersion": "codex-cli 0.145.0",
+    "model": "GPT-5.6-Sol (gpt-5.6-sol)",
+    "sessionStatus": "closed",
+    "messages": []
+  },
+  {
+    "supportId": "00018249",
+    "productId": "179dd5ca-7bf0-4f5b-935c-7753bb898a01",
+    "companyName": "\u4E09\u83F1\u91CD\u5DE5\u696D\u682A\u5F0F\u4F1A\u793E",
+    "caseFolder": "C:\\Users\\itoke\\OneDrive - \u682A\u5F0F\u4F1A\u793E\u6771\u967D\u30C6\u30AF\u30CB\u30AB\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\\u696D\u52D9\\\u8CC7\u6599\u4F5C\u6210\\SS\\QAC\\QAC\u30B5\u30DD\u30FC\u30C8\u95A2\u9023\\20260722(\u4E09\u83F1\u91CD\u5DE5\u696D\u682A\u5F0F\u4F1A\u793E_00018249)\u53D7\u4ED8_20260722",
+    "codexThreadId": "019f88b1-1ac6-7ca0-8eb2-64af640ceb8e",
+    "lastTurnId": "019f88b1-2b38-7ac1-9f8d-7c95cf7b6ef9",
+    "createdAt": "2026-07-22T16:18:56.7915055+09:00",
+    "lastUsedAt": "2026-07-22T16:20:18.3489575+09:00",
+    "codexVersion": "codex-cli 0.145.0",
+    "model": "gpt-5.6-sol",
+    "sessionStatus": "closed",
+    "messages": [
+      {
+        "role": "user",
+        "text": "\u753B\u9762\u8868\u793A\u30C6\u30B9\u30C8\u3067\u3059\u3002\u300C\u8868\u793A\u78BA\u8A8DOK\u300D\u306E\u307F\u56DE\u7B54\u3057\u3001\u30D5\u30A1\u30A4\u30EB\u306F\u5909\u66F4\u3057\u306A\u3044\u3067\u304F\u3060\u3055\u3044\u3002",
+        "createdAt": "2026-07-22T16:19:00.1359373+09:00"
+      },
+      {
+        "role": "assistant",
+        "text": "\u8868\u793A\u78BA\u8A8DOK",
+        "createdAt": "2026-07-22T16:19:00.1359836+09:00"
+      }
+    ]
+  }
+]

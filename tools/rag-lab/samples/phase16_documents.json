@@ -1,0 +1,29 @@
+{
+  "documents": [
+    {
+      "document_id": "phase16-stream-overview",
+      "text": "# Validate Stream overview\nValidate Streamとは、QAC解析結果を継続的に整理するための機能です。用途は複数の解析結果を同じStreamで管理することです。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "stream-overview.md", "source_type": "OfficialDoc", "target_version": "2025.4", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase16-stream-setup",
+      "text": "# Validate Stream configuration\nValidateでStreamを作成して設定します。作成後、対象のQAC projectをStreamへ関連付けます。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "stream-setup.md", "source_type": "Manual", "target_version": "2025.4", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase16-stream-verify",
+      "text": "# Validate Stream verification\n設定後にValidateのStream画面を開き、QAC projectとの関連付けとStreamの状態を確認します。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "stream-verify.md", "source_type": "Manual", "target_version": "2025.4", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase16-license-setup",
+      "text": "# Validate license configuration\nValidateのライセンス設定方法です。License Serverを設定し、初回起動後にライセンス状態を確認します。Validate configuration setup guide。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "license-setup.md", "source_type": "Manual", "target_version": "2025.4", "confidence": 1.0}
+    },
+    {
+      "document_id": "phase16-ide-plugin",
+      "text": "# IDE Plugin setup\nPerforce QACのIDEプラグインを設定し、EclipseからValidateを開く方法です。",
+      "metadata": {"product_name": "HelixQAC", "document_name": "ide-plugin.md", "source_type": "Manual", "target_version": "2025.4", "confidence": 1.0}
+    }
+  ]
+}

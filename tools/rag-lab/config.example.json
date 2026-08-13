@@ -1,0 +1,61 @@
+{
+  "inputRoots": [
+    "samples"
+  ],
+  "outputRoot": "reports/generated",
+  "documentsFile": "samples/documents.json",
+  "evaluationCasesFile": "samples/evaluation_cases.json",
+  "reportName": "phase5-comparison",
+  "normalization": {
+    "unicodeNfkc": true,
+    "trimTrailingWhitespace": true,
+    "maxConsecutiveBlankLines": 1,
+    "excludeCategories": [
+      "separator",
+      "generated_header"
+    ]
+  },
+  "chunking": {
+    "maxCharacters": 1200,
+    "overlapCharacters": 120
+  },
+  "evaluation": {
+    "chunkStrategies": [
+      "fixed",
+      "paragraph",
+      "heading",
+      "structured"
+    ],
+    "searchMethods": [
+      "keyword",
+      "bm25",
+      "hash_embedding",
+      "hybrid"
+    ],
+    "rerankers": [
+      "none",
+      "lexical"
+    ],
+    "filterModes": [
+      "none",
+      "product",
+      "product_and_version"
+    ],
+    "topK": [
+      1,
+      3,
+      5
+    ]
+  },
+  "qualityGate": {
+    "preferredTopK": 3,
+    "minRecallAtK": 0.8,
+    "minMrr": 0.8,
+    "minNdcgAtK": 0.8,
+    "minRequiredTermCoverageAtK": 0.8,
+    "maxExcludedTermHitCount": 0,
+    "maxProductConfusionCount": 0,
+    "maxVersionMismatchCount": 0,
+    "maxMeanSearchTimeMs": 100.0
+  }
+}

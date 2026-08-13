@@ -21,4 +21,22 @@ public sealed record class InquiryFocus
 
     [JsonPropertyName("freshnessReason")]
     public string FreshnessReason { get; init; } = string.Empty;
+
+    [JsonPropertyName("primaryTopics")]
+    public IReadOnlyList<InquiryTopicReference> PrimaryTopics { get; init; } = [];
+
+    [JsonPropertyName("excludedTopics")]
+    public IReadOnlyList<InquiryTopicReference> ExcludedTopics { get; init; } = [];
+
+    [JsonPropertyName("requiredCoverage")]
+    public IReadOnlyList<string> RequiredCoverage { get; init; } = [];
+}
+
+public sealed record class InquiryTopicReference
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; init; } = string.Empty;
+
+    [JsonPropertyName("value")]
+    public string Value { get; init; } = string.Empty;
 }

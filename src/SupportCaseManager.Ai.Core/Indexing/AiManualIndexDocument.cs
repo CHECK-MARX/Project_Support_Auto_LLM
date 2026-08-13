@@ -4,8 +4,10 @@ namespace SupportCaseManager.Ai.Core.Indexing;
 
 public sealed record class AiManualIndexDocument
 {
+    public const int CurrentVersion = 3;
+
     [JsonPropertyName("version")]
-    public int Version { get; init; } = 1;
+    public int Version { get; init; } = CurrentVersion;
 
     [JsonPropertyName("builtAt")]
     public DateTimeOffset BuiltAt { get; init; }

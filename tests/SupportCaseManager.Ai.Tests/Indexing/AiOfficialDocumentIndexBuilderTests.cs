@@ -68,6 +68,72 @@ public sealed class AiOfficialDocumentIndexBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_HelixQacPerforceSeedAddsJapaneseCctPages()
+    {
+        using var temp = new TempDirectory();
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse("""
+            <html><head><title>Perforce QAC Documentation</title></head>
+            <body><main><h1>Auto CCTs</h1><p>Auto CCTを有効にして同期するとCCTを自動生成できます。</p></main></body></html>
+            """));
+        var builder = new AiOfficialDocumentIndexBuilder(handler);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "HelixQAC",
+                DocumentUrls = ["https://help.perforce.com/helix-qac/current/helixqac/en-us/doc/release_notes/html/Introduction.html"],
+                CrawlMaxDepth = 0,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        Assert.Equal(9, result.SourceUrlCount);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/automatic_ccts.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/multi_CCTs_with_qagui.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/uploading_results_to_validate_using_qacli.html",
+            result.SourceUrls);
+        Assert.Contains(
+            "https://help.perforce.com/qac/current/perforceqac/en-us/doc/manual/html/uploading_to_validate_using_qagui.html",
+            result.SourceUrls);
+        Assert.Equal(9, result.FetchSuccessCount);
+    }
+
+    [Fact]
+    public async Task BuildAsync_FailedRefreshRetainsPreviousIndexAndFactCatalog()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "Checkmarx",
+            DocumentUrls = ["https://docs.example.test/release"],
+        };
+        var successful = new AiOfficialDocumentIndexBuilder(
+            new StubHttpMessageHandler(_ => HtmlResponse("""
+                <html><head><title>Release Notes</title></head>
+                <body><h1>Release Notes 9.7.0</h1><p>CxSAST 9.7.0 is the latest supported release version.</p></body></html>
+                """)));
+        var initial = await successful.BuildAsync(product, aiIndexFolder);
+        var productFolder = Path.GetDirectoryName(initial.IndexFilePath)!;
+        var catalogPath = Path.Combine(productFolder, FactCatalogStore.VersionCatalogFileName);
+        var initialIndex = await File.ReadAllBytesAsync(initial.IndexFilePath);
+        var initialCatalog = await File.ReadAllBytesAsync(catalogPath);
+        var failing = new AiOfficialDocumentIndexBuilder(
+            new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)));
+
+        var result = await failing.BuildAsync(product, aiIndexFolder);
+
+        Assert.Equal(1, result.FetchFailureCount);
+        Assert.Equal(initialIndex, await File.ReadAllBytesAsync(initial.IndexFilePath));
+        Assert.Equal(initialCatalog, await File.ReadAllBytesAsync(catalogPath));
+        Assert.Contains(result.Warnings, warning => warning.Contains("previous successful index was retained", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BuildAsync_SkipsNonHttpUrls()
     {
         using var temp = new TempDirectory();
@@ -134,6 +200,33 @@ public sealed class AiOfficialDocumentIndexBuilderTests
         Assert.Contains(result.ImportantPageUrls, url => url.Contains("release-notes", StringComparison.OrdinalIgnoreCase));
         Assert.True(result.IndexedChunkCount >= 2);
         Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
+    }
+
+    [Fact]
+    public async Task BuildAsync_UsesProductCrawlDepthAndPageLimits()
+    {
+        using var temp = new TempDirectory();
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse("""
+            <html><head><title>Docs Home</title></head><body>
+            <p>This is the product documentation landing page with enough searchable support content.</p>
+            <a href="/child.html">Child page</a>
+            </body></html>
+            """));
+        var builder = new AiOfficialDocumentIndexBuilder(handler);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "Checkmarx",
+                DocumentUrls = ["https://docs.example.test/"],
+                CrawlMaxDepth = 0,
+                CrawlMaxPages = 1,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        Assert.Equal(0, result.MaxDepth);
+        Assert.Equal(1, result.MaxPages);
+        Assert.Single(handler.Requests);
     }
 
     private static async Task<AiOfficialDocumentIndexDocument> ReadIndexAsync(string indexFilePath)

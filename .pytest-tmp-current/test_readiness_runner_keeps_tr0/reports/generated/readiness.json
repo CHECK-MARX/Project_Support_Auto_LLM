@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "data_classification": "synthetic",
+  "status": "ready",
+  "baseline_file_name": "reference.json",
+  "candidate_file_name": "candidate.json",
+  "reproduction_file_name": "reproduction.json",
+  "candidate_digest": "7d8f28b416f7f52fa430c63b221bf51580178466fe9c07a237b3fc511e9fcbea",
+  "reproduction_digest": "7d8f28b416f7f52fa430c63b221bf51580178466fe9c07a237b3fc511e9fcbea",
+  "reproducible": true,
+  "input_fingerprints_match": true,
+  "regression_counts": {
+    "regressed": 0,
+    "missing": 0,
+    "improved": 0,
+    "unchanged": 1,
+    "new": 0
+  },
+  "findings": []
+}

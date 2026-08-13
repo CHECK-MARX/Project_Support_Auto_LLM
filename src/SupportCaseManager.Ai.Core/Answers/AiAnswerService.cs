@@ -2,6 +2,7 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
+using SupportCaseManager.Ai.Core.Quality;
 using SupportCaseManager.Ai.Core.Safety;
 
 namespace SupportCaseManager.Ai.Core.Answers;
@@ -43,6 +44,7 @@ public sealed class AiAnswerService : IAiAnswerService
         var parsed = AnswerDraftResultParser.Parse(response, request.Sources);
         var result = parsed.Result;
         var warnings = new List<string>();
+        warnings.AddRange(request.InstructionWarnings);
         warnings.AddRange(parsed.Warnings);
         warnings.AddRange(result.Warnings);
         warnings.AddRange(generation.Diagnostics);
@@ -68,11 +70,72 @@ public sealed class AiAnswerService : IAiAnswerService
             GeneratedAt = result.GeneratedAt == default ? DateTimeOffset.Now : result.GeneratedAt,
         };
 
-        return AnswerPostProcessor.Process(
+        var postProcessed = AnswerPostProcessor.Process(
             request,
             processed,
             resultEvidence,
             confidence,
             processed.Warnings);
+
+        if (!request.Settings.UseAnswerQualityGate)
+        {
+            return postProcessed;
+        }
+
+        var quality = AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
+        {
+            Question = request.InquiryText,
+            Answer = postProcessed.CustomerReplyDraft,
+            ProductName = request.Case.ProductName,
+            RequestedVersion = request.InquiryFocus?.TargetVersions.FirstOrDefault(),
+            Evidence = BuildQualityEvidence(request.Sources, postProcessed.Evidence),
+            Catalog = AnswerQualityEvaluator.CreateSupportCatalog(request.Case.ProductName),
+            UseSeparatedCoverage = request.Settings.UsePhase175QualityControls,
+            RequiredCoverage = request.InquiryFocus?.RequiredCoverage ?? [],
+        });
+        var qualityWarnings = postProcessed.Warnings
+            .Concat([$"Answer Quality Gate: {quality.Decision}"])
+            .Concat(quality.BlockingReasons.Select(static reason =>
+                $"Answer Quality blocking reason: {reason}"))
+            .Concat(quality.Warnings.Select(static warning =>
+                $"Answer Quality warning: {warning}"))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        return postProcessed with
+        {
+            AnswerQuality = quality,
+            Warnings = qualityWarnings,
+        };
+    }
+
+    private static IReadOnlyList<AnswerQualityEvidence> BuildQualityEvidence(
+        IReadOnlyList<SearchSource> sources,
+        IReadOnlyList<EvidenceItem> resultEvidence)
+    {
+        var values = sources
+            .Where(static source => !string.IsNullOrWhiteSpace(source.Text))
+            .Select(static source => new AnswerQualityEvidence
+            {
+                SourceId = source.SourceId,
+                SourceType = source.SourceType,
+                Text = source.Text,
+                ProductName = source.ProductName,
+            })
+            .ToList();
+        var sourceIds = values
+            .Select(static item => item.SourceId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        values.AddRange(resultEvidence
+            .Where(item => !sourceIds.Contains(item.SourceId) &&
+                !string.IsNullOrWhiteSpace(item.Excerpt))
+            .Select(static item => new AnswerQualityEvidence
+            {
+                SourceId = item.SourceId,
+                SourceType = item.SourceType,
+                Text = item.Excerpt,
+            }));
+        return values;
     }
 }

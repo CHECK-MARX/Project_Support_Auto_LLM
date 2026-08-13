@@ -1,0 +1,15 @@
+{
+  "evaluation_cases": [
+    {
+      "query_id": "phase15-command-howto",
+      "product": "HelixQAC",
+      "query": "QACで解析した結果をValidateへアップロードするコマンドについて教えてください。コマンドについて、一連の手順について具体的に、アップロードが完了してValidateで確認できるところまで行いたいです。",
+      "target_version": null,
+      "expected_document_ids": ["phase15-command", "phase15-auth-project", "phase15-verify"],
+      "expected_support_ids": [],
+      "required_terms": ["Validate", "アップロード", "コマンド"],
+      "excluded_terms": ["Checkmarx"],
+      "notes": "Phase 15 A/B専用の人工質問。"
+    }
+  ]
+}

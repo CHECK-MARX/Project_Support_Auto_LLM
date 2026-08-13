@@ -2,11 +2,36 @@ using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Facts;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Answers;
 
-internal static partial class AnswerPostProcessor
+public static partial class AnswerPostProcessor
 {
+    public static AnswerDraftResult BuildFailureFallback(
+        AnswerDraftRequest request,
+        Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(exception);
+        var evidenceLimit = request.Settings.UseCoverageAwareEvidenceSelection
+            ? request.Sources.Count
+            : request.Settings.MaxEvidenceItems;
+        var evidence = BuildEvidenceFromSources(request.Sources, evidenceLimit);
+        var confidence = CalculateEvidenceBackedFallbackConfidence(evidence);
+        return Process(
+            request,
+            new AnswerDraftResult
+            {
+                CustomerReplyDraft = string.Empty,
+                InternalMemo = $"LLM処理を完了できなかったため、選択済み根拠から回答案を構成しました。エラー={exception.GetType().Name}",
+                GeneratedAt = DateTimeOffset.Now,
+            },
+            evidence,
+            confidence,
+            [$"LLM処理を完了できなかったため、選択済み根拠から構造化回答を作成しました。エラー={exception.GetType().Name}"]);
+    }
+
     public static AnswerDraftResult Process(
         AnswerDraftRequest request,
         AnswerDraftResult result,
@@ -27,6 +52,14 @@ internal static partial class AnswerPostProcessor
             internalMemo = factBasedMemo;
             mergedWarnings.Add("ResolvedFactsに基づいて最新バージョン回答案を補正しました。");
             finalConfidence = Math.Max(finalConfidence, 0.9);
+        }
+
+        if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
+            !HowToAnswerComposer.HasRequiredStructure(customerReply) &&
+            HowToAnswerComposer.TryComposeAnalysis(request, out var structuredHowToReply))
+        {
+            customerReply = structuredHowToReply;
+            mergedWarnings.Add("HowTo回答を選択済み根拠に基づく操作順へ補正しました。");
         }
         else if (request.InquiryFocus?.IsFreshnessSensitive == true && !request.Sources.Any(IsOfficialDoc))
         {
@@ -57,17 +90,39 @@ internal static partial class AnswerPostProcessor
 
             if (ShouldBuildEvidenceBackedFallback(request, customerReply, finalEvidence))
             {
-                var sourceEvidence = BuildEvidenceFromSources(request.Sources, request.Settings.MaxEvidenceItems);
-                finalEvidence = MergeEvidence(finalEvidence, sourceEvidence, request.Settings.MaxEvidenceItems).ToList();
+                var evidenceLimit = request.Settings.UseCoverageAwareEvidenceSelection
+                    ? request.Sources.Count
+                    : request.Settings.MaxEvidenceItems;
+                var sourceEvidence = BuildEvidenceFromSources(request.Sources, evidenceLimit);
+                finalEvidence = MergeEvidence(finalEvidence, sourceEvidence, evidenceLimit).ToList();
 
                 if (finalEvidence.Count > 0)
                 {
-                    customerReply = BuildEvidenceBackedCustomerReply(request, finalEvidence);
+                    var usedAnalysisFallback = TryBuildQacAnalysisProcedureReply(request, out var analysisReply);
+                    var streamReply = string.Empty;
+                    var usedStreamFallback = !usedAnalysisFallback &&
+                        TryBuildValidateStreamReply(request, out streamReply);
+                    var procedureReply = string.Empty;
+                    var usedProcedureFallback = !usedAnalysisFallback && !usedStreamFallback &&
+                        TryBuildValidateUploadProcedureReply(request, out procedureReply);
+                    customerReply = usedAnalysisFallback
+                        ? analysisReply
+                        : usedStreamFallback
+                            ? streamReply
+                            : usedProcedureFallback
+                                ? procedureReply
+                                : BuildEvidenceBackedCustomerReply(request, finalEvidence);
                     internalMemo = BuildInternalMemo(
                         request,
                         finalEvidence,
                         "LLM回答が送信済み根拠を十分に活用できていなかったため、根拠タイトル/抜粋から保守的に回答案を補完しました。");
-                    mergedWarnings.Add("LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                    mergedWarnings.Add(usedAnalysisFallback
+                        ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からQACプロジェクト解析手順を補完しました。"
+                        : usedStreamFallback
+                            ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
+                            : usedProcedureFallback
+                                ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
+                                : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -89,7 +144,7 @@ internal static partial class AnswerPostProcessor
             }
         }
 
-        customerReply = EnsureCustomerReplyEmailHeader(request, customerReply);
+        customerReply = CustomerReplyRecipientFormatter.EnsureHeader(request.Case, customerReply);
 
         return result with
         {
@@ -236,6 +291,12 @@ internal static partial class AnswerPostProcessor
             return true;
         }
 
+        if (normalized.Contains("LLM応答を解析できませんでした", StringComparison.Ordinal) ||
+            normalized.Contains("回答内容を確認してください", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
         return (normalized.Contains("選択根拠からは", StringComparison.Ordinal) ||
                 normalized.Contains("参照根拠からは", StringComparison.Ordinal) ||
                 normalized.Contains("根拠からは", StringComparison.Ordinal)) &&
@@ -257,6 +318,15 @@ internal static partial class AnswerPostProcessor
                 SourceId = source.SourceId,
                 SourceType = source.SourceType,
                 Title = source.Title,
+                DocumentTitle = source.DocumentTitle,
+                PageNumber = source.PageNumber,
+                SectionTitle = source.SectionTitle,
+                Url = source.Url,
+                ChunkId = source.ChunkId,
+                DocumentId = source.DocumentId,
+                ContentHash = source.ContentHash,
+                ArchivePath = source.ArchivePath,
+                EntryPath = source.EntryPath,
                 Excerpt = BuildExcerpt(source.Text, 500),
                 FilePath = source.FilePath,
                 SupportNumber = source.SupportNumber,
@@ -277,12 +347,21 @@ internal static partial class AnswerPostProcessor
             .GroupBy(static item => item.SourceId, StringComparer.Ordinal)
             .Select(static group => group
                 .OrderByDescending(static item => item.Relevance)
+                .ThenByDescending(MetadataCompleteness)
                 .First())
             .OrderByDescending(static item => item.Relevance)
             .ThenBy(static item => item.SourceId, StringComparer.Ordinal)
             .Take(maxItems)
             .ToList();
     }
+
+    private static int MetadataCompleteness(EvidenceItem item) =>
+        (string.IsNullOrWhiteSpace(item.DocumentTitle) ? 0 : 1) +
+        (item.PageNumber is > 0 ? 1 : 0) +
+        (string.IsNullOrWhiteSpace(item.SectionTitle) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.Url) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.DocumentId) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.ChunkId) ? 0 : 1);
 
     private static string BuildEvidenceBackedCustomerReply(
         AnswerDraftRequest request,
@@ -353,6 +432,194 @@ internal static partial class AnswerPostProcessor
         builder.AppendLine("次の対応");
         builder.AppendLine("・上記の確認内容をもとに、必要な条件を確認したうえで回答内容を確定します。");
         return builder.ToString();
+    }
+
+    private static bool TryBuildValidateStreamReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        var inquiry = NormalizeWhitespace(request.InquiryText);
+        var asksAboutStream = ContainsAny(inquiry, "Stream", "stream", "ストリーム");
+        var asksForOverview = ContainsAny(inquiry, "機能", "概要", "どのような", "what is", "purpose");
+        var asksForConfiguration = ContainsAny(inquiry, "設定", "手順", "方法", "configure", "configuration", "setup");
+        if (!inquiry.Contains("Validate", StringComparison.OrdinalIgnoreCase) ||
+            !asksAboutStream ||
+            !asksForOverview ||
+            !asksForConfiguration)
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources
+                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+                .Select(static source => source.Text));
+        var compactSource = NormalizeWhitespace(sourceText);
+        if (!ContainsAny(compactSource, "Stream", "stream", "ストリーム"))
+        {
+            return false;
+        }
+
+        var supportsTracking =
+            ContainsAny(compactSource, "ストリームのビルドをトラッキング", "track stream builds", "tracking builds in a stream") ||
+            (ContainsAny(compactSource, "トラッキング", "tracking") && ContainsAny(compactSource, "ストリーム", "stream"));
+        var supportsNewIssueFocus = ContainsAny(
+            compactSource,
+            "新しい問題点に集中",
+            "新しい問題に集中",
+            "focus on new issues",
+            "focus on possible new issues");
+        var supportsStreamAssociation =
+            ContainsAny(compactSource, "特定のストリームに接合", "特定のストリームに関連", "associate", "join") &&
+            ContainsAny(compactSource, "Perforce QACプロジェクト", "Perforce QAC project");
+        var supportsStreamCreation =
+            ContainsAny(compactSource, "Validate内でストリームを生成", "Validateでストリームを生成", "create a stream in Validate") ||
+            supportsStreamAssociation;
+        var supportsCliStream =
+            ContainsAny(compactSource, "qacli validate build", "qaclivalidatebuild") &&
+            compactSource.Contains("--stream", StringComparison.OrdinalIgnoreCase);
+        var supportsValidateProjectOption =
+            compactSource.Contains("qacli validate config", StringComparison.OrdinalIgnoreCase) &&
+            compactSource.Contains("--validate-project", StringComparison.OrdinalIgnoreCase);
+        var supportsProjectConnection =
+            supportsValidateProjectOption ||
+            ContainsAny(compactSource, "qacli validate connect", "qaclivalidateconnect", "プロジェクト間の接続", "プロジェクトを結合");
+
+        if ((!supportsTracking && !supportsNewIssueFocus) ||
+            (!supportsStreamCreation && !supportsStreamAssociation && !supportsCliStream && !supportsValidateProjectOption))
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいたValidateのストリーム機能と設定方法について、確認した根拠に基づきご案内します。");
+        builder.AppendLine();
+        builder.AppendLine("【概要】");
+        if (supportsTracking && supportsNewIssueFocus)
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトのビルドを継続的に追跡し、開発者がローカルコピーで作業している間に発生した可能性のある新しい問題へ集中して確認するための機能です。");
+        }
+        else if (supportsTracking)
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトのビルドを継続的に追跡するための機能です。");
+        }
+        else
+        {
+            builder.AppendLine("Validateのストリームは、プロジェクトの異なるバージョンを追跡し、対象のPerforce QACプロジェクトを特定のストリームへ関連付けて管理するための機能です。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【設定方法】");
+        var step = 1;
+        if (supportsProjectConnection)
+        {
+            if (supportsValidateProjectOption)
+            {
+                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトをValidateへ接続します。CLIでは qacli validate config --create -P <project_dir> --url <validate_url> --validate-project <Validateプロジェクト/ストリーム名> を使用します。");
+            }
+            else
+            {
+                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトとValidateプロジェクトの接続を作成します。");
+            }
+        }
+
+        if (supportsStreamCreation || supportsStreamAssociation)
+        {
+            builder.AppendLine($"{step++}. Validateでストリームを作成し、対象のPerforce QACプロジェクトをそのストリームへ関連付けます。");
+        }
+
+        if (supportsCliStream)
+        {
+            builder.AppendLine($"{step}. コマンドラインからビルドを登録する場合は、qacli validate build の --stream オプションで登録先ストリームを指定します。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【注意点】");
+        builder.AppendLine("・設定前に、対象プロジェクトがValidateへ接続されていることと、ストリームを利用できる権限があることをご確認ください。");
+        builder.AppendLine("・画面項目や利用可能なオプションは製品バージョンによって異なる場合があるため、ご利用バージョンのマニュアルで最終確認してください。");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
+    }
+
+    private static bool TryBuildQacAnalysisProcedureReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        return HowToAnswerComposer.TryComposeAnalysis(request, out customerReply);
+    }
+
+    private static bool TryBuildValidateUploadProcedureReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        var inquiry = NormalizeWhitespace(request.InquiryText);
+        if (!inquiry.Contains("Validate", StringComparison.OrdinalIgnoreCase) ||
+            !inquiry.Contains("アップロード", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources
+                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+                .Select(static source => source.Text));
+        var compactSource = NormalizeWhitespace(sourceText);
+        var hasGuiProcedure =
+            (compactSource.Contains("ポータル", StringComparison.OrdinalIgnoreCase) ||
+             compactSource.Contains("Portals", StringComparison.OrdinalIgnoreCase)) &&
+            compactSource.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
+            (compactSource.Contains("解析結果をアップロード", StringComparison.OrdinalIgnoreCase) ||
+             compactSource.Contains("Upload Results", StringComparison.OrdinalIgnoreCase));
+        var hasCliProcedure =
+            compactSource.Contains("qaclivalidatebuild", StringComparison.OrdinalIgnoreCase) ||
+            compactSource.Contains("qacli validate build", StringComparison.OrdinalIgnoreCase);
+        if (!hasGuiProcedure && !hasCliProcedure)
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいた、Perforce QACの解析結果をValidateへアップロードする方法についてご案内します。");
+        if (hasGuiProcedure)
+        {
+            builder.AppendLine();
+            builder.AppendLine("【GUIでの手順】");
+            builder.AppendLine("1. QA GUIで、解析済みの対象プロジェクトを開きます。");
+            builder.AppendLine("2. ［ポータル］>［Validate］>［解析結果をアップロード］を選択します。");
+            builder.AppendLine("3. 必要に応じてソースコードエンコーディングとビルド名を指定し、アップロードを実行します。未指定の場合、エンコーディングはシステム設定、ビルド名はValidateサーバ側の割り当てが使用されます。");
+        }
+
+        if (hasCliProcedure)
+        {
+            builder.AppendLine();
+            builder.AppendLine("【CLIでの手順】");
+            builder.AppendLine("対象プロジェクトのディレクトリを指定して、次のコマンドを実行します。");
+            builder.AppendLine("qacli validate build --qaf-project .");
+            builder.AppendLine("任意のビルド名を付ける場合は、次のように --build-name を追加します。");
+            builder.AppendLine("qacli validate build --qaf-project . --build-name MyBuild-1");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("【事前条件】");
+        builder.AppendLine("・Validateで認証済みで、アップロードに必要な権限があること");
+        builder.AppendLine("・Validate側に対象プロジェクトが作成され、Perforce QACプロジェクトとの接続が完了していること");
+        builder.AppendLine("・必要なビルドライセンスを利用できること");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
+    }
+
+    private static bool ContainsAny(string value, params string[] candidates)
+    {
+        return candidates.Any(candidate =>
+            value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsCustomerVisibleSourceType(string sourceType)
@@ -873,22 +1140,19 @@ internal static partial class AnswerPostProcessor
         var companyName = NormalizeRecipientText(context.CompanyName);
         if (IsPlaceholderCompanyName(companyName))
         {
-            companyName = string.Empty;
+            companyName = "[会社名]";
         }
 
         var customerName = NormalizeRecipientText(context.CustomerName);
-        if (!string.IsNullOrWhiteSpace(companyName))
-        {
-            yield return companyName;
-        }
+        yield return companyName;
 
         if (!string.IsNullOrWhiteSpace(customerName))
         {
             yield return HasHonorificSuffix(customerName) ? customerName : $"{customerName} 様";
         }
-        else if (!string.IsNullOrWhiteSpace(companyName))
+        else
         {
-            yield return "ご担当者様";
+            yield return "[お客様名] 様";
         }
     }
 
@@ -903,7 +1167,11 @@ internal static partial class AnswerPostProcessor
     {
         return string.IsNullOrWhiteSpace(value) ||
             string.Equals(value, "株式会社サンプル", StringComparison.Ordinal) ||
-            string.Equals(value, "サンプル", StringComparison.Ordinal);
+            string.Equals(value, "サンプル", StringComparison.Ordinal) ||
+            string.Equals(value, "TOYO", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "TOYO Corporation", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "東陽テクニカ", StringComparison.Ordinal) ||
+            string.Equals(value, "株式会社東陽テクニカ", StringComparison.Ordinal);
     }
 
     private static bool HasHonorificSuffix(string value)

@@ -22,6 +22,22 @@
     <sys:String x:Key="ClosedCasesFolderLabel">Closed cases folder</sys:String>
     <sys:String x:Key="ClosedFolderLabel">Closed folder</sys:String>
     <sys:String x:Key="SelectButton">Select</sys:String>
+    <sys:String x:Key="RagLabEvidenceSettingsHeader">RAG Lab Evidence (additional context)</sys:String>
+    <sys:String x:Key="UseRagLabEvidenceLabel">Add RAG Lab Evidence to Codex investigation</sys:String>
+    <sys:String x:Key="UseAnswerQualityGateLabel">Use Answer Quality Gate diagnostics</sys:String>
+    <sys:String x:Key="UsePhase175QualityControlsLabel">Validate exclusions and answer coverage (Phase 17.5)</sys:String>
+    <sys:String x:Key="UseCoverageAwareEvidenceSelectionLabel">Coverage-aware evidence set selection (Phase 18)</sys:String>
+    <sys:String x:Key="CoverageAwareMaxEvidenceItemsLabel">Max items when coverage is missing (3-5)</sys:String>
+    <sys:String x:Key="UseRustEvidenceSelectorLabel">Use Rust evidence selector</sys:String>
+    <sys:String x:Key="UsePersistentRustEvidenceSelectorLabel">Use persistent Rust worker</sys:String>
+    <sys:String x:Key="MaxWorkerRestartsPerMinuteLabel">worker restarts/min</sys:String>
+    <sys:String x:Key="EnableRustSelectorShadowModeLabel">Rust shadow comparison</sys:String>
+    <sys:String x:Key="RustEvidenceSelectorTimeoutLabel">Rust timeout (ms)</sys:String>
+    <sys:String x:Key="ShadowMinimumRunsLabel">Shadow minimum production runs</sys:String>
+    <sys:String x:Key="ShadowMaxRecordsLabel">Shadow maximum stored records</sys:String>
+    <sys:String x:Key="RagLabEvidenceFileLabel">Evidence JSON</sys:String>
+    <sys:String x:Key="RagLabReadinessFileLabel">baseline-readiness JSON</sys:String>
+    <sys:String x:Key="RagLabEvidenceMaxItemsLabel">Maximum additional items (1-5)</sys:String>
 
     <sys:String x:Key="CaseNoteIndexHeader">Case note index</sys:String>
     <sys:String x:Key="BuildPastCaseIndexButton">Build past case index</sys:String>
@@ -122,6 +138,7 @@
     <sys:String x:Key="TextPreviewLabel">Text preview</sys:String>
     <sys:String x:Key="EvidenceSummaryHeader">Evidence summary</sys:String>
     <sys:String x:Key="GenerateDraftButton">Generate draft</sys:String>
+    <sys:String x:Key="CancelGenerationButton">Cancel generation</sys:String>
     <sys:String x:Key="ClearInputButton">Clear input</sys:String>
 
     <sys:String x:Key="CustomerReplyDraftHeader">Customer reply draft</sys:String>

@@ -100,6 +100,24 @@ dotnet publish src\SupportCaseManager.App\SupportCaseManager.App.csproj -p:Publi
 - Fact解決: `CuratedFactCatalog` を優先して最新バージョンなどの重要Factを確定
 - 保存: AIドラフトを `ai-data/drafts` に保存
 - 診断: AI専用ログを `ai-data/logs/AiAssistant.log` に保存
+- Codex調査: 案件フォルダを `read-only` で確認し、Threadとチャット履歴を案件単位で保持
+- 成果物: 明示的なExcel英訳依頼を計画として表示し、利用者が「英訳Excelを作成」を押した場合だけ案件フォルダ内へ別名保存
+
+### Codex成果物作成
+
+1. Codex調査の入力欄へ、対象`.xlsx`の英訳と別名保存を明示して送信します。
+2. 「成果物（ユーザー確認後に作成）」で元ファイル、保存先、出力名、対象セル、警告を確認します。
+3. 必要に応じて保存先と出力名を変更し、「実行内容を確認」を押します。この時点ではファイルは作成されません。
+4. 「英訳Excelを作成」を押すと、Codexは構造化翻訳JSONだけを返し、WPF側が元Excelのコピーへ反映します。
+5. 保存検証後、同じThreadでメーカー向け英語メール案を作成し、編集可能な欄へ表示します。メール送信やノート追記は自動実行しません。
+
+安全制約:
+
+- Codex App ServerのSandboxは従来どおり`read-only`、承認ポリシーは`never`
+- 保存先は現在の案件フォルダ配下だけ
+- 元ファイルの上書き・名称変更・削除は行わない
+- 同名出力は拒否し、別名または連番を選択
+- 一時ファイルで作成・再オープン検証してから最終名へ移動
 
 AI / RAG 構成:
 

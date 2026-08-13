@@ -105,6 +105,40 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListModelsAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (!TryBuildTagsUri(settings.Endpoint?.Trim() ?? string.Empty, out var tagsUri))
+        {
+            return [];
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(EffectiveTagsTimeoutSeconds(settings)));
+        try
+        {
+            using var response = await httpClient.GetAsync(tagsUri, timeoutCts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return [];
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
+            return await ParseModelNamesAsync(stream, timeoutCts.Token);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or IOException or OperationCanceledException)
+        {
+            if (ex is OperationCanceledException && cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+
+            return [];
+        }
+    }
+
     internal async Task<ChatTestOutcome> RunChatTestAsync(
         LlmProviderSettings settings,
         bool disableThinking,
@@ -129,34 +163,24 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
             };
         }
 
-        var thinkDisabled = OllamaThinkingHelper.ShouldDisableThinking(settings.ChatModel, disableThinking);
-        var userPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(ChatTestPrompt, settings.ChatModel, disableThinking);
-        var requestBody = thinkDisabled
-            ? new
+        var thinkDisabled = OllamaThinkingHelper.ShouldDisableThinking(settings, disableThinking);
+        var userPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(ChatTestPrompt, settings, disableThinking);
+        var requestBody = new Dictionary<string, object?>
+        {
+            ["model"] = settings.ChatModel,
+            ["stream"] = false,
+            ["messages"] = new[] { new { role = "user", content = userPrompt } },
+            ["options"] = new
             {
-                model = settings.ChatModel,
-                stream = false,
-                think = false,
-                messages = new[] { new { role = "user", content = userPrompt } },
-                options = new
-                {
-                    temperature = 0.0,
-                    num_predict = ChatTestNumPredict,
-                    num_ctx = ChatTestContextWindowTokens,
-                },
-            }
-            : (object)new
-            {
-                model = settings.ChatModel,
-                stream = false,
-                messages = new[] { new { role = "user", content = userPrompt } },
-                options = new
-                {
-                    temperature = 0.0,
-                    num_predict = ChatTestNumPredict,
-                    num_ctx = ChatTestContextWindowTokens,
-                },
-            };
+                temperature = 0.0,
+                num_predict = ChatTestNumPredict,
+                num_ctx = ChatTestContextWindowTokens,
+            },
+        };
+        if (thinkDisabled)
+        {
+            requestBody["think"] = false;
+        }
 
         var chatTestTimeoutSeconds = EffectiveChatTestTimeoutSeconds(settings);
         using var chatTestTimeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

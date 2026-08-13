@@ -1,0 +1,44 @@
+{
+  "evaluation_cases": [
+    {
+      "query_id": "q001",
+      "product": "Checkmarx",
+      "query": "Path TraversalのNot Exploitable判定条件",
+      "target_version": "SYNTHETIC-1.0",
+      "expected_document_ids": [
+        "sample-checkmarx-001"
+      ],
+      "expected_support_ids": [
+        "SYN-0001"
+      ],
+      "required_terms": [
+        "Path Traversal",
+        "Not Exploitable"
+      ],
+      "excluded_terms": [
+        "HelixQAC"
+      ],
+      "notes": "人工データで製品混同がないことを確認する。"
+    },
+    {
+      "query_id": "q002",
+      "product": "HelixQAC",
+      "query": "CCTの生成手順",
+      "target_version": "SYNTHETIC-2.0",
+      "expected_document_ids": [
+        "sample-helixqac-001"
+      ],
+      "expected_support_ids": [
+        "SYN-0002"
+      ],
+      "required_terms": [
+        "CCT",
+        "生成"
+      ],
+      "excluded_terms": [
+        "Checkmarx"
+      ],
+      "notes": "人工データで製品と手順の一致を確認する。"
+    }
+  ]
+}

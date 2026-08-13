@@ -15,8 +15,6 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
     private const int ChunkMaxLength = 2600;
     private const int ChunkOverlapLength = 150;
     private const int MinimumUsefulTextLength = 80;
-    private const int DefaultMaxDepth = 2;
-    private const int DefaultMaxPages = 100;
     private const int DefaultRequestDelayMs = 300;
     private const int DefaultFetchTimeoutSeconds = 30;
 
@@ -45,6 +43,10 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         "hf",
         "engine pack",
         "engine-pack",
+        "cct",
+        "auto-cct",
+        "auto cct",
+        "compiler compatibility",
         "version",
         "versions",
         "sast",
@@ -54,6 +56,21 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         "リリース",
         "ホットフィックス",
         "エンジンパック",
+        "コンパイラ",
+        "自動生成",
+        "同期",
+    ];
+
+    private static readonly string[] HelixQacOfficialSeedUrls =
+    [
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/automatic_ccts.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/prqa-framework-manualse7.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/ja-jp/doc/manual/html/multi_CCTs_with_qagui.html",
+        "https://help.perforce.com/helix-qac/current/perforceqac/en-us/doc/manual/html/Sync.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/the_validate_menu.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/uploading_results_to_validate_using_qacli.html",
+        "https://help.perforce.com/qac/current/perforceqac/ja-jp/doc/manual/html/qacli_validate_build.html",
+        "https://help.perforce.com/qac/current/perforceqac/en-us/doc/manual/html/uploading_to_validate_using_qagui.html",
     ];
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -90,6 +107,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             .Select(static url => url.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+        AddKnownOfficialSeeds(product.ProductName, sourceUrls);
 
         var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
         Directory.CreateDirectory(productIndexFolder);
@@ -105,11 +123,13 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         var discoveredUrls = new List<string>();
         var importantPageUrls = new List<string>();
         var failedUrls = new List<string>();
+        var maxDepth = Math.Clamp(product.CrawlMaxDepth, 0, 5);
+        var maxPages = Math.Clamp(product.CrawlMaxPages, 1, 1000);
 
         using var client = httpClientFactory();
         client.Timeout = Timeout.InfiniteTimeSpan;
 
-        var crawl = await CrawlAsync(client, sourceUrls, warnings, cancellationToken);
+        var crawl = await CrawlAsync(client, sourceUrls, warnings, maxDepth, maxPages, cancellationToken);
         successCount = crawl.SuccessCount;
         failureCount = crawl.FailureCount;
         skippedCount = crawl.SkippedCount;
@@ -176,8 +196,8 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             FetchSuccessCount = successCount,
             FetchFailureCount = failureCount,
             SkippedUrlCount = skippedCount,
-            MaxDepth = DefaultMaxDepth,
-            MaxPages = DefaultMaxPages,
+            MaxDepth = maxDepth,
+            MaxPages = maxPages,
             RequestDelayMs = DefaultRequestDelayMs,
             FetchTimeoutSeconds = DefaultFetchTimeoutSeconds,
             ImportantPageUrls = importantPageUrls,
@@ -185,14 +205,38 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             Warnings = warnings,
         };
 
-        await using (var stream = File.Create(indexFilePath))
+        var replacedIndex = failureCount == 0 || !File.Exists(indexFilePath);
+        if (replacedIndex)
         {
-            await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+            var temporaryPath = indexFilePath + ".tmp";
+            try
+            {
+                await using (var stream = File.Create(temporaryPath))
+                {
+                    await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+                }
+
+                File.Move(temporaryPath, indexFilePath, overwrite: true);
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+            }
+        }
+        else
+        {
+            warnings.Add("Official document update failed; the previous successful index was retained.");
         }
 
-        var candidateFacts = new OfficialDocumentFactExtractor().Extract(document);
-        var factCatalog = FactCatalogStore.BuildCatalog(product.ProductName, candidateFacts, now);
-        await FactCatalogStore.SaveAsync(productIndexFolder, factCatalog, cancellationToken);
+        if (replacedIndex)
+        {
+            var candidateFacts = new OfficialDocumentFactExtractor().Extract(document);
+            var factCatalog = FactCatalogStore.BuildCatalog(product.ProductName, candidateFacts, now);
+            await FactCatalogStore.SaveAsync(productIndexFolder, factCatalog, cancellationToken);
+        }
 
         if (documents.Count == 0 && sourceUrls.Count > 0)
         {
@@ -209,8 +253,8 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             FetchFailureCount = failureCount,
             SkippedUrlCount = skippedCount,
             IndexedChunkCount = documents.Count,
-            MaxDepth = DefaultMaxDepth,
-            MaxPages = DefaultMaxPages,
+            MaxDepth = maxDepth,
+            MaxPages = maxPages,
             RequestDelayMs = DefaultRequestDelayMs,
             FetchTimeoutSeconds = DefaultFetchTimeoutSeconds,
             SourceUrls = sourceUrls,
@@ -222,10 +266,31 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         };
     }
 
+    private static void AddKnownOfficialSeeds(string productName, List<string> sourceUrls)
+    {
+        if (!string.Equals(productName, "HelixQAC", StringComparison.OrdinalIgnoreCase)
+            || !sourceUrls.Any(static url =>
+                Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                && string.Equals(uri.Host, "help.perforce.com", StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        foreach (var url in HelixQacOfficialSeedUrls)
+        {
+            if (!sourceUrls.Contains(url, StringComparer.OrdinalIgnoreCase))
+            {
+                sourceUrls.Add(url);
+            }
+        }
+    }
+
     private static async Task<CrawlResult> CrawlAsync(
         HttpClient client,
         IReadOnlyList<string> seedUrls,
         List<string> warnings,
+        int maxDepth,
+        int maxPages,
         CancellationToken cancellationToken)
     {
         var queue = new List<CrawlCandidate>();
@@ -262,7 +327,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             }
         }
 
-        while (queue.Count > 0 && pages.Count < DefaultMaxPages)
+        while (queue.Count > 0 && pages.Count < maxPages)
         {
             cancellationToken.ThrowIfCancellationRequested();
             queue.Sort(static (left, right) =>
@@ -318,7 +383,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
                 importantPageUrls.Add(candidate.NormalizedUrl);
             }
 
-            if (candidate.Depth < DefaultMaxDepth)
+            if (candidate.Depth < maxDepth)
             {
                 foreach (var link in ExtractSameHostLinks(fetched.Html, candidate.Uri, candidate.RootHost))
                 {
@@ -327,7 +392,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
                         continue;
                     }
 
-                    if (discoveredUrls.Count >= DefaultMaxPages * 4)
+                    if (discoveredUrls.Count >= maxPages * 4)
                     {
                         skippedCount++;
                         continue;
@@ -349,16 +414,16 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
                 }
             }
 
-            if (queue.Count > 0 && pages.Count < DefaultMaxPages)
+            if (queue.Count > 0 && pages.Count < maxPages)
             {
                 await Task.Delay(DefaultRequestDelayMs, cancellationToken);
             }
         }
 
-        if (queue.Count > 0 && pages.Count >= DefaultMaxPages)
+        if (queue.Count > 0 && pages.Count >= maxPages)
         {
             skippedCount += queue.Count;
-            warnings.Add($"MaxPages reached. Remaining URLs were skipped. MaxPages={DefaultMaxPages}; Remaining={queue.Count}");
+            warnings.Add($"MaxPages reached. Remaining URLs were skipped. MaxPages={maxPages}; Remaining={queue.Count}");
         }
 
         return new CrawlResult(

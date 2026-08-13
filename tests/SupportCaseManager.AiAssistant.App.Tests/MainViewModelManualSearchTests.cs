@@ -139,6 +139,7 @@ public sealed class MainViewModelManualSearchTests
         var services = CreateViewModel([CreateManualSource()]);
         services.ViewModel.LlmProvider = "Fake";
         services.ViewModel.ChatModel = "fake-model";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -155,6 +156,7 @@ public sealed class MainViewModelManualSearchTests
         var services = CreateViewModel([CreateManualSource()]);
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen2.5:3b";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -166,6 +168,50 @@ public sealed class MainViewModelManualSearchTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_EmptyOllamaModelUsesAvailableQualityPreset()
+    {
+        var services = CreateViewModel([CreateManualSource()]);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.AnswerQualityMode = AnswerQualityModes.Standard;
+        services.ViewModel.ChatModel = string.Empty;
+        services.ViewModel.AvailableModels.Clear();
+        services.ViewModel.AvailableModels.Add("qwen3:8b");
+        services.ViewModel.AvailableModels.Add("gemma4:26b");
+        ConfigureProduct(services.ViewModel, "Checkmarx");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        Assert.Equal("gemma4:26b", services.ViewModel.ChatModel);
+        Assert.NotEqual("NeedsConfiguration", services.ViewModel.GenerationState);
+        Assert.DoesNotContain("回答モデルを解決できません", services.ViewModel.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ManualSearch_AutoSelectionIsBoundedByMaximumEvidenceItems()
+    {
+        var sources = Enumerable.Range(1, 8)
+            .Select(index => CreateManualSource() with
+            {
+                SourceId = $"manual-{index}",
+                Title = $"QACインストール手順 {index}",
+                Score = 0.90 - (index * 0.01),
+            })
+            .ToList();
+        var services = CreateViewModel(sources);
+        services.ViewModel.InquiryText = "QACのインストール方法を教えてください。";
+        services.ViewModel.MaxEvidenceItems = 3;
+        services.ViewModel.HighScoreThreshold = 0.65;
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+
+        Assert.Equal(8, services.ViewModel.SearchResultCount);
+        Assert.Equal(3, services.ViewModel.SelectedEvidenceCount);
+        Assert.Equal(3, services.ViewModel.EvidenceToSendCount);
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_OllamaFailureDoesNotFallbackToFake()
     {
         var services = CreateViewModel(
@@ -173,6 +219,7 @@ public sealed class MainViewModelManualSearchTests
             answerService: new FailingAnswerService(new InvalidOperationException("ollama failed")));
         services.ViewModel.LlmProvider = "Ollama";
         services.ViewModel.ChatModel = "qwen2.5:3b";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
 
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
@@ -183,6 +230,201 @@ public sealed class MainViewModelManualSearchTests
         Assert.Contains("failed", services.ViewModel.LastOperationResult);
         Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
         Assert.Equal(1, services.Logger.ErrorCount);
+    }
+
+    [Fact]
+    public async Task BuildDraftRequest_ManualQuestionUsesFastModelAndOmitsStaleCaseNotes()
+    {
+        var services = CreateViewModel([CreateManualSource()]);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "gemma4:31b";
+        services.ViewModel.TimeoutSeconds = 900;
+        services.ViewModel.MaxPromptChars = 10000;
+        services.ViewModel.MaxEvidenceItems = 3;
+        services.ViewModel.AvailableModels.Add("qwen3:8b");
+        services.ViewModel.AvailableModels.Add("qwen3:4b");
+        services.ViewModel.Notes.Clear();
+        services.ViewModel.Notes.Add(new NoteSnapshot
+        {
+            NoteKind = "過去案件ノート",
+            Text = new string('旧', 8000),
+            IsCurrent = true,
+        });
+        services.ViewModel.InquiryText = "CCTの生成方法について教えてください。";
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        var request = InvokePrivate<AnswerDraftRequest>(services.ViewModel, "BuildDraftRequest");
+
+        Assert.Equal("qwen3:4b", request.Settings.LlmProvider.ChatModel);
+        Assert.Equal(90, request.Settings.LlmProvider.TimeoutSeconds);
+        Assert.Equal(6000, request.Settings.MaxPromptChars);
+        Assert.Equal(2, request.Settings.MaxEvidenceItems);
+        Assert.Equal(600, request.Settings.LlmProvider.MaxOutputTokens);
+        Assert.Empty(request.Case.Notes);
+        Assert.True(services.ViewModel.PromptApproxChars < 2000);
+        Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+    }
+
+    [Fact]
+    public async Task BuildDraftRequest_StreamOverviewAndSetupKeepsThreeManualEvidenceItems()
+    {
+        const string manualPath = @"D:\Manuals\Perforce-QAC-Manual.pdf";
+        var sources = Enumerable.Range(1, 36)
+            .Select(index => CreateManualSource() with
+            {
+                SourceId = $"stream-{index:00}",
+                ProductName = "HelixQAC",
+                Title = "Perforce-QAC-Manual",
+                SectionTitle = index switch
+                {
+                    1 => "Stream overview",
+                    2 => "Stream setup",
+                    3 => "Stream verification",
+                    _ => $"Other section {index}",
+                },
+                Text = index switch
+                {
+                    1 => $"Validate Stream feature overview and purpose. {new string('A', 1100)}",
+                    2 => $"Validate Stream configuration and project setup. {new string('B', 1100)}",
+                    3 => $"Validate Stream association and verification. {new string('C', 1100)}",
+                    _ => $"Validate reference {index}. {new string((char)('D' + (index % 20)), 1100)}",
+                },
+                FilePath = manualPath,
+                Score = index <= 3 ? 0.70 - (index * 0.001) : 0.60 - (index * 0.001),
+            })
+            .ToList();
+        var services = CreateViewModel(sources);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "gemma4:31b";
+        services.ViewModel.MaxPromptChars = 6000;
+        services.ViewModel.MaxOutputTokens = 800;
+        services.ViewModel.MaxEvidenceItems = 3;
+        services.ViewModel.AvailableModels.Add("qwen3:4b");
+        services.ViewModel.InquiryText = "Validateのストリームはどのような機能でしょうか？またそのストリームの設定方法について教えてください。";
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        var request = InvokePrivate<AnswerDraftRequest>(services.ViewModel, "BuildDraftRequest");
+        var prompt = new PromptBuilder().Build(request);
+
+        Assert.Equal(36, services.ViewModel.SearchResultCount);
+        Assert.InRange(request.Sources.Count, 2, 5);
+        Assert.True(request.Settings.MaxPromptChars >= 8000);
+        Assert.True(request.Settings.LlmProvider.MaxOutputTokens >= 600);
+        Assert.Equal(AnswerReadiness.NeedsConfirmation, request.FactResolution?.AnswerReadiness);
+        Assert.Empty(request.FactResolution!.CandidateFacts);
+        Assert.Equal(request.Sources.Count, prompt.Diagnostics.EvidenceCount);
+        Assert.All(request.Sources, source => Assert.Contains(source.SourceId, prompt.UserPrompt));
+        Assert.Contains("\"customerReplyDraft\": \"string\"", prompt.UserPrompt);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_TimeoutFallbackUsesMissingRecipientPlaceholders()
+    {
+        var services = CreateViewModel(
+            [CreateManualSource()],
+            answerService: new FailingAnswerService(new InvalidOperationException("Ollama /api/chat timed out.")));
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "qwen2.5:3b";
+        services.ViewModel.CompanyName = "TOYO";
+        services.ViewModel.CustomerName = "ご担当者様";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        Assert.Equal("CompletedWithFallback", services.ViewModel.GenerationState);
+        Assert.StartsWith(
+            $"[会社名]{Environment.NewLine}[お客様名] 様",
+            services.ViewModel.CustomerReplyDraft,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", services.ViewModel.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("東陽テクニカ", services.ViewModel.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("ライセンス認証エラー", services.ViewModel.CustomerReplyDraft);
+        Assert.Contains("選択済み根拠", services.ViewModel.StatusMessage);
+        Assert.Equal("LlmTimeoutEvidenceFallback", services.ViewModel.GenerationSkippedReason);
+        Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_ParseFallbackIsNotReportedAsNormalCompletion()
+    {
+        var services = CreateViewModel(
+            [CreateManualSource()],
+            answerService: new StaticAnswerService(new AnswerDraftResult
+            {
+                CustomerReplyDraft = "［ポータル］>［Validate］>［解析結果をアップロード］を選択します。qacli validate build --qaf-project . を実行します。",
+                Warnings = ["LLM応答のJSON解析に失敗しました。回答内容を確認してください。"],
+                Confidence = 0.65,
+            }));
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "qwen3:4b";
+        services.ViewModel.CompanyName = "TOYO";
+        services.ViewModel.CustomerName = "ご担当者様";
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        Assert.Equal("CompletedWithFallback", services.ViewModel.GenerationState);
+        Assert.Equal("LlmResponseParseFallback", services.ViewModel.GenerationSkippedReason);
+        Assert.Contains("送信済み根拠から回答案を補完", services.ViewModel.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("grounded fallback", services.ViewModel.LastOperationResult, StringComparison.OrdinalIgnoreCase);
+        Assert.StartsWith(
+            $"[会社名]{Environment.NewLine}[お客様名] 様",
+            services.ViewModel.CustomerReplyDraft,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", services.ViewModel.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("東陽テクニカ", services.ViewModel.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CancelGenerationCommand_CancelsRunningLlmRequest()
+    {
+        var answerService = new CancellableAnswerService();
+        var services = CreateViewModel([CreateManualSource()], answerService: answerService);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "qwen2.5:3b";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        var generationTask = InvokePrivateTask(services.ViewModel, "GenerateDraftAsync");
+        await answerService.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(services.ViewModel.CancelGenerationCommand.CanExecute(null));
+        services.ViewModel.CancelGenerationCommand.Execute(null);
+        await generationTask.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("Canceled", services.ViewModel.GenerationState);
+        Assert.Equal("中止", services.ViewModel.OperationStage);
+        Assert.Contains("中止", services.ViewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task PastAnswerFromAnotherProduct_IsShownButCannotBeAppliedAutomatically()
+    {
+        var crossProductAnswer = new SearchSource
+        {
+            SourceId = "checkmarx-answer",
+            SourceType = "ExactPastAnswer",
+            ProductName = "Checkmarx",
+            SupportNumber = "00009999",
+            Title = "過去回答",
+            Text = "別製品の過去回答です。",
+            Score = 1,
+            MatchKind = PastAnswerMatchKinds.Exact,
+        };
+        var services = CreateViewModel([], crossProductAnswers: [crossProductAnswer]);
+        var replyBeforeApply = services.ViewModel.CustomerReplyDraft;
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchPastCasesAsync");
+        services.ViewModel.ApplyPastAnswerCommand.Execute(null);
+
+        Assert.Contains("Checkmarx", services.ViewModel.PastAnswerCandidateText, StringComparison.Ordinal);
+        Assert.Contains("自動採用しません", services.ViewModel.PastAnswerCandidateText, StringComparison.Ordinal);
+        Assert.Equal(replyBeforeApply, services.ViewModel.CustomerReplyDraft);
+        Assert.Equal("NeedsConfiguration", services.ViewModel.GenerationState);
     }
 
     [Fact]
@@ -228,7 +470,8 @@ public sealed class MainViewModelManualSearchTests
         IReadOnlyList<SearchSource> manualResults,
         Exception? manualSearchException = null,
         IAiAnswerService? answerService = null,
-        ILlmClientFactory? llmClientFactory = null)
+        ILlmClientFactory? llmClientFactory = null,
+        IReadOnlyList<SearchSource>? crossProductAnswers = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var viewModel = new MainViewModel(
@@ -240,7 +483,7 @@ public sealed class MainViewModelManualSearchTests
             new FakeProductScopedIndexService(),
             new FakeCaseKeywordSearcher(),
             new FakeManualKeywordSearcher(manualResults, manualSearchException),
-            new FakeProductScopedSearchService(manualResults, manualSearchException),
+            new FakeProductScopedSearchService(manualResults, manualSearchException, crossProductAnswers),
             new InquiryFocusExtractor(),
             new FakeOllamaConnectionChecker(),
             new FakeSupportToolSettingsReader(),
@@ -276,6 +519,16 @@ public sealed class MainViewModelManualSearchTests
         };
     }
 
+    private static void ConfigureProduct(MainViewModel viewModel, string productName)
+    {
+        viewModel.Products.Add(new ProductKnowledgeViewModel
+        {
+            ProductName = productName,
+            IsEnabled = true,
+        });
+        viewModel.ProductName = productName;
+    }
+
     private static SearchSource CreateOfficialSource()
     {
         return new SearchSource
@@ -292,10 +545,14 @@ public sealed class MainViewModelManualSearchTests
 
     private static async Task InvokePrivateTaskAsync(MainViewModel viewModel, string methodName)
     {
+        await InvokePrivateTask(viewModel, methodName);
+    }
+
+    private static Task InvokePrivateTask(MainViewModel viewModel, string methodName)
+    {
         var method = typeof(MainViewModel).GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
         Assert.NotNull(method);
-        var task = Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, []));
-        await task;
+        return Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, []));
     }
 
     private static T InvokePrivate<T>(MainViewModel viewModel, string methodName)
@@ -451,11 +708,16 @@ public sealed class MainViewModelManualSearchTests
     {
         private readonly IReadOnlyList<SearchSource> manualResults;
         private readonly Exception? manualSearchException;
+        private readonly IReadOnlyList<SearchSource> crossProductAnswers;
 
-        public FakeProductScopedSearchService(IReadOnlyList<SearchSource> manualResults, Exception? manualSearchException)
+        public FakeProductScopedSearchService(
+            IReadOnlyList<SearchSource> manualResults,
+            Exception? manualSearchException,
+            IReadOnlyList<SearchSource>? crossProductAnswers)
         {
             this.manualResults = manualResults;
             this.manualSearchException = manualSearchException;
+            this.crossProductAnswers = crossProductAnswers ?? [];
         }
 
         public Task<IReadOnlyList<SearchSource>> SearchPastCasesAsync(
@@ -491,6 +753,16 @@ public sealed class MainViewModelManualSearchTests
             CancellationToken cancellationToken = default)
         {
             return Task.FromResult<IReadOnlyList<SearchSource>>([]);
+        }
+
+        public Task<IReadOnlyList<SearchSource>> SearchPastAnswersAcrossProductsAsync(
+            IReadOnlyList<ProductKnowledgeSettings> products,
+            string aiIndexFolder,
+            string query,
+            int maxResults = 8,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(crossProductAnswers);
         }
 
         public Task<IReadOnlyList<SearchSource>> SearchAllAsync(
@@ -613,6 +885,37 @@ public sealed class MainViewModelManualSearchTests
             CancellationToken cancellationToken = default)
         {
             throw exception;
+        }
+    }
+
+    private sealed class StaticAnswerService : IAiAnswerService
+    {
+        private readonly AnswerDraftResult result;
+
+        public StaticAnswerService(AnswerDraftResult result)
+        {
+            this.result = result;
+        }
+
+        public Task<AnswerDraftResult> GenerateDraftAsync(
+            AnswerDraftRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(result);
+        }
+    }
+
+    private sealed class CancellableAnswerService : IAiAnswerService
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AnswerDraftResult> GenerateDraftAsync(
+            AnswerDraftRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new AnswerDraftResult();
         }
     }
 

@@ -22,6 +22,7 @@ public sealed class AiAssistantSettingsAppearanceTests
             AiDataFolder = @"D:\Support\ai-data",
             UiLanguage = "en-US",
             UseDarkMode = true,
+            CodexExecutablePath = @"C:\Tools\Codex\codex.exe",
         };
 
         var json = JsonSerializer.Serialize(settings);
@@ -29,8 +30,10 @@ public sealed class AiAssistantSettingsAppearanceTests
 
         Assert.Contains("\"uiLanguage\"", json);
         Assert.Contains("\"useDarkMode\"", json);
+        Assert.Contains("\"codexExecutablePath\"", json);
         Assert.NotNull(restored);
         Assert.Equal("en-US", restored.UiLanguage);
         Assert.True(restored.UseDarkMode);
+        Assert.Equal(@"C:\Tools\Codex\codex.exe", restored.CodexExecutablePath);
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Core.Compatibility;
 
 namespace SupportCaseManager.Ai.Core.Settings;
 
@@ -34,15 +35,17 @@ public sealed class SupportToolSettingsReader : ISupportToolSettingsReader
             throw new FileNotFoundException("Support tool user-settings.json was not found.", userSettingsFilePath);
         }
 
-        await using var stream = File.Open(userSettingsFilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var bytes = await File.ReadAllBytesAsync(userSettingsFilePath, cancellationToken);
+        var json = EncodingPolicy.DecodeNoteText(bytes);
+        using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
         var products = ReadProducts(root);
 
         return products
             .Where(static item => !string.IsNullOrWhiteSpace(item.ProductName))
-            .GroupBy(static item => item.ProductName.Trim(), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(static item => item.Id == Guid.Empty ? item.ProductName.Trim() : item.Id.ToString(), StringComparer.OrdinalIgnoreCase)
             .Select(static group => group.First())
+            .OrderBy(static item => item.SortOrder)
             .ToList();
     }
 
@@ -59,7 +62,7 @@ public sealed class SupportToolSettingsReader : ISupportToolSettingsReader
                     continue;
                 }
 
-                var productName = ReadString(item, "Name", "ProductName", "productName", "name");
+                var productName = ReadString(item, "DisplayName", "displayName", "Name", "ProductName", "productName", "name");
                 var baseFolder = ReadString(item, "BasePath", "BaseFolder", "basePath", "baseFolder");
                 var closeFolder = ReadString(item, "ClosedPath", "CloseFolder", "ClosedFolder", "closedPath", "closeFolder", "closedFolder");
                 if (string.IsNullOrWhiteSpace(productName))
@@ -69,9 +72,14 @@ public sealed class SupportToolSettingsReader : ISupportToolSettingsReader
 
                 products.Add(new SupportToolProductSettings
                 {
+                    Id = ReadGuid(item, "Id", "id"),
                     ProductName = productName.Trim(),
+                    Aliases = ReadStringList(item, "Aliases", "aliases"),
                     BaseFolder = baseFolder?.Trim() ?? string.Empty,
                     CloseFolder = closeFolder?.Trim() ?? string.Empty,
+                    ProductPromptFilePath = ReadString(item, "ProductPromptFilePath", "productPromptFilePath")?.Trim() ?? string.Empty,
+                    IsEnabled = ReadBool(item, "IsEnabled", "isEnabled") ?? true,
+                    SortOrder = ReadInt(item, "SortOrder", "sortOrder") ?? products.Count,
                 });
             }
         }
@@ -106,6 +114,68 @@ public sealed class SupportToolSettingsReader : ISupportToolSettingsReader
             if (TryGetProperty(element, name, out var property) && property.ValueKind == JsonValueKind.String)
             {
                 return property.GetString();
+            }
+        }
+
+        return null;
+    }
+
+    private static Guid ReadGuid(JsonElement element, params string[] names)
+    {
+        var text = ReadString(element, names);
+        return Guid.TryParse(text, out var value) ? value : Guid.Empty;
+    }
+
+    private static IReadOnlyList<string> ReadStringList(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!TryGetProperty(element, name, out var property) || property.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            return property.EnumerateArray()
+                .Where(static value => value.ValueKind == JsonValueKind.String)
+                .Select(static value => value.GetString()?.Trim() ?? string.Empty)
+                .Where(static value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return [];
+    }
+
+    private static bool? ReadBool(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!TryGetProperty(element, name, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.True)
+            {
+                return true;
+            }
+
+            if (property.ValueKind == JsonValueKind.False)
+            {
+                return false;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? ReadInt(JsonElement element, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (TryGetProperty(element, name, out var property) && property.TryGetInt32(out var value))
+            {
+                return value;
             }
         }
 

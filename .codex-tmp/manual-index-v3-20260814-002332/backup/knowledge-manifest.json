@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "productName": "HelixQAC",
+  "sourcePathOrUrl": "C:\\Users\\itoke\\AppData\\Local\\SupportCaseManager\\ai-index\\products\\HelixQAC",
+  "sourceType": "ProductKnowledge",
+  "lastModified": "2026-08-03T16:44:10.4875534+09:00",
+  "contentHash": "892093770fea9f586e3c5487b31273fbbebdb4da056f78300817d1e74bd8d80e",
+  "indexedAt": "2026-08-13T19:51:39.8791896+09:00",
+  "chunkingVersion": "2026-07-v1",
+  "embeddingModel": "",
+  "documentCount": 654,
+  "chunkCount": 3604,
+  "lastSuccessfulUpdate": "2026-08-13T19:51:40.5089164+09:00",
+  "lastUpdateResult": "Success",
+  "sources": [
+    {
+      "sourcePathOrUrl": "C:\\Users\\itoke\\OneDrive - \u682A\u5F0F\u4F1A\u793E\u6771\u967D\u30C6\u30AF\u30CB\u30AB\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\\u696D\u52D9\\\u8CC7\u6599\u4F5C\u6210\\SS\\QAC\\QAC\u30B5\u30DD\u30FC\u30C8\u95A2\u9023\\\u25A0\u30AF\u30ED\u30FC\u30BA\u6848\u4EF6",
+      "sourceType": "PastCaseNote",
+      "lastModified": "2026-08-03T16:44:10.4875534+09:00",
+      "contentHash": "bb09ff314348141480b8541e33855aa96b608c96fe950b5f9ef2a809e7f3e047",
+      "indexedAt": "2026-08-13T19:51:06.6590277+09:00",
+      "documentCount": 433,
+      "chunkCount": 712
+    },
+    {
+      "sourcePathOrUrl": "C:\\Users\\itoke\\OneDrive - \u682A\u5F0F\u4F1A\u793E\u6771\u967D\u30C6\u30AF\u30CB\u30AB\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\\u696D\u52D9\\\u8CC7\u6599\u4F5C\u6210\\SS\\QAC\\QAC\u30B5\u30DD\u30FC\u30C8\u95A2\u9023\\\u25A0\u304A\u5BA2\u69D8\u3078\u9001\u308B\u8CC7\u6599",
+      "sourceType": "Manual",
+      "lastModified": "2026-08-03T14:54:00.4918569+09:00",
+      "contentHash": "705880927762ae24600ea31af901331897093c888fdcd2edea85b573fc09f9e0",
+      "indexedAt": "2026-08-13T19:51:39.8791896+09:00",
+      "documentCount": 195,
+      "chunkCount": 2846
+    },
+    {
+      "sourcePathOrUrl": "C:\\Users\\itoke\\OneDrive - \u682A\u5F0F\u4F1A\u793E\u6771\u967D\u30C6\u30AF\u30CB\u30AB\\\u30C9\u30AD\u30E5\u30E1\u30F3\u30C8\\\u696D\u52D9\\\u8CC7\u6599\u4F5C\u6210\\SS\\QAC\\QAC\u30B5\u30DD\u30FC\u30C8\u95A2\u9023\\\u30CA\u30EC\u30C3\u30B8",
+      "sourceType": "Manual",
+      "lastModified": "2026-07-22T19:25:43.2106984+09:00",
+      "contentHash": "a87cfdd42d8fd5eda048a21658b46792ddd5cb4e61215d9a70d3ab95f10d2d2f",
+      "indexedAt": "2026-08-13T19:51:39.8791896+09:00",
+      "documentCount": 25,
+      "chunkCount": 45
+    },
+    {
+      "sourcePathOrUrl": "https://help.perforce.com/qac/current/eclipse/ja-jp/doc/installation_notes/html/1Introduction.html",
+      "sourceType": "OfficialDoc",
+      "lastModified": null,
+      "contentHash": "9d03ebb5bd62c7c08133f53e16e220517d4539a9e2867f96a68fec0829bc3397",
+      "indexedAt": "2026-08-09T20:56:43.3658194+09:00",
+      "documentCount": 1,
+      "chunkCount": 1
+    }
+  ]
+}

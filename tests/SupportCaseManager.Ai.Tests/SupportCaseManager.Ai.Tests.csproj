@@ -21,6 +21,16 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\SupportCaseManager.Ai.Core\SupportCaseManager.Ai.Core.csproj" />
     <ProjectReference Include="..\..\src\SupportCaseManager.Ai.Contracts\SupportCaseManager.Ai.Contracts.csproj" />
+    <ProjectReference Include="..\SupportCaseManager.Codex.FakeServer\SupportCaseManager.Codex.FakeServer.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\tools\rag-lab\samples\phase17_answer_quality_cases.json"
+          Link="TestData\phase17_answer_quality_cases.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\tools\rag-lab\samples\phase18_coverage_selection_cases.json"
+          Link="TestData\phase18_coverage_selection_cases.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

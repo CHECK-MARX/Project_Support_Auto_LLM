@@ -15,6 +15,12 @@ public static class QuestionTypes
     public const string FeatureAvailabilityQuestion = "FeatureAvailabilityQuestion";
     public const string HowToQuestion = "HowToQuestion";
     public const string UpgradePossibilityQuestion = "UpgradePossibilityQuestion";
+    public const string TroubleshootingQuestion = "TroubleshootingQuestion";
+    public const string CommandQuestion = "CommandQuestion";
+    public const string ConfigurationQuestion = "ConfigurationQuestion";
+    public const string VersionQuestion = "VersionQuestion";
+    public const string PermissionQuestion = "PermissionQuestion";
+    public const string ErrorMessageQuestion = "ErrorMessageQuestion";
     public const string GeneralSupportQuestion = "GeneralSupportQuestion";
 }
 

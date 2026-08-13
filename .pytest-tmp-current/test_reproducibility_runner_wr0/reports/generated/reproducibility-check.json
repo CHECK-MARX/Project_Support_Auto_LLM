@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "data_classification": "synthetic",
+  "status": "passed",
+  "first_file_name": "candidate.json",
+  "second_file_name": "reproduction.json",
+  "first_digest": "7d8f28b416f7f52fa430c63b221bf51580178466fe9c07a237b3fc511e9fcbea",
+  "second_digest": "7d8f28b416f7f52fa430c63b221bf51580178466fe9c07a237b3fc511e9fcbea",
+  "content_match": true,
+  "findings": []
+}

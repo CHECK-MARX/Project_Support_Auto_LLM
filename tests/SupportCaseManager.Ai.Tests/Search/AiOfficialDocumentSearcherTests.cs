@@ -43,6 +43,53 @@ public sealed class AiOfficialDocumentSearcherTests
         Assert.Contains("targetVersion=9.6", results[0].ScoreBreakdown);
     }
 
+    [Fact]
+    public async Task SearchAsync_LongPageKeepsRequestedStreamFeatureInExcerpt()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, "HelixQAC");
+        Directory.CreateDirectory(productFolder);
+        await using (var stream = File.Create(Path.Combine(
+            productFolder,
+            AiOfficialDocumentIndexBuilder.IndexFileName)))
+        {
+            await JsonSerializer.SerializeAsync(stream, new AiOfficialDocumentIndexDocument
+            {
+                ProductName = "HelixQAC",
+                BuiltAt = DateTimeOffset.UtcNow,
+                Documents =
+                [
+                    new AiIndexedOfficialDocument
+                    {
+                        Id = "official-stream-option",
+                        ProductName = "HelixQAC",
+                        Url = "https://docs.example.test/qacli-validate-build",
+                        Title = "qacli validate build",
+                        SectionTitle = "Options",
+                        Text = new string('x', 1800) +
+                            " --stream <name> はValidateストリームを指定する設定オプションです。",
+                        RetrievedAt = DateTimeOffset.UtcNow,
+                        ContentHash = "stream-hash",
+                    },
+                ],
+            });
+        }
+
+        var focus = new InquiryFocusExtractor().Extract(
+            "Validateのストリーム機能と設定方法を教えてください。");
+
+        var results = await new AiOfficialDocumentKeywordSearcher().SearchAsync(
+            "HelixQAC",
+            aiIndexFolder,
+            focus,
+            maxResults: 8);
+
+        var result = Assert.Single(results);
+        Assert.Contains("--stream", result.Text, StringComparison.OrdinalIgnoreCase);
+        Assert.True(result.Text.Length <= 1206);
+    }
+
     private static async Task WriteOfficialIndexAsync(string aiIndexFolder, string productName)
     {
         var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, productName);

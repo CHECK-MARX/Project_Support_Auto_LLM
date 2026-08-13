@@ -19,7 +19,7 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
         this.processStarter = processStarter ?? new ProcessStarter();
     }
 
-    public Task LaunchAsync(string contextFilePath, CancellationToken cancellationToken = default)
+    public async Task LaunchAsync(string contextFilePath, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -43,7 +43,12 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
         startInfo.ArgumentList.Add("--context-file");
         startInfo.ArgumentList.Add(contextFilePath);
 
-        processStarter.Start(startInfo);
-        return Task.CompletedTask;
+        using var process = processStarter.Start(startInfo);
+        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+        if (process.HasExited)
+        {
+            throw new InvalidOperationException(
+                $"AI回答支援アプリは起動直後に終了しました。終了コード: {process.ExitCode}。診断ログまたはWindowsのイベントログを確認してください。");
+        }
     }
 }

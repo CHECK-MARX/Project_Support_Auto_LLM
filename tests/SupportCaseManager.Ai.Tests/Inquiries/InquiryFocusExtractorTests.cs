@@ -87,4 +87,41 @@ public sealed class InquiryFocusExtractorTests
         Assert.Contains(focus.ImportantTerms, term => term.Contains("Dashboard", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(focus.ImportantTerms, term => term.Contains("手順書", StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void Extract_SimpleInstallQuestionKeepsReadableTermsWithoutFragmentNoise()
+    {
+        var focus = new InquiryFocusExtractor().Extract("QACのインストール方法を教えてください。");
+
+        Assert.False(focus.IsFreshnessSensitive);
+        Assert.Contains("QAC", focus.ImportantTerms, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("インストール方法", focus.ImportantTerms);
+        Assert.DoesNotContain(focus.ImportantTerms, term =>
+            term is "ACのイン" or "Cのインス" or "教えてくだ" or "えてくださ");
+    }
+
+    [Fact]
+    public void Extract_ValidatePermissionInquiryDoesNotTreatEnvironmentOrStepNumbersAsFreshness()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            件名:【質問】Validate アップロード時に権限不十分エラー
+            現在、Validate利用手順書に従って作業を進めております。
+            ■環境:
+            QACバージョン: QAC 2025.4 (QAC 12.3.0)
+            Validate: p4-validate-installer.25.4.0.61.win64.exe
+            ■手順:
+            [2.1 インストール]、[2.2 接続確認]を行った後、解析結果をアップロードすると権限が不十分です。
+            TEL: 070-6963-1508
+            E-mail: user@example.com
+            """);
+
+        Assert.False(focus.IsFreshnessSensitive);
+        Assert.Contains("Validate", focus.ImportantTerms, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("アップロード", focus.ImportantTerms);
+        Assert.Contains("権限不足", focus.ImportantTerms);
+        Assert.DoesNotContain("2.1", focus.TargetVersions);
+        Assert.DoesNotContain("2.2", focus.TargetVersions);
+        Assert.DoesNotContain(focus.ImportantTerms, term =>
+            term.Contains('@') || term.Contains("070-6963-1508", StringComparison.Ordinal));
+    }
 }
