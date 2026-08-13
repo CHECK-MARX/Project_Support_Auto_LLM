@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "data_classification": "synthetic",
+  "status": "ready",
+  "baseline_file_name": "phase8-reference.json",
+  "candidate_file_name": "phase14-4-baseline-candidate.json",
+  "reproduction_file_name": "phase14-4-baseline-reproduction.json",
+  "candidate_digest": "472e42d77f64b92b0b5407884ff3a6bddf36421b90381a423f6729894c8187ae",
+  "reproduction_digest": "472e42d77f64b92b0b5407884ff3a6bddf36421b90381a423f6729894c8187ae",
+  "reproducible": true,
+  "input_fingerprints_match": true,
+  "regression_counts": {
+    "regressed": 0,
+    "missing": 0,
+    "improved": 0,
+    "unchanged": 1,
+    "new": 0
+  },
+  "findings": []
+}

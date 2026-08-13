@@ -1,0 +1,29 @@
+{
+  "query": "Path TraversalのNot Exploitable判定条件",
+  "selectedEvidence": [
+    {
+      "sourceType": "SyntheticManual",
+      "documentId": "sample-checkmarx-001",
+      "supportId": "SYN-0001",
+      "product": "Checkmarx",
+      "version": "SYNTHETIC-1.0",
+      "score": 0.86363636,
+      "selectionReason": "検索順位1位、スコア0.863636。製品一致=True、バージョン一致=True、キーワード一致=6件。",
+      "warnings": [],
+      "text": "## 質問\nPath TraversalをNot Exploitableと判定できる条件を確認したい。",
+      "productMatch": true,
+      "versionMatch": true,
+      "keywordMatches": [
+        "exploitable",
+        "traversal",
+        "path",
+        "not",
+        "判定",
+        "条件"
+      ],
+      "possiblyStale": false,
+      "possibleConflict": false,
+      "unverifiedItems": []
+    }
+  ]
+}

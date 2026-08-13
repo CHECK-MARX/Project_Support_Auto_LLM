@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "data_classification": "synthetic",
+  "status": "passed",
+  "first_file_name": "phase16-4-candidate-a.json",
+  "second_file_name": "phase16-4-candidate-b.json",
+  "first_digest": "472e42d77f64b92b0b5407884ff3a6bddf36421b90381a423f6729894c8187ae",
+  "second_digest": "472e42d77f64b92b0b5407884ff3a6bddf36421b90381a423f6729894c8187ae",
+  "content_match": true,
+  "findings": []
+}

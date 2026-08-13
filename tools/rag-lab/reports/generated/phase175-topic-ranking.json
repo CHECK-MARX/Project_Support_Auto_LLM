@@ -1,0 +1,257 @@
+{
+  "dataClassification": "synthetic",
+  "questionTypes": [
+    "HowToQuestion",
+    "ConfigurationQuestion"
+  ],
+  "phase14": {
+    "topIds": [
+      "phase16-license-setup:structured:8e5164b5173c3a91e105",
+      "phase16-ide-plugin:structured:3ecd027296a725e4b74d",
+      "phase16-stream-verify:structured:fc6deebcac1c25d765fc"
+    ],
+    "sources": [
+      "Manual",
+      "Manual",
+      "Manual"
+    ],
+    "scores": [
+      0.72727273,
+      0.69688009,
+      0.68986183
+    ]
+  },
+  "phase15": {
+    "topIds": [
+      "phase16-license-setup:structured:8e5164b5173c3a91e105",
+      "phase16-ide-plugin:structured:3ecd027296a725e4b74d",
+      "phase16-stream-verify:structured:fc6deebcac1c25d765fc"
+    ],
+    "items": [
+      {
+        "source": "Manual",
+        "score": 0.76552727,
+        "questionTypeScore": 1.0,
+        "technicalTokenScore": 1.0,
+        "coverage": [],
+        "versionMatch": "not_requested",
+        "productMatch": true,
+        "selectionReason": "question relevance, exact tokens, coverage diversity, product/version and source trust"
+      },
+      {
+        "source": "Manual",
+        "score": 0.75245844,
+        "questionTypeScore": 1.0,
+        "technicalTokenScore": 1.0,
+        "coverage": [],
+        "versionMatch": "not_requested",
+        "productMatch": true,
+        "selectionReason": "question relevance, exact tokens, coverage diversity, product/version and source trust"
+      },
+      {
+        "source": "Manual",
+        "score": 0.74944059,
+        "questionTypeScore": 1.0,
+        "technicalTokenScore": 1.0,
+        "coverage": [],
+        "versionMatch": "not_requested",
+        "productMatch": true,
+        "selectionReason": "question relevance, exact tokens, coverage diversity, product/version and source trust"
+      }
+    ],
+    "finalCoverage": [],
+    "insufficientReasons": [],
+    "searchTimeMs": 0.337
+  },
+  "queryId": "phase16-stream-overview-setup",
+  "topK": 3,
+  "phase16": {
+    "queryTopic": {
+      "products": [],
+      "components": [
+        "Validate"
+      ],
+      "features": [
+        "Stream"
+      ],
+      "operations": [
+        "Configuration",
+        "Verification"
+      ],
+      "objects": [],
+      "intents": [
+        "Overview",
+        "HowTo",
+        "Configuration",
+        "Verification"
+      ],
+      "entities": [
+        {
+          "kind": "Feature",
+          "value": "Stream"
+        }
+      ]
+    },
+    "topIds": [
+      "phase16-stream-verify:structured:fc6deebcac1c25d765fc",
+      "phase16-stream-overview:structured:9c3fa1874105cdcf5077",
+      "phase16-stream-setup:structured:d42a6c1f88691575c144"
+    ],
+    "items": [
+      {
+        "id": "phase16-stream-verify:structured:fc6deebcac1c25d765fc",
+        "topic": {
+          "products": [],
+          "components": [
+            "Validate"
+          ],
+          "features": [
+            "Stream"
+          ],
+          "operations": [
+            "Configuration",
+            "Verification",
+            "Association"
+          ],
+          "objects": [],
+          "intents": [
+            "Configuration",
+            "Verification"
+          ],
+          "entities": [
+            {
+              "kind": "Feature",
+              "value": "Stream"
+            }
+          ]
+        },
+        "sourceType": "Manual",
+        "score": 0.9197655,
+        "topicScore": 1.0,
+        "entityScore": 0.0,
+        "conflictPenalty": 0.0,
+        "coverage": [
+          "C:SetupOrCreation",
+          "D:ProductAssociation",
+          "E:Verification"
+        ],
+        "productMatch": true,
+        "versionMatch": "exact",
+        "selectionReason": "topic matched; coverage=C:SetupOrCreation,D:ProductAssociation,E:Verification"
+      },
+      {
+        "id": "phase16-stream-overview:structured:9c3fa1874105cdcf5077",
+        "topic": {
+          "products": [],
+          "components": [
+            "Validate"
+          ],
+          "features": [
+            "Stream"
+          ],
+          "operations": [],
+          "objects": [
+            "Analysis result"
+          ],
+          "intents": [
+            "Overview",
+            "Purpose"
+          ],
+          "entities": [
+            {
+              "kind": "Feature",
+              "value": "Stream"
+            }
+          ]
+        },
+        "sourceType": "OfficialDoc",
+        "score": 0.78521465,
+        "topicScore": 0.83606557,
+        "entityScore": 0.0,
+        "conflictPenalty": 0.0,
+        "coverage": [
+          "A:FeatureOverview",
+          "B:FeaturePurpose",
+          "D:ProductAssociation"
+        ],
+        "productMatch": true,
+        "versionMatch": "exact",
+        "selectionReason": "topic matched; coverage=A:FeatureOverview,B:FeaturePurpose,D:ProductAssociation"
+      },
+      {
+        "id": "phase16-stream-setup:structured:d42a6c1f88691575c144",
+        "topic": {
+          "products": [],
+          "components": [
+            "Validate"
+          ],
+          "features": [
+            "Stream"
+          ],
+          "operations": [
+            "Configuration",
+            "Creation",
+            "Association"
+          ],
+          "objects": [],
+          "intents": [
+            "Configuration"
+          ],
+          "entities": [
+            {
+              "kind": "Feature",
+              "value": "Stream"
+            }
+          ]
+        },
+        "sourceType": "Manual",
+        "score": 0.83781499,
+        "topicScore": 0.91803279,
+        "entityScore": 0.0,
+        "conflictPenalty": 0.0,
+        "coverage": [
+          "C:SetupOrCreation",
+          "D:ProductAssociation"
+        ],
+        "productMatch": true,
+        "versionMatch": "exact",
+        "selectionReason": "topic matched; coverage=C:SetupOrCreation,D:ProductAssociation"
+      }
+    ],
+    "finalCoverage": [
+      "A:FeatureOverview",
+      "B:FeaturePurpose",
+      "C:SetupOrCreation",
+      "D:ProductAssociation",
+      "E:Verification"
+    ],
+    "insufficientReasons": [],
+    "rankingTimeMs": 0.691
+  },
+  "qualityConditions": [
+    {
+      "name": "StreamEvidenceRanksAboveLicenseEvidence",
+      "applicable": true,
+      "passed": true,
+      "streamTopRank": 1,
+      "licenseTopRank": null,
+      "streamCandidateScores": {
+        "phase16-stream-verify:structured:fc6deebcac1c25d765fc": 0.9197655,
+        "phase16-stream-overview:structured:9c3fa1874105cdcf5077": 0.78521465,
+        "phase16-stream-setup:structured:d42a6c1f88691575c144": 0.83781499
+      },
+      "licenseCandidateScores": {
+        "phase16-license-setup:structured:8e5164b5173c3a91e105": 0.13142424
+      }
+    }
+  ],
+  "qualityGate": {
+    "status": "passed",
+    "violations": []
+  },
+  "timings": {
+    "retrievalSearchTimeMs": 0.727,
+    "phase15RankingTimeMs": 0.337,
+    "phase16RankingTimeMs": 0.691
+  }
+}

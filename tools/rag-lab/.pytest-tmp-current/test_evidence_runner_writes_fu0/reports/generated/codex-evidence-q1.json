@@ -1,0 +1,29 @@
+{
+  "query": "Path Traversal Canonical Path",
+  "selectedEvidence": [
+    {
+      "sourceType": "Unknown",
+      "documentId": "doc-1",
+      "supportId": "SYN-1",
+      "product": "Checkmarx",
+      "version": "1.0",
+      "score": 1.0,
+      "selectionReason": "検索順位1位、スコア1.000000。製品一致=True、バージョン一致=True、キーワード一致=3件。",
+      "warnings": [],
+      "text": "質問: Path Traversalの判定\n対処: Canonical Pathを確認する。",
+      "productMatch": true,
+      "versionMatch": true,
+      "keywordMatches": [
+        "canonical",
+        "traversal",
+        "path"
+      ],
+      "possiblyStale": null,
+      "possibleConflict": false,
+      "unverifiedItems": [
+        "根拠の作成日または更新日",
+        "根拠の信頼度"
+      ]
+    }
+  ]
+}
