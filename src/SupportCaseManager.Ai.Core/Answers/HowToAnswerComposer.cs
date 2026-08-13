@@ -48,7 +48,7 @@ public static partial class HowToAnswerComposer
             sources,
             ["コンパイル環境", "ソースファイル", "コンパイラ設定", "インクルードパス", "マクロ定義", "source file", "compiler", "include path", "macro"],
             requireAnalysisContext: true,
-            excludedTerms: ["Validate", "アップロード", "ライセンス", "license", "gcc-"]);
+            excludedTerms: ["Validate", "アップロード", "ライセンス", "license", "gcc-", "実行されません", "解析が失敗", "解析に失敗"]);
         var projectSetup = FindBestEvidenceSentence(
             sources,
             ["QACプロジェクトを作成", "QACプロジェクトを開", "プロジェクトを設定", "project file", "open the project", "create a project"],
@@ -122,26 +122,31 @@ public static partial class HowToAnswerComposer
     {
         builder.AppendLine("【参照先】");
         foreach (var source in sources
+            .Where(static source => !IsPastCase(source.SourceType))
             .DistinctBy(static source => string.Join('|', source.DocumentId, source.DocumentTitle, source.PageNumber, source.SectionTitle))
             .Take(5))
         {
             var title = FirstNonEmpty(source.DocumentTitle, source.Title, source.DocumentId) ?? "参照文書";
-            var reference = new StringBuilder(title);
+            builder.AppendLine($"・『{title}』");
             if (source.PageNumber is > 0)
             {
-                reference.Append($" Page {source.PageNumber}");
+                builder.AppendLine($"  Page {source.PageNumber}");
             }
             if (!string.IsNullOrWhiteSpace(source.SectionTitle))
             {
-                reference.Append($" 『{source.SectionTitle.Trim()}』");
+                builder.AppendLine($"  「{source.SectionTitle.Trim()}」項");
             }
             if (!string.IsNullOrWhiteSpace(source.Url))
             {
-                reference.Append($" {source.Url}");
+                builder.AppendLine($"  URL: {source.Url}");
             }
-            builder.AppendLine($"・{reference}");
         }
     }
+
+    private static bool IsPastCase(string sourceType) =>
+        sourceType.Equals("PastCase", StringComparison.OrdinalIgnoreCase) ||
+        sourceType.Equals("PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
+        sourceType.Equals("PastAnswer", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<string> FindBestEvidenceSentence(
         IReadOnlyList<SearchSource> sources,
@@ -318,7 +323,8 @@ public static partial class HowToAnswerComposer
 
     private static IEnumerable<string> ExtractAnalysisCommands(string value)
     {
-        foreach (Match match in AnalysisCommandRegex().Matches(value ?? string.Empty))
+        var normalized = NormalizeCompactAnalysisCommand(value ?? string.Empty);
+        foreach (Match match in AnalysisCommandRegex().Matches(normalized))
         {
             var command = NormalizeAnalysisCommand(match.Value);
             if (!string.IsNullOrWhiteSpace(command))
@@ -333,8 +339,32 @@ public static partial class HowToAnswerComposer
         var command = NormalizeWhitespace(value).TrimEnd('.', '。', ',', '、', ';', '；');
         command = Regex.Replace(command, "^qaclianalyze", "qacli analyze", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         command = Regex.Replace(command, "(?<=analyze)-", " -", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        command = Regex.Replace(command, "(?<=[A-Za-z0-9>])(?=-(?:P|cf)\\b)", " ", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        command = Regex.Replace(
+            command,
+            "(?<=[A-Za-z0-9>])(?=-(?:P|cf)(?![A-Za-z0-9_-]))",
+            " ",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        command = Regex.Replace(
+            command,
+            "(?<=>)(?=--?(?:P|C|cf|csga|raw-source|language-cct)(?![A-Za-z0-9_-]))",
+            " ",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var proseStart = JapaneseProseStartRegex().Match(command);
+        if (proseStart.Success)
+        {
+            command = command[..proseStart.Index].TrimEnd();
+        }
         return command;
+    }
+
+    private static string NormalizeCompactAnalysisCommand(string value)
+    {
+        var normalized = Regex.Replace(
+            value,
+            "qacli\\s*analyze",
+            "qacli analyze",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return normalized;
     }
 
     private static string NormalizeGuiInstruction(string value)
@@ -372,6 +402,9 @@ public static partial class HowToAnswerComposer
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli\s*analyze(?:\s*(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|[^\s。；;]+))?|<[^>]+>)){0,8}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AnalysisCommandRegex();
+
+    [GeneratedRegex(@"(?<=[A-Za-z0-9>])(?=[\p{IsHiragana}\p{IsKatakana}\p{IsCJKUnifiedIdeographs}])", RegexOptions.CultureInvariant)]
+    private static partial Regex JapaneseProseStartRegex();
 
     [GeneratedRegex(@"(?:\[|［)解析(?:\([A-Za-z]\)|（[A-Za-z]）)?(?:\]|］)\s*[>＞]\s*(?:\[|［)[^\]］\r\n]{1,80}(?:\]|］)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AnalysisGuiMenuRegex();

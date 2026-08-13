@@ -161,9 +161,6 @@ public sealed class LiveAnalysisIndexE2ETests
 
         AssertAnalysisAnswer(fallbackAnswer.CustomerReplyDraft);
         AssertAnalysisAnswer(successfulAnswer.CustomerReplyDraft);
-        Assert.True(
-            fallbackAnswer.CustomerReplyDraft.Contains("解析ダイアログ", StringComparison.Ordinal) ||
-            fallbackAnswer.CustomerReplyDraft.Contains("［問題］パネル", StringComparison.Ordinal));
 
         await WriteReportAsync(reportPath, new
         {
@@ -214,6 +211,11 @@ public sealed class LiveAnalysisIndexE2ETests
             SuccessfulWarnings = successfulAnswer.Warnings,
             FallbackWarnings = fallbackAnswer.Warnings,
         });
+
+        Assert.True(
+            fallbackAnswer.CustomerReplyDraft.Contains("解析ダイアログ", StringComparison.Ordinal) ||
+            fallbackAnswer.CustomerReplyDraft.Contains("解析中ダイアログ", StringComparison.Ordinal) ||
+            fallbackAnswer.CustomerReplyDraft.Contains("［問題］パネル", StringComparison.Ordinal));
     }
 
     private static void AssertAnalysisAnswer(string answer)

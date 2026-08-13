@@ -48,9 +48,8 @@ internal static class ManualDocumentTextExtractor
             ".tsv" => new ManualDocumentContent(
                 await ReadTextWithFallbackAsync(filePath, cancellationToken),
                 "Tsv"),
-            ".html" or ".htm" => new ManualDocumentContent(
-                ExtractHtmlText(await ReadTextWithFallbackAsync(filePath, cancellationToken)),
-                "Html"),
+            ".html" or ".htm" => ReadHtmlContent(
+                await ReadTextWithFallbackAsync(filePath, cancellationToken)),
             ".rst" => new ManualDocumentContent(
                 await ReadTextWithFallbackAsync(filePath, cancellationToken),
                 "ReStructuredText"),
@@ -58,7 +57,7 @@ internal static class ManualDocumentTextExtractor
                 await ReadTextWithFallbackAsync(filePath, cancellationToken),
                 "AsciiDoc"),
             ".pdf" => ReadPdfContent(filePath),
-            ".docx" => new ManualDocumentContent(ReadDocxText(filePath), "Word"),
+            ".docx" => ReadDocxContent(filePath),
             ".xlsx" => new ManualDocumentContent(ReadXlsxText(filePath), "Excel"),
             ".pptx" => new ManualDocumentContent(ReadPptxText(filePath), "PowerPoint"),
             _ => new ManualDocumentContent(
@@ -129,14 +128,21 @@ internal static class ManualDocumentTextExtractor
         return new ManualDocumentContent(builder.ToString(), "Pdf", pages);
     }
 
-    private static string ReadDocxText(string filePath)
+    private static ManualDocumentContent ReadDocxContent(string filePath)
     {
         using var archive = ZipFile.OpenRead(filePath);
-        return ExtractOpenXmlEntries(
-            archive,
-            static entryName => entryName.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase) ||
-                entryName.StartsWith("word/header", StringComparison.OrdinalIgnoreCase) ||
-                entryName.StartsWith("word/footer", StringComparison.OrdinalIgnoreCase));
+        var documentEntry = archive.Entries.FirstOrDefault(entry =>
+            entry.FullName.Equals("word/document.xml", StringComparison.OrdinalIgnoreCase));
+        if (documentEntry is null)
+        {
+            return new ManualDocumentContent(string.Empty, "Word");
+        }
+
+        using var stream = documentEntry.Open();
+        var document = XDocument.Load(stream);
+        var sections = ExtractDocxSections(document).ToList();
+        var text = string.Join(Environment.NewLine + Environment.NewLine, sections.Select(static section => section.Text));
+        return new ManualDocumentContent(text, "Word", Sections: sections);
     }
 
     private static string ReadXlsxText(string filePath)
@@ -219,11 +225,89 @@ internal static class ManualDocumentTextExtractor
         var decoded = WebUtility.HtmlDecode(withoutTags);
         return WhitespaceRegex.Replace(decoded, " ").Trim();
     }
+
+    private static ManualDocumentContent ReadHtmlContent(string html)
+    {
+        var cleanHtml = ScriptOrStyleRegex.Replace(html, " ");
+        var headingMatches = Regex.Matches(
+            cleanHtml,
+            @"<h[1-6]\b[^>]*>(?<title>.*?)</h[1-6]\s*>",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline);
+        if (headingMatches.Count == 0)
+        {
+            return new ManualDocumentContent(ExtractHtmlText(cleanHtml), "Html");
+        }
+
+        var sections = new List<ManualDocumentSection>();
+        for (var index = 0; index < headingMatches.Count; index++)
+        {
+            var match = headingMatches[index];
+            var nextStart = index + 1 < headingMatches.Count ? headingMatches[index + 1].Index : cleanHtml.Length;
+            var title = ExtractHtmlText(match.Groups["title"].Value);
+            var sectionHtml = cleanHtml.Substring(match.Index, nextStart - match.Index);
+            var sectionText = ExtractHtmlText(sectionHtml);
+            if (!string.IsNullOrWhiteSpace(sectionText))
+            {
+                sections.Add(new ManualDocumentSection(title, sectionText));
+            }
+        }
+
+        return new ManualDocumentContent(
+            string.Join(Environment.NewLine + Environment.NewLine, sections.Select(static section => section.Text)),
+            "Html",
+            Sections: sections);
+    }
+
+    private static IEnumerable<ManualDocumentSection> ExtractDocxSections(XDocument document)
+    {
+        var currentHeading = string.Empty;
+        var current = new StringBuilder();
+        foreach (var paragraph in document.Descendants().Where(static element => element.Name.LocalName == "p"))
+        {
+            var paragraphText = string.Concat(
+                paragraph.Descendants()
+                    .Where(static element => element.Name.LocalName == "t")
+                    .Select(static element => element.Value)).Trim();
+            if (string.IsNullOrWhiteSpace(paragraphText))
+            {
+                continue;
+            }
+
+            var style = paragraph.Descendants()
+                .FirstOrDefault(static element => element.Name.LocalName == "pStyle")?
+                .Attributes()
+                .FirstOrDefault(static attribute => attribute.Name.LocalName == "val")?
+                .Value;
+            var isHeading = !string.IsNullOrWhiteSpace(style) &&
+                (style.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) ||
+                 style.StartsWith("見出し", StringComparison.Ordinal));
+            if (isHeading)
+            {
+                if (current.Length > 0)
+                {
+                    yield return new ManualDocumentSection(currentHeading, current.ToString().Trim());
+                    current.Clear();
+                }
+
+                currentHeading = paragraphText;
+            }
+
+            current.AppendLine(paragraphText);
+        }
+
+        if (current.Length > 0)
+        {
+            yield return new ManualDocumentSection(currentHeading, current.ToString().Trim());
+        }
+    }
 }
 
 internal sealed record ManualDocumentContent(
     string Text,
     string DocumentType,
-    IReadOnlyList<ManualDocumentPage>? Pages = null);
+    IReadOnlyList<ManualDocumentPage>? Pages = null,
+    IReadOnlyList<ManualDocumentSection>? Sections = null);
 
 internal sealed record ManualDocumentPage(int PageNumber, string Text);
+
+internal sealed record ManualDocumentSection(string Heading, string Text);

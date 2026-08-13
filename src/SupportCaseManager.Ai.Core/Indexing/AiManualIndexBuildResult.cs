@@ -50,6 +50,14 @@ public sealed record class AiManualIndexBuildResult
 
     public int IndexedChunkCount { get; init; }
 
+    public int PageNumberChunkCount { get; init; }
+
+    public int SectionTitleChunkCount { get; init; }
+
+    public int PageAndSectionChunkCount { get; init; }
+
+    public int ZipDerivedChunkCount { get; init; }
+
     public int ErrorCount { get; init; }
 
     public int AddedFileCount { get; init; }

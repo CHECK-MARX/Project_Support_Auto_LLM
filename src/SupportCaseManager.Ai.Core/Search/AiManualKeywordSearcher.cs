@@ -67,14 +67,15 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
             MatchedTerms = score.MatchedTerms,
             QueryCoverage = score.QueryCoverage,
             ScoreBreakdown = score.ScoreBreakdown,
-            DocumentId = manual.ArchivePath ?? manual.FilePath,
+            DocumentId = manual.DocumentId ?? manual.ArchivePath ?? manual.FilePath,
             SectionTitle = manual.SectionTitle,
-            ContentHash = manual.Sha256,
-            DocumentTitle = Path.GetFileNameWithoutExtension(manual.OriginalFileName ?? manual.FileName),
+            ContentHash = manual.ContentHash ?? manual.Sha256,
+            DocumentTitle = manual.DocumentTitle ?? Path.GetFileNameWithoutExtension(manual.OriginalFileName ?? manual.FileName),
             PageNumber = manual.PageNumber,
             ChunkId = manual.ChunkId ?? manual.Id,
             ArchivePath = manual.ArchivePath,
             EntryPath = manual.EntryPath,
+            Url = manual.Url,
         };
     }
 

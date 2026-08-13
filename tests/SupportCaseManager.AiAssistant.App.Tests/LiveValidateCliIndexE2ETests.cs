@@ -86,6 +86,22 @@ public sealed class LiveValidateCliIndexE2ETests
             SourceTypeCandidateCounts = candidates
                 .GroupBy(static source => source.SourceType)
                 .ToDictionary(static group => group.Key, static group => group.Count()),
+            Candidates = candidates.Select(source => new
+            {
+                source.SourceId,
+                source.SourceType,
+                source.Title,
+                source.DocumentTitle,
+                source.PageNumber,
+                source.SectionTitle,
+                source.Score,
+                source.ScoreBreakdown,
+                Coverage = CoverageAnalyzer.ObserveForCoverageSelection(SourceText(source)),
+                HasGuiProcedure = CoverageAnalyzer.ObserveForCoverageSelection(SourceText(source))
+                    .Contains(CoverageAnalyzer.GuiUploadProcedure),
+                HasCliProcedure = CoverageAnalyzer.ObserveForCoverageSelection(SourceText(source))
+                    .Contains(CoverageAnalyzer.CliUploadProcedure),
+            }),
             Evidence = selection.Sources.Select(source => new
             {
                 source.SourceId,

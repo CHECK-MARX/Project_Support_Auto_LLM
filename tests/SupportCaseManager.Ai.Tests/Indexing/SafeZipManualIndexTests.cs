@@ -41,6 +41,9 @@ public sealed class SafeZipManualIndexTests
         Assert.Equal("docs/manual.pdf", manual.EntryPath);
         Assert.Equal("manual.pdf", manual.OriginalFileName);
         Assert.Equal(".pdf", manual.Extension);
+        Assert.Equal(1, manual.PageNumber);
+        Assert.Equal(1, result.PageNumberChunkCount);
+        Assert.Equal(1, result.ZipDerivedChunkCount);
         Assert.Equal(64, manual.Sha256?.Length);
         Assert.Contains("manuals.zip!/docs/manual.pdf", manual.FilePath, StringComparison.Ordinal);
         Assert.Equal(originalHash, ComputeHash(zipPath));

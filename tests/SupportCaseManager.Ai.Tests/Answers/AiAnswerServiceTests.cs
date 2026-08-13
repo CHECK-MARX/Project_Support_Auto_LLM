@@ -454,8 +454,62 @@ public class AiAnswerServiceTests
             new TimeoutException("simulated timeout"));
 
         AssertAnalysisHowToStructure(result.CustomerReplyDraft);
+        Assert.Contains("・『Perforce-QAC-Manual』", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("Page 24", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("「プロジェクトの解析」項", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("qacli analyze -P <project-directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("PDFマニュアルの該当根拠", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_DoesNotExposePastCaseReferenceToCustomer()
+    {
+        var request = CreateAnalysisHowToRequest() with
+        {
+            Sources =
+            [
+                .. CreateAnalysisHowToRequest().Sources,
+                new SearchSource
+                {
+                    SourceId = "past-1",
+                    SourceType = "PastCaseNote",
+                    Title = "過去案件 00012345 顧客名",
+                    DocumentTitle = "過去案件 00012345 顧客名",
+                    Text = "QACプロジェクトの解析を実行しました。",
+                    Score = 0.8,
+                },
+            ],
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(request, new TimeoutException("simulated"));
+
+        Assert.DoesNotContain("00012345", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("過去案件", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(12, "", "Page 12", "「")]
+    [InlineData(0, "解析の実行", "「解析の実行」項", "Page ")]
+    [InlineData(0, "", "・『Perforce-QAC-Manual』", "Page ")]
+    public void BuildFailureFallback_ReferenceUsesOnlyAvailableMetadata(
+        int pageNumber,
+        string sectionTitle,
+        string expected,
+        string forbidden)
+    {
+        var source = CreateAnalysisHowToRequest().Sources[0] with
+        {
+            PageNumber = pageNumber == 0 ? null : pageNumber,
+            SectionTitle = sectionTitle,
+        };
+        var request = CreateAnalysisHowToRequest() with { Sources = [source] };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            request,
+            new TimeoutException("simulated"));
+
+        Assert.Contains(expected, result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain(forbidden, result.CustomerReplyDraft, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -484,6 +538,62 @@ public class AiAnswerServiceTests
         Assert.Contains("[解析(N)]>プロジェクト全体のファイルベース解析", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("解析中ダイアログにプロセスが表示", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("qacli analyze -cf -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_DoesNotAppendPdfProseToAnalysisCommand()
+    {
+        var request = CreateAnalysisHowToRequest() with
+        {
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "analysis-pdf-command",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    Text = "qaclianalyze-P<directory>-C<cma-project-name>-csgaこのコマンドは、関連付けられたモジュールを消去します。",
+                    Score = 0.95,
+                },
+            ],
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            request,
+            new TimeoutException("simulated timeout"));
+
+        Assert.Contains("qacli analyze -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-C<cma-project-name> -csga", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("<cma-project-name>-csga", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("このコマンドは", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_SeparatesLongAnalysisOptionsJoinedByPdfExtraction()
+    {
+        var request = CreateAnalysisHowToRequest() with
+        {
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "analysis-pdf-long-options",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    Text = "qaclianalyze-P<directory>--raw-source<file-path>--language-cct<cct-path>",
+                    Score = 0.95,
+                },
+            ],
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            request,
+            new TimeoutException("simulated timeout"));
+
+        Assert.Contains(
+            "qacli analyze -P<directory> --raw-source<file-path> --language-cct<cct-path>",
+            result.CustomerReplyDraft,
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -23,6 +23,8 @@ public static partial class CoverageAnalyzer
     public const string CommandOptions = "CommandOptions";
     public const string BuildName = "BuildName";
     public const string IncrementalBuild = "IncrementalBuild";
+    public const string GuiUploadProcedure = "GuiUploadProcedure";
+    public const string CliUploadProcedure = "CliUploadProcedure";
     public const string Overview = "Overview";
     public const string PriorCaseSupplement = "PriorCaseSupplement";
     public const string AnalysisProcedure = "AnalysisProcedure";
@@ -139,7 +141,16 @@ public static partial class CoverageAnalyzer
              ContainsAny(question, "upload", "アップロード", "build", "登録"));
         if (upload)
         {
-            return CoverageSelectionUploadRequirements;
+            var required = CoverageSelectionUploadRequirements.ToList();
+            if (ContainsAny(question, "GUI", "QA GUI", "QA·GUI", "画面", "ポータル"))
+            {
+                required.Add(GuiUploadProcedure);
+            }
+            if (ContainsAny(question, "CLI", "qacli", "コマンドライン"))
+            {
+                required.Add(CliUploadProcedure);
+            }
+            return required;
         }
 
         if (profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase) ||
@@ -226,6 +237,20 @@ public static partial class CoverageAnalyzer
             observed.Add(IncrementalBuild);
         }
         if (legacy.Contains(Troubleshooting)) observed.Add(Troubleshooting);
+
+        var compact = WhitespaceAndSymbolsRegex().Replace(value, string.Empty);
+        if (hasValidate &&
+            (compact.Contains("ポータルValidate解析結果をアップロード", StringComparison.OrdinalIgnoreCase) ||
+             compact.Contains("PortalValidateUploadResults", StringComparison.OrdinalIgnoreCase) ||
+             (ContainsAny(value, "QA GUI", "QA·GUI", "GUI") &&
+              ContainsAny(value, "解析結果をアップロード", "upload results", "upload analysis results"))))
+        {
+            observed.Add(GuiUploadProcedure);
+        }
+        if (hasValidate && compact.Contains("qaclivalidatebuild", StringComparison.OrdinalIgnoreCase))
+        {
+            observed.Add(CliUploadProcedure);
+        }
 
         var describesStreamFunction = hasStream && ContainsAny(
             value,
@@ -316,4 +341,7 @@ public static partial class CoverageAnalyzer
 
     [GeneratedRegex(@"(?:解析結果|解析の結果).{0,80}(?:確認|表示|参照)|(?:確認|表示|参照).{0,80}(?:解析結果|解析の結果)|analysis result.{0,80}(?:review|check|view)|(?:review|check|view).{0,80}analysis result", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
     private static partial Regex AnalysisResultReviewRegex();
+
+    [GeneratedRegex(@"[\s\p{P}\p{S}]+", RegexOptions.CultureInvariant)]
+    private static partial Regex WhitespaceAndSymbolsRegex();
 }

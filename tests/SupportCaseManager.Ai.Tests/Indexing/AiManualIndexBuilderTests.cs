@@ -176,6 +176,133 @@ public class AiManualIndexBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_PreservesEveryPdfPageNumber()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        Directory.CreateDirectory(manualFolder);
+        await WritePdfPagesAsync(
+            Path.Combine(manualFolder, "multi-page.pdf"),
+            "Preparation on the first page",
+            "Analysis procedure on the second page");
+
+        var result = await CreateBuilder().BuildAsync(manualFolder, aiIndexFolder);
+        var document = await ReadIndexAsync(result.IndexFilePath);
+
+        Assert.Equal(2, document.Manuals.Count);
+        Assert.Collection(
+            document.Manuals.OrderBy(static item => item.PageNumber),
+            item =>
+            {
+                Assert.Equal(1, item.PageNumber);
+                Assert.Contains("first page", item.Text, StringComparison.Ordinal);
+            },
+            item =>
+            {
+                Assert.Equal(2, item.PageNumber);
+                Assert.Contains("second page", item.Text, StringComparison.Ordinal);
+            });
+        Assert.Equal(2, result.PageNumberChunkCount);
+        Assert.Equal(0, result.SectionTitleChunkCount);
+        Assert.Equal(0, result.PageAndSectionChunkCount);
+    }
+
+    [Fact]
+    public async Task BuildAsync_PreservesDocxAndHtmlHeadingsAsV3Metadata()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        Directory.CreateDirectory(manualFolder);
+        WriteSingleEntryZip(
+            Path.Combine(manualFolder, "guide.docx"),
+            "word/document.xml",
+            """
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p><w:pPr><w:pStyle w:val="Heading1" /></w:pPr><w:r><w:t>プロジェクトの解析</w:t></w:r></w:p>
+                <w:p><w:r><w:t>解析を実行します。</w:t></w:r></w:p>
+              </w:body>
+            </w:document>
+            """);
+        await File.WriteAllTextAsync(
+            Path.Combine(manualFolder, "guide.html"),
+            "<html><body><h2>CLIでの解析</h2><p>qacli analyze を実行します。</p></body></html>",
+            Encoding.UTF8);
+
+        var result = await CreateBuilder().BuildAsync(manualFolder, aiIndexFolder);
+        var document = await ReadIndexAsync(result.IndexFilePath);
+
+        Assert.Equal(AiManualIndexDocument.CurrentVersion, document.Version);
+        Assert.Contains(document.Manuals, item => item.DocumentType == "Word" && item.SectionTitle == "プロジェクトの解析");
+        Assert.Contains(document.Manuals, item => item.DocumentType == "Html" && item.SectionTitle == "CLIでの解析");
+        Assert.All(document.Manuals, item =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(item.DocumentTitle));
+            Assert.False(string.IsNullOrWhiteSpace(item.DocumentId));
+            Assert.Equal(item.Sha256, item.ContentHash);
+            Assert.Equal(item.LastModifiedAt, item.SourceUpdatedAt);
+        });
+        Assert.Equal(document.Manuals.Count, result.SectionTitleChunkCount);
+    }
+
+    [Fact]
+    public async Task OldIndexWithoutV3Metadata_RemainsDeserializable()
+    {
+        const string json = """
+            { "version": 1, "builtAt": "2026-01-01T00:00:00Z", "sourceFolder": "manuals",
+              "manuals": [ { "id": "old", "filePath": "old.pdf", "fileName": "old.pdf",
+                "title": "Old Manual", "documentType": "Pdf", "sectionTitle": "", "text": "legacy" } ] }
+            """;
+
+        var restored = JsonSerializer.Deserialize<AiManualIndexDocument>(json);
+
+        var manual = Assert.Single(restored!.Manuals);
+        Assert.Equal("old", manual.Id);
+        Assert.Null(manual.PageNumber);
+        Assert.Null(manual.DocumentId);
+        Assert.Null(manual.ContentHash);
+    }
+
+    [Fact]
+    public void Version3Metadata_RoundTripsWithoutInventingUnavailableValues()
+    {
+        var document = new AiManualIndexDocument
+        {
+            Manuals =
+            [
+                new AiIndexedManual
+                {
+                    Id = "chunk-1",
+                    ChunkId = "chunk-1",
+                    DocumentId = "document-1",
+                    DocumentTitle = "Guide",
+                    FilePath = "guide.pdf",
+                    FileName = "guide.pdf",
+                    SourceType = "Manual",
+                    DocumentType = "Pdf",
+                    PageNumber = 7,
+                    ContentHash = new string('a', 64),
+                    Text = "verified text",
+                },
+            ],
+        };
+
+        var restored = JsonSerializer.Deserialize<AiManualIndexDocument>(JsonSerializer.Serialize(document));
+
+        var manual = Assert.Single(restored!.Manuals);
+        Assert.Equal(AiManualIndexDocument.CurrentVersion, restored.Version);
+        Assert.Equal(7, manual.PageNumber);
+        Assert.Equal("Guide", manual.DocumentTitle);
+        Assert.Equal(string.Empty, manual.SectionTitle);
+        Assert.Null(manual.Heading);
+        Assert.Null(manual.Product);
+        Assert.Null(manual.ProductVersion);
+        Assert.Null(manual.Url);
+    }
+
+    [Fact]
     public async Task BuildAsync_IndexesTxtAndMarkdownRecursively()
     {
         using var temp = new TempDirectory();
@@ -337,24 +464,35 @@ public class AiManualIndexBuilderTests
 
     private static async Task WriteSimplePdfAsync(string filePath, string text)
     {
-        var escapedText = text
-            .Replace("\\", "\\\\", StringComparison.Ordinal)
-            .Replace("(", "\\(", StringComparison.Ordinal)
-            .Replace(")", "\\)", StringComparison.Ordinal);
-        var content = $"BT /F1 12 Tf 72 720 Td ({escapedText}) Tj ET";
-        var objects = new[]
+        await WritePdfPagesAsync(filePath, text);
+    }
+
+    private static async Task WritePdfPagesAsync(string filePath, params string[] pageTexts)
+    {
+        Assert.NotEmpty(pageTexts);
+        var fontObjectNumber = 3 + (pageTexts.Length * 2);
+        var objects = new List<string>
         {
             "<< /Type /Catalog /Pages 2 0 R >>",
-            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
-            $"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream",
-            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+            $"<< /Type /Pages /Kids [{string.Join(' ', Enumerable.Range(0, pageTexts.Length).Select(static index => $"{3 + (index * 2)} 0 R"))}] /Count {pageTexts.Length} >>",
         };
+        foreach (var text in pageTexts)
+        {
+            var escapedText = text
+                .Replace("\\", "\\\\", StringComparison.Ordinal)
+                .Replace("(", "\\(", StringComparison.Ordinal)
+                .Replace(")", "\\)", StringComparison.Ordinal);
+            var content = $"BT /F1 12 Tf 72 720 Td ({escapedText}) Tj ET";
+            var contentObjectNumber = objects.Count + 2;
+            objects.Add($"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {fontObjectNumber} 0 R >> >> /Contents {contentObjectNumber} 0 R >>");
+            objects.Add($"<< /Length {Encoding.ASCII.GetByteCount(content)} >>\nstream\n{content}\nendstream");
+        }
+        objects.Add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>");
 
         var builder = new StringBuilder();
         var offsets = new List<int>();
         builder.Append("%PDF-1.4\n");
-        for (var index = 0; index < objects.Length; index++)
+        for (var index = 0; index < objects.Count; index++)
         {
             offsets.Add(Encoding.ASCII.GetByteCount(builder.ToString()));
             builder.Append(index + 1);
@@ -366,7 +504,7 @@ public class AiManualIndexBuilderTests
         var xrefOffset = Encoding.ASCII.GetByteCount(builder.ToString());
         builder.Append("xref\n");
         builder.Append("0 ");
-        builder.Append(objects.Length + 1);
+        builder.Append(objects.Count + 1);
         builder.Append("\n");
         builder.Append("0000000000 65535 f \n");
         foreach (var offset in offsets)
@@ -377,7 +515,7 @@ public class AiManualIndexBuilderTests
 
         builder.Append("trailer\n");
         builder.Append("<< /Size ");
-        builder.Append(objects.Length + 1);
+        builder.Append(objects.Count + 1);
         builder.Append(" /Root 1 0 R >>\n");
         builder.Append("startxref\n");
         builder.Append(xrefOffset);

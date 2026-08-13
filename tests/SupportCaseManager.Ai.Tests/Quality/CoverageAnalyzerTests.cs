@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Core.Quality;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Tests.Quality;
 
@@ -31,5 +32,30 @@ public sealed class CoverageAnalyzerTests
         var observed = CoverageAnalyzer.ObserveForCoverageSelection(text);
 
         Assert.Contains(CoverageAnalyzer.AnalysisVerification, observed);
+    }
+
+    [Fact]
+    public void RequiredForCoverageSelection_RequiresBothRequestedUploadInterfaces()
+    {
+        const string question =
+            "QACで解析した結果をValidateへアップロードする方法を教えてください。GUIとCLIの方法を教えてください。";
+        var profile = TopicEntityAnalyzer.Extract(question, SupportTopicCatalog.Create("HelixQAC"));
+
+        var required = CoverageAnalyzer.RequiredForCoverageSelection(question, profile);
+
+        Assert.Contains(CoverageAnalyzer.GuiUploadProcedure, required);
+        Assert.Contains(CoverageAnalyzer.CliUploadProcedure, required);
+    }
+
+    [Theory]
+    [InlineData("ポータル > Validate > 解析結果をアップロード", CoverageAnalyzer.GuiUploadProcedure)]
+    [InlineData("qacli validate build --qaf-project sample", CoverageAnalyzer.CliUploadProcedure)]
+    public void ObserveForCoverageSelection_SeparatesValidateGuiAndCliProcedures(
+        string text,
+        string expectedCoverage)
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(text);
+
+        Assert.Contains(expectedCoverage, observed);
     }
 }

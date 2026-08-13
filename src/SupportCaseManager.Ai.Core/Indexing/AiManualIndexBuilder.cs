@@ -280,6 +280,8 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
 
         await WriteIndexAsync(indexFilePath, string.Join(Path.PathSeparator, targetFolders), indexedManuals, cancellationToken);
+        var pageNumberChunkCount = indexedManuals.Count(static item => item.PageNumber is > 0);
+        var sectionTitleChunkCount = indexedManuals.Count(static item => !string.IsNullOrWhiteSpace(item.SectionTitle));
         return new AiManualIndexBuildResult
         {
             ScannedFileCount = scannedFileCount,
@@ -306,6 +308,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             ArchiveSizeLimitExceededCount = archiveSizeLimitExceededCount,
             IndexedFileCount = indexedFileCount,
             IndexedChunkCount = indexedManuals.Count,
+            PageNumberChunkCount = pageNumberChunkCount,
+            SectionTitleChunkCount = sectionTitleChunkCount,
+            PageAndSectionChunkCount = indexedManuals.Count(static item =>
+                item.PageNumber is > 0 && !string.IsNullOrWhiteSpace(item.SectionTitle)),
+            ZipDerivedChunkCount = indexedManuals.Count(static item => !string.IsNullOrWhiteSpace(item.ArchivePath)),
             ErrorCount = errorCount,
             IndexFilePath = indexFilePath,
             UnsupportedExtensionCounts = unsupportedExtensionCounts
@@ -427,6 +434,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             SupportedFileCount = currentFiles.Count,
             IndexedFileCount = output.Select(static item => item.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             IndexedChunkCount = output.Count,
+            PageNumberChunkCount = output.Count(static item => item.PageNumber is > 0),
+            SectionTitleChunkCount = output.Count(static item => !string.IsNullOrWhiteSpace(item.SectionTitle)),
+            PageAndSectionChunkCount = output.Count(static item =>
+                item.PageNumber is > 0 && !string.IsNullOrWhiteSpace(item.SectionTitle)),
+            ZipDerivedChunkCount = output.Count(static item => !string.IsNullOrWhiteSpace(item.ArchivePath)),
             AddedFileCount = added,
             ChangedFileCount = changed,
             DeletedFileCount = deleted,
@@ -443,16 +455,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         IReadOnlyList<AiIndexedManual> manuals,
         CancellationToken cancellationToken)
     {
-        var document = new AiManualIndexDocument
-        {
-            Version = AiManualIndexDocument.CurrentVersion,
-            BuiltAt = nowProvider(),
-            SourceFolder = sourceFolder,
-            Manuals = manuals,
-        };
-
-        await using var stream = File.Create(indexFilePath);
-        await JsonSerializer.SerializeAsync(stream, document, JsonOptions, cancellationToken);
+        await WriteIndexAtomicallyAsync(indexFilePath, sourceFolder, manuals, cancellationToken);
     }
 
     private async Task WriteIndexAtomicallyAsync(
@@ -595,9 +598,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         var isMarkdown = IsMarkdown(source.Extension, content.DocumentType);
         var sections = content.Pages is { Count: > 0 }
             ? content.Pages.Select(static page => new ManualSection(string.Empty, page.Text, page.PageNumber)).ToList()
-            : isMarkdown
-                ? SplitMarkdownSections(text).ToList()
-                : [new ManualSection(string.Empty, text, null)];
+            : content.Sections is { Count: > 0 }
+                ? content.Sections.Select(static section => new ManualSection(section.Heading, section.Text, null)).ToList()
+                : isMarkdown
+                    ? SplitMarkdownSections(text).ToList()
+                    : [new ManualSection(string.Empty, text, null)];
 
         var chunkIndex = 0;
         foreach (var section in sections)
@@ -616,14 +621,19 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     FilePath = source.SourcePath,
                     FileName = source.FileName,
                     Title = BuildTitle(source.FileName, section.SectionTitle),
+                    DocumentTitle = Path.GetFileNameWithoutExtension(source.OriginalFileName ?? source.FileName),
                     DocumentType = content.DocumentType,
                     SectionTitle = section.SectionTitle,
+                    Heading = string.IsNullOrWhiteSpace(section.SectionTitle) ? null : section.SectionTitle,
                     PageNumber = section.PageNumber,
                     ChunkId = id,
+                    DocumentId = source.ArchivePath ?? source.SourcePath,
                     Text = chunk,
                     LastModifiedAt = source.LastModifiedAt,
+                    SourceUpdatedAt = source.LastModifiedAt,
                     SourceType = "Manual",
                     Sha256 = source.Sha256,
+                    ContentHash = source.Sha256,
                     ArchivePath = source.ArchivePath,
                     EntryPath = source.EntryPath,
                     OriginalFileName = source.OriginalFileName,
