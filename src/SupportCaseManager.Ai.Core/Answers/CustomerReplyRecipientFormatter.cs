@@ -52,22 +52,16 @@ public static partial class CustomerReplyRecipientFormatter
             lines.RemoveAt(0);
         }
 
-        if (lines.Count > 0 && IsInternalCompanyOrRecipientLine(Normalize(lines[0])))
+        while (lines.Count > 0 &&
+            (IsInternalCompanyOrRecipientLine(Normalize(lines[0])) ||
+             IsGenericCustomerLine(Normalize(lines[0])) ||
+             IsPlaceholderRecipientLine(Normalize(lines[0]))))
         {
             lines.RemoveAt(0);
             while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[0]))
             {
                 lines.RemoveAt(0);
             }
-
-            if (lines.Count > 0 && IsGenericCustomerLine(Normalize(lines[0])))
-            {
-                lines.RemoveAt(0);
-            }
-        }
-        else if (lines.Count > 0 && IsGenericCustomerLine(Normalize(lines[0])))
-        {
-            lines.RemoveAt(0);
         }
 
         return string.Join(Environment.NewLine, lines).TrimStart();
@@ -104,6 +98,11 @@ public static partial class CustomerReplyRecipientFormatter
         string.Equals(value, "担当者様", StringComparison.Ordinal) ||
         string.Equals(value, "お客様", StringComparison.Ordinal) ||
         string.Equals(value, "お客様様", StringComparison.Ordinal);
+
+    private static bool IsPlaceholderRecipientLine(string value) =>
+        string.Equals(value, "[会社名]", StringComparison.Ordinal) ||
+        string.Equals(value, "[お客様名]", StringComparison.Ordinal) ||
+        string.Equals(value, "[お客様名] 様", StringComparison.Ordinal);
 
     private static bool HasHonorific(string value) =>
         value.EndsWith("様", StringComparison.Ordinal) ||

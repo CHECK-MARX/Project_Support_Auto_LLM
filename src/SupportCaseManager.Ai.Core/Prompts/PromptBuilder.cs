@@ -1,5 +1,6 @@
 using System.Text;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Prompts;
 
@@ -200,6 +201,14 @@ public sealed class PromptBuilder : IPromptBuilder
             builder.AppendLine($"## sourceId: {source.SourceId}");
             AppendField(builder, "sourceType", source.SourceType);
             AppendField(builder, "title", source.Title);
+            AppendField(builder, "documentTitle", source.DocumentTitle);
+            AppendField(builder, "pageNumber", source.PageNumber?.ToString());
+            AppendField(builder, "sectionTitle", source.SectionTitle);
+            AppendField(builder, "chunkId", source.ChunkId);
+            AppendField(builder, "documentId", source.DocumentId);
+            AppendField(builder, "filePath", source.FilePath);
+            AppendField(builder, "archivePath", source.ArchivePath);
+            AppendField(builder, "entryPath", source.EntryPath);
             AppendField(builder, "supportNumber", source.SupportNumber);
             AppendField(builder, "url", source.Url);
             AppendField(builder, "retrievedAt", source.RetrievedAt?.ToString("O"));
@@ -239,6 +248,18 @@ public sealed class PromptBuilder : IPromptBuilder
             builder.AppendLine();
         }
 
+
+        if (IsAnalysisHowToQuestion(request))
+        {
+            builder.AppendLine("# HowTo response plan");
+            builder.AppendLine("回答は必ず次の順序で構成してください: 【事前準備】【GUIでの手順】【CLIでの手順】【解析結果の確認】【注意点】【参照先】。");
+            builder.AppendLine("GUI項目、CLIコマンド、オプション、ページ番号、Section名は根拠に明記されたものだけ使用してください。");
+            builder.AppendLine("根拠から確認できない節は省略せず、『選択された根拠から確認できません』と記載してください。");
+            builder.AppendLine("根拠の抜粋を並べず、操作開始から結果確認まで実行可能な順序に統合してください。");
+            builder.AppendLine("pageNumberやsectionTitleが未設定の場合は推測して補わないでください。");
+            builder.AppendLine();
+        }
+
         builder.AppendLine(PromptTemplateProvider.SupportAnswerOutputPrompt);
 
         return builder.ToString();
@@ -263,6 +284,15 @@ public sealed class PromptBuilder : IPromptBuilder
             "configuration", "configure", "setup", "setting", "how to",
             "設定", "構成", "方法", "手順");
         return hasStream && asksForOverview && asksForConfiguration;
+    }
+
+    private static bool IsAnalysisHowToQuestion(AnswerDraftRequest request)
+    {
+        var profile = TopicEntityAnalyzer.Extract(
+            request.InquiryText,
+            SupportTopicCatalog.Create(request.Case.ProductName));
+        return profile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
+            profile.Intents.Contains("HowTo", StringComparer.Ordinal);
     }
 
     private static bool ContainsAny(string value, params string[] terms) =>

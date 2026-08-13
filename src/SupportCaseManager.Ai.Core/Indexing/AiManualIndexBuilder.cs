@@ -593,9 +593,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
 
         var isMarkdown = IsMarkdown(source.Extension, content.DocumentType);
-        var sections = isMarkdown
-            ? SplitMarkdownSections(text).ToList()
-            : [new ManualSection(string.Empty, text)];
+        var sections = content.Pages is { Count: > 0 }
+            ? content.Pages.Select(static page => new ManualSection(string.Empty, page.Text, page.PageNumber)).ToList()
+            : isMarkdown
+                ? SplitMarkdownSections(text).ToList()
+                : [new ManualSection(string.Empty, text, null)];
 
         var chunkIndex = 0;
         foreach (var section in sections)
@@ -607,14 +609,17 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     continue;
                 }
 
+                var id = BuildId(source.SourcePath, chunkIndex, section.SectionTitle);
                 yield return new AiIndexedManual
                 {
-                    Id = BuildId(source.SourcePath, chunkIndex, section.SectionTitle),
+                    Id = id,
                     FilePath = source.SourcePath,
                     FileName = source.FileName,
                     Title = BuildTitle(source.FileName, section.SectionTitle),
                     DocumentType = content.DocumentType,
                     SectionTitle = section.SectionTitle,
+                    PageNumber = section.PageNumber,
+                    ChunkId = id,
                     Text = chunk,
                     LastModifiedAt = source.LastModifiedAt,
                     SourceType = "Manual",
@@ -651,7 +656,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             {
                 if (builder.Length > 0)
                 {
-                    yield return new ManualSection(currentTitle, builder.ToString());
+                    yield return new ManualSection(currentTitle, builder.ToString(), null);
                     builder.Clear();
                 }
 
@@ -664,11 +669,11 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
         if (builder.Length > 0)
         {
-            yield return new ManualSection(currentTitle, builder.ToString());
+            yield return new ManualSection(currentTitle, builder.ToString(), null);
         }
         else if (!hasHeading && !string.IsNullOrWhiteSpace(text))
         {
-            yield return new ManualSection(string.Empty, text);
+            yield return new ManualSection(string.Empty, text, null);
         }
     }
 
@@ -756,5 +761,5 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 entry.CompressedSize);
     }
 
-    private sealed record ManualSection(string SectionTitle, string Text);
+    private sealed record ManualSection(string SectionTitle, string Text, int? PageNumber);
 }

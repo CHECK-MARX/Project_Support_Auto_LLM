@@ -342,7 +342,8 @@ public sealed class MainViewModelManualSearchTests
         Assert.DoesNotContain("TOYO", services.ViewModel.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("東陽テクニカ", services.ViewModel.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("ライセンス認証エラー", services.ViewModel.CustomerReplyDraft);
-        Assert.Contains("PDFマニュアル", services.ViewModel.StatusMessage);
+        Assert.Contains("選択済み根拠", services.ViewModel.StatusMessage);
+        Assert.Equal("LlmTimeoutEvidenceFallback", services.ViewModel.GenerationSkippedReason);
         Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
     }
 

@@ -6,8 +6,32 @@ using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Answers;
 
-internal static partial class AnswerPostProcessor
+public static partial class AnswerPostProcessor
 {
+    public static AnswerDraftResult BuildFailureFallback(
+        AnswerDraftRequest request,
+        Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(exception);
+        var evidenceLimit = request.Settings.UseCoverageAwareEvidenceSelection
+            ? request.Sources.Count
+            : request.Settings.MaxEvidenceItems;
+        var evidence = BuildEvidenceFromSources(request.Sources, evidenceLimit);
+        var confidence = CalculateEvidenceBackedFallbackConfidence(evidence);
+        return Process(
+            request,
+            new AnswerDraftResult
+            {
+                CustomerReplyDraft = string.Empty,
+                InternalMemo = $"LLM処理を完了できなかったため、選択済み根拠から回答案を構成しました。エラー={exception.GetType().Name}",
+                GeneratedAt = DateTimeOffset.Now,
+            },
+            evidence,
+            confidence,
+            [$"LLM処理を完了できなかったため、選択済み根拠から構造化回答を作成しました。エラー={exception.GetType().Name}"]);
+    }
+
     public static AnswerDraftResult Process(
         AnswerDraftRequest request,
         AnswerDraftResult result,
@@ -28,6 +52,14 @@ internal static partial class AnswerPostProcessor
             internalMemo = factBasedMemo;
             mergedWarnings.Add("ResolvedFactsに基づいて最新バージョン回答案を補正しました。");
             finalConfidence = Math.Max(finalConfidence, 0.9);
+        }
+
+        if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
+            !HowToAnswerComposer.HasRequiredStructure(customerReply) &&
+            HowToAnswerComposer.TryComposeAnalysis(request, out var structuredHowToReply))
+        {
+            customerReply = structuredHowToReply;
+            mergedWarnings.Add("HowTo回答を選択済み根拠に基づく操作順へ補正しました。");
         }
         else if (request.InquiryFocus?.IsFreshnessSensitive == true && !request.Sources.Any(IsOfficialDoc))
         {
@@ -286,6 +318,15 @@ internal static partial class AnswerPostProcessor
                 SourceId = source.SourceId,
                 SourceType = source.SourceType,
                 Title = source.Title,
+                DocumentTitle = source.DocumentTitle,
+                PageNumber = source.PageNumber,
+                SectionTitle = source.SectionTitle,
+                Url = source.Url,
+                ChunkId = source.ChunkId,
+                DocumentId = source.DocumentId,
+                ContentHash = source.ContentHash,
+                ArchivePath = source.ArchivePath,
+                EntryPath = source.EntryPath,
                 Excerpt = BuildExcerpt(source.Text, 500),
                 FilePath = source.FilePath,
                 SupportNumber = source.SupportNumber,
@@ -306,12 +347,21 @@ internal static partial class AnswerPostProcessor
             .GroupBy(static item => item.SourceId, StringComparer.Ordinal)
             .Select(static group => group
                 .OrderByDescending(static item => item.Relevance)
+                .ThenByDescending(MetadataCompleteness)
                 .First())
             .OrderByDescending(static item => item.Relevance)
             .ThenBy(static item => item.SourceId, StringComparer.Ordinal)
             .Take(maxItems)
             .ToList();
     }
+
+    private static int MetadataCompleteness(EvidenceItem item) =>
+        (string.IsNullOrWhiteSpace(item.DocumentTitle) ? 0 : 1) +
+        (item.PageNumber is > 0 ? 1 : 0) +
+        (string.IsNullOrWhiteSpace(item.SectionTitle) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.Url) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.DocumentId) ? 0 : 1) +
+        (string.IsNullOrWhiteSpace(item.ChunkId) ? 0 : 1);
 
     private static string BuildEvidenceBackedCustomerReply(
         AnswerDraftRequest request,
@@ -499,66 +549,7 @@ internal static partial class AnswerPostProcessor
         AnswerDraftRequest request,
         out string customerReply)
     {
-        customerReply = string.Empty;
-        var profile = TopicEntityAnalyzer.Extract(
-            request.InquiryText,
-            SupportTopicCatalog.Create(request.Case.ProductName));
-        if (!profile.Operations.Contains("Analysis", StringComparer.Ordinal) ||
-            !profile.Intents.Contains("HowTo", StringComparer.Ordinal))
-        {
-            return false;
-        }
-
-        var sourceText = string.Join(
-            Environment.NewLine,
-            request.Sources
-                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
-                .Select(static source => string.Join(' ', source.Title, source.SectionTitle, source.Text)));
-        var compactSource = NormalizeWhitespace(sourceText);
-        var hasCliAnalysis = ContainsAny(compactSource, "qacli analyze", "qaclianalyze");
-        var hasGuiAnalysis = ContainsAny(
-            compactSource,
-            "プロジェクトを解析", "解析を実行", "解析の実行", "Analyze Project", "Run Analysis");
-        if (!hasCliAnalysis && !hasGuiAnalysis)
-        {
-            return false;
-        }
-
-        var command = "qacli analyze";
-        if (compactSource.Contains("-cf", StringComparison.OrdinalIgnoreCase))
-        {
-            command += " -cf";
-        }
-        if (compactSource.Contains("-P", StringComparison.Ordinal))
-        {
-            command += " -P <project-directory>";
-        }
-
-        var builder = new StringBuilder();
-        builder.AppendLine("お問い合わせいただいた、QACでプロジェクトを解析する手順についてご案内します。");
-        builder.AppendLine();
-        builder.AppendLine("【概要】");
-        builder.AppendLine("QACプロジェクトに登録・設定したソースコードを対象に解析を実行し、検出結果を確認する操作です。");
-        builder.AppendLine();
-        builder.AppendLine("【手順】");
-        builder.AppendLine("1. 解析対象のQACプロジェクトを開き、ソースファイルとコンパイラ設定が登録されていることを確認します。");
-        if (hasCliAnalysis)
-        {
-            builder.AppendLine($"2. CLIで解析する場合は、対象プロジェクトに対して `{command}` を実行します。");
-        }
-        else
-        {
-            builder.AppendLine("2. QAC GUIで対象プロジェクトを選択し、解析の実行を開始します。");
-        }
-        builder.AppendLine("3. 解析終了後、QAC GUIまたは生成されたレポートでメッセージと解析結果を確認します。");
-        builder.AppendLine();
-        builder.AppendLine("【注意点】");
-        builder.AppendLine("・実行前に、対象ソース、インクルードパス、マクロ定義、コンパイラ設定が実際のビルド条件と一致していることをご確認ください。");
-        builder.AppendLine("・利用できる画面項目やCLIオプションは製品バージョンによって異なる場合があるため、ご利用バージョンのマニュアルで最終確認してください。");
-        builder.AppendLine();
-        builder.AppendLine("以上、よろしくお願いいたします。");
-        customerReply = builder.ToString();
-        return true;
+        return HowToAnswerComposer.TryComposeAnalysis(request, out customerReply);
     }
 
     private static bool TryBuildValidateUploadProcedureReply(

@@ -70,6 +70,11 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
             DocumentId = manual.ArchivePath ?? manual.FilePath,
             SectionTitle = manual.SectionTitle,
             ContentHash = manual.Sha256,
+            DocumentTitle = Path.GetFileNameWithoutExtension(manual.OriginalFileName ?? manual.FileName),
+            PageNumber = manual.PageNumber,
+            ChunkId = manual.ChunkId ?? manual.Id,
+            ArchivePath = manual.ArchivePath,
+            EntryPath = manual.EntryPath,
         };
     }
 
@@ -93,7 +98,7 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
         {
             score = score with
             {
-                Score = Math.Round(Math.Clamp(score.Score + procedureBoost, 0, 1), 3),
+                Score = Math.Round(ApplyBoundedBoost(score.Score, procedureBoost), 3),
                 ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
                     ? $"procedureProximity={procedureBoost:0.00}"
                     : $"{score.ScoreBreakdown}; procedureProximity={procedureBoost:0.00}",
@@ -144,6 +149,12 @@ public sealed class AiManualKeywordSearcher : IAiManualKeywordSearcher
             : Math.Clamp(matchIndex - 220, 0, normalized.Length - SearchTextMaxLength);
         var excerpt = normalized.Substring(start, SearchTextMaxLength);
         return $"{(start > 0 ? "..." : string.Empty)}{excerpt}{(start + excerpt.Length < normalized.Length ? "..." : string.Empty)}";
+    }
+
+    private static double ApplyBoundedBoost(double score, double boost)
+    {
+        var normalized = Math.Clamp(score, 0, 1);
+        return normalized + ((1 - normalized) * Math.Clamp(boost, 0, 0.95));
     }
 
     private sealed record ScoredManual(

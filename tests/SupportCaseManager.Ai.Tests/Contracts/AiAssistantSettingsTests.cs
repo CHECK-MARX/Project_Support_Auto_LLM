@@ -18,7 +18,7 @@ public sealed class AiAssistantSettingsTests
         Assert.False(settings.UsePhase175QualityControls);
         Assert.False(settings.UseCoverageAwareEvidenceSelection);
         Assert.Equal(5, settings.CoverageAwareMaxEvidenceItems);
-        Assert.False(settings.UseRustEvidenceSelector);
+        Assert.True(settings.UseRustEvidenceSelector);
         Assert.False(settings.UsePersistentRustEvidenceSelector);
         Assert.Equal(3, settings.MaxWorkerRestartsPerMinute);
         Assert.False(settings.EnableRustSelectorShadowMode);
@@ -30,7 +30,7 @@ public sealed class AiAssistantSettingsTests
     }
 
     [Fact]
-    public void RustSelectorSettings_OldJsonDefaultsOffAndRoundTrips()
+    public void RustSelectorSettings_OldJsonDefaultsToProductionPreferredAndRoundTrips()
     {
         var oldSettings = JsonSerializer.Deserialize<AiAssistantSettings>("{}");
         var restored = JsonSerializer.Deserialize<AiAssistantSettings>(JsonSerializer.Serialize(new AiAssistantSettings
@@ -46,7 +46,7 @@ public sealed class AiAssistantSettingsTests
         }));
 
         Assert.NotNull(oldSettings);
-        Assert.False(oldSettings.UseRustEvidenceSelector);
+        Assert.True(oldSettings.UseRustEvidenceSelector);
         Assert.False(oldSettings.UsePersistentRustEvidenceSelector);
         Assert.Equal(3, oldSettings.MaxWorkerRestartsPerMinute);
         Assert.False(oldSettings.EnableRustSelectorShadowMode);

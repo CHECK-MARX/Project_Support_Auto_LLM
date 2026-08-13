@@ -117,7 +117,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         {
             score = score with
             {
-                Score = Math.Round(Math.Clamp(score.Score + procedureBoost, 0, 1), 3),
+                Score = Math.Round(ApplyBoundedBoost(score.Score, procedureBoost), 3),
                 ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
                     ? $"procedureProximity={procedureBoost:0.00}"
                     : $"{score.ScoreBreakdown}; procedureProximity={procedureBoost:0.00}",
@@ -146,7 +146,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
 
         return score with
         {
-            Score = Math.Round(Math.Clamp(score.Score + 0.18, 0.0, 1.0), 3),
+            Score = Math.Round(ApplyBoundedBoost(score.Score, 0.18), 3),
             MatchedTerms = matchedVersions
                 .Concat(score.MatchedTerms)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -180,6 +180,8 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             ScoreBreakdown = score.ScoreBreakdown,
             DocumentId = document.Url,
             SectionTitle = document.SectionTitle,
+            DocumentTitle = document.Title,
+            ChunkId = document.Id,
         };
     }
 
@@ -239,6 +241,12 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         var prefix = startIndex > 0 ? "..." : string.Empty;
         var suffix = startIndex + SearchTextMaxLength < normalized.Length ? "..." : string.Empty;
         return $"{prefix}{normalized.Substring(startIndex, SearchTextMaxLength)}{suffix}";
+    }
+
+    private static double ApplyBoundedBoost(double score, double boost)
+    {
+        var normalized = Math.Clamp(score, 0, 1);
+        return normalized + ((1 - normalized) * Math.Clamp(boost, 0, 0.95));
     }
 
     private sealed record ScoredOfficialDocument(

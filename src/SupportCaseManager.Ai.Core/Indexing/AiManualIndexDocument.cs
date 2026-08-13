@@ -4,7 +4,7 @@ namespace SupportCaseManager.Ai.Core.Indexing;
 
 public sealed record class AiManualIndexDocument
 {
-    public const int CurrentVersion = 2;
+    public const int CurrentVersion = 3;
 
     [JsonPropertyName("version")]
     public int Version { get; init; } = 1;

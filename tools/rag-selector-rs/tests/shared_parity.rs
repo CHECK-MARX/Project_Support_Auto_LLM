@@ -123,6 +123,7 @@ fn request(fixture: &FixtureCase) -> CoverageEvidenceSelectionRequest {
                     .source_type
                     .clone()
                     .unwrap_or_else(|| "Manual".to_owned()),
+                document_title: None,
                 document_id: item.document_id.clone(),
                 file_path: item.file_path.clone(),
                 section: item.section.clone(),

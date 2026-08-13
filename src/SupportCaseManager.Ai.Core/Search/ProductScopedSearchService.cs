@@ -451,7 +451,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             reasons.Add("troubleshootingExactAnswer=boost");
         }
 
-        var score = Math.Clamp((source.Score ?? 0) + adjustment, 0, 1);
+        var score = ApplyBoundedAdjustment(source.Score ?? 0, adjustment);
         var breakdown = reasons.Count == 0
             ? source.ScoreBreakdown
             : AppendScoreBreakdown(source.ScoreBreakdown, $"topicAdjustment={adjustment:+0.000;-0.000;0.000}, {string.Join(',', reasons)}");
@@ -500,6 +500,11 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
 
     private static bool ContainsUnrelatedAnalysisTopic(string value) =>
         value.Contains("Dashboard", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("IDE", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("Visual Studio", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("Eclipse", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("Backup", StringComparison.OrdinalIgnoreCase) ||
+        value.Contains("バックアップ", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("ライセンスサーバ", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("license server", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("Installation Notes", StringComparison.OrdinalIgnoreCase) ||
@@ -516,6 +521,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             heading,
             "Dashboard", "ダッシュボード",
             "License", "ライセンス",
+            "IDE", "Visual Studio", "Eclipse",
+            "Backup", "バックアップ",
             "Installation", "インストール",
             "qacli validate build", "qacli validate cibuild", "upload", "アップロード");
 
@@ -526,12 +533,22 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
 
         if (operationInHeading)
         {
-            return 0.22;
+            return 0.28;
+        }
+
+        if (ContainsAnalysisGuiProcedure(candidateText))
+        {
+            return 0.55;
+        }
+
+        if (ContainsValidateWorkflow(candidateText))
+        {
+            return -0.48;
         }
 
         if (ContainsAny(candidateText, "qacli analyze", "qaclianalyze"))
         {
-            return 0.42;
+            return 0.30;
         }
 
         return ContainsAny(candidateText, "プロジェクトを解析", "analyze project")
@@ -539,8 +556,29 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             : 0.04;
     }
 
+    private static bool ContainsValidateWorkflow(string value) =>
+        ContainsAny(value, "qacli validate", "validate build", "validate cibuild") ||
+        (value.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
+         ContainsAny(value, "upload", "アップロード"));
+
+    private static bool ContainsAnalysisGuiProcedure(string value) =>
+        ContainsAny(
+            value,
+            "]>[解析]>", "]>[解析(", "］＞［解析］＞", "［解析（",
+            "プロジェクト全体のファイルベース解析", "Analyze Project", "Run Analysis") ||
+        (ContainsAny(value, "QAGUIで", "QA GUIで", "GUIで") &&
+         ContainsAny(value, "解析を実行", "解析を開始", "ファイルベース解析を実行"));
+
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static double ApplyBoundedAdjustment(double score, double adjustment)
+    {
+        var normalized = Math.Clamp(score, 0, 1);
+        return adjustment >= 0
+            ? normalized + ((1 - normalized) * Math.Clamp(adjustment, 0, 0.95))
+            : normalized * (1 + Math.Clamp(adjustment, -1, 0));
+    }
 
     private static string SourceFamily(string? sourceType) => sourceType switch
     {

@@ -5,7 +5,6 @@ namespace SupportCaseManager.Ai.Core.Evidence;
 public static class CoverageAwareEvidenceSelector
 {
     private const double NearDuplicateThreshold = 0.88;
-    private const double TechnicalTokenDuplicateThreshold = 0.90;
 
     public static CoverageEvidenceSelectionResult Select(CoverageEvidenceSelectionRequest request)
     {
@@ -80,6 +79,11 @@ public static class CoverageAwareEvidenceSelector
             var ranked = eligible
                 .Select(item => AssessCandidate(item, selected, selectedCoverage, required))
                 .OrderByDescending(item => hasAnchor ? item.NewRequiredCoverageCount : 0)
+                .ThenByDescending(item => hasAnchor && selected.All(selectedItem =>
+                    !string.Equals(
+                        selectedItem.SourceType,
+                        item.Candidate.SourceType,
+                        StringComparison.OrdinalIgnoreCase)))
                 .ThenByDescending(static item => item.SetScore)
                 .ThenByDescending(static item => item.QualityScore)
                 .ThenBy(static item => item.Candidate.OriginalRank)
@@ -201,21 +205,20 @@ public static class CoverageAwareEvidenceSelector
             {
                 return true;
             }
-            if (!addsRequiredCoverage && TextSimilarity(candidate.Text, existing.Text) >= NearDuplicateThreshold)
+            if (SameDocumentFamily(candidate.DocumentTitle, existing.DocumentTitle) &&
+                HasAnalysisProcedureSignature(candidate.Text) &&
+                HasAnalysisProcedureSignature(existing.Text))
             {
                 return true;
             }
-            var distinctTechnicalTokens = candidate.TechnicalTokens
-                .Concat(existing.TechnicalTokens)
-                .Where(static token => !string.IsNullOrWhiteSpace(token))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count();
-            if (!addsRequiredCoverage &&
-                distinctTechnicalTokens >= 2 &&
-                Jaccard(candidate.TechnicalTokens, existing.TechnicalTokens) >= TechnicalTokenDuplicateThreshold)
+            if (HasEnoughTextForSimilarity(candidate.Text, existing.Text) &&
+                TextSimilarity(candidate.Text, existing.Text) >= NearDuplicateThreshold)
             {
                 return true;
             }
+            // Shared commands identify the operation, not duplicate evidence. Two different
+            // sources that both mention `qacli analyze` may cover setup and verification
+            // separately, so content/document checks above decide duplication.
         }
         return false;
     }
@@ -268,6 +271,28 @@ public static class CoverageAwareEvidenceSelector
         string.Equals(left.Trim(), right.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static double TextSimilarity(string left, string right) => Jaccard(Terms(left), Terms(right));
+
+    private static bool HasEnoughTextForSimilarity(string left, string right) =>
+        left.Length >= 80 && right.Length >= 80 && Terms(left).Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 8 &&
+        Terms(right).Distinct(StringComparer.OrdinalIgnoreCase).Count() >= 8;
+
+    private static bool SameDocumentFamily(string? left, string? right)
+    {
+        static string NormalizeTitle(string? value) => new(
+            (value ?? string.Empty)
+                .Where(char.IsLetterOrDigit)
+                .Select(char.ToUpperInvariant)
+                .ToArray());
+
+        var normalizedLeft = NormalizeTitle(left);
+        return normalizedLeft.Length >= 8 && string.Equals(normalizedLeft, NormalizeTitle(right), StringComparison.Ordinal);
+    }
+
+    private static bool HasAnalysisProcedureSignature(string value) =>
+        (value.Contains("qacli analyze", StringComparison.OrdinalIgnoreCase) ||
+         value.Contains("qaclianalyze", StringComparison.OrdinalIgnoreCase)) &&
+        (value.Contains("]>[") || value.Contains("Analyze Project", StringComparison.OrdinalIgnoreCase) ||
+         value.Contains("Run Analysis", StringComparison.OrdinalIgnoreCase));
 
     private static IReadOnlyList<string> Terms(string value) => value
         .Split([' ', '\r', '\n', '\t', ',', '.', ':', ';', '/', '\\', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

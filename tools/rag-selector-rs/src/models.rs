@@ -9,6 +9,8 @@ pub struct CoverageEvidenceCandidate {
     #[serde(default)]
     pub source_type: String,
     #[serde(default)]
+    pub document_title: Option<String>,
+    #[serde(default)]
     pub document_id: Option<String>,
     #[serde(default)]
     pub file_path: Option<String>,

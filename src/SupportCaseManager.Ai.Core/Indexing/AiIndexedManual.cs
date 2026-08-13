@@ -22,6 +22,12 @@ public sealed record class AiIndexedManual
     [JsonPropertyName("sectionTitle")]
     public string SectionTitle { get; init; } = string.Empty;
 
+    [JsonPropertyName("pageNumber")]
+    public int? PageNumber { get; init; }
+
+    [JsonPropertyName("chunkId")]
+    public string? ChunkId { get; init; }
+
     [JsonPropertyName("text")]
     public string Text { get; init; } = string.Empty;
 

@@ -7,7 +7,6 @@ use crate::models::{
 };
 
 const NEAR_DUPLICATE_THRESHOLD: f64 = 0.88;
-const TECHNICAL_TOKEN_DUPLICATE_THRESHOLD: f64 = 0.90;
 
 #[derive(Debug)]
 struct Assessment {
@@ -107,6 +106,21 @@ pub fn select(request: &CoverageEvidenceSelectionRequest) -> CoverageEvidenceSel
             };
             right_gain
                 .cmp(&left_gain)
+                .then_with(|| {
+                    let left_diverse = has_anchor
+                        && selected.iter().all(|item| {
+                            !item
+                                .source_type
+                                .eq_ignore_ascii_case(&left.candidate.source_type)
+                        });
+                    let right_diverse = has_anchor
+                        && selected.iter().all(|item| {
+                            !item
+                                .source_type
+                                .eq_ignore_ascii_case(&right.candidate.source_type)
+                        });
+                    right_diverse.cmp(&left_diverse)
+                })
                 .then_with(|| descending_f64(left.set_score, right.set_score))
                 .then_with(|| descending_f64(left.quality_score, right.quality_score))
                 .then_with(|| {
@@ -288,26 +302,19 @@ fn is_redundant(
         if same_document && (same_section || !adds_required_coverage) {
             return true;
         }
-        if !adds_required_coverage
+        if same_document_family(&candidate.document_title, &existing.document_title)
+            && has_analysis_procedure_signature(&candidate.text)
+            && has_analysis_procedure_signature(&existing.text)
+        {
+            return true;
+        }
+        if has_enough_text_for_similarity(&candidate.text, &existing.text)
             && text_similarity(&candidate.text, &existing.text) >= NEAR_DUPLICATE_THRESHOLD
         {
             return true;
         }
-        let distinct_technical_tokens = candidate
-            .technical_tokens
-            .iter()
-            .chain(existing.technical_tokens.iter())
-            .filter(|token| !token.trim().is_empty())
-            .map(|token| token.trim().to_uppercase())
-            .collect::<BTreeSet<_>>()
-            .len();
-        if !adds_required_coverage
-            && distinct_technical_tokens >= 2
-            && jaccard(&candidate.technical_tokens, &existing.technical_tokens)
-                >= TECHNICAL_TOKEN_DUPLICATE_THRESHOLD
-        {
-            return true;
-        }
+        // Shared commands identify the operation, not duplicate evidence. Keep separate
+        // sources when their document/content differs so they can cover distinct steps.
     }
     false
 }
@@ -374,6 +381,35 @@ fn same(left: &Option<String>, right: &Option<String>) -> bool {
 
 fn text_similarity(left: &str, right: &str) -> f64 {
     jaccard(&terms(left), &terms(right))
+}
+
+fn has_enough_text_for_similarity(left: &str, right: &str) -> bool {
+    left.chars().count() >= 80
+        && right.chars().count() >= 80
+        && terms(left).into_iter().collect::<BTreeSet<_>>().len() >= 8
+        && terms(right).into_iter().collect::<BTreeSet<_>>().len() >= 8
+}
+
+fn same_document_family(left: &Option<String>, right: &Option<String>) -> bool {
+    fn normalize_title(value: Option<&String>) -> String {
+        value
+            .map_or("", String::as_str)
+            .chars()
+            .filter(|character| character.is_alphanumeric())
+            .flat_map(char::to_uppercase)
+            .collect()
+    }
+
+    let normalized_left = normalize_title(left.as_ref());
+    normalized_left.chars().count() >= 8 && normalized_left == normalize_title(right.as_ref())
+}
+
+fn has_analysis_procedure_signature(value: &str) -> bool {
+    let normalized = value.to_lowercase();
+    (normalized.contains("qacli analyze") || normalized.contains("qaclianalyze"))
+        && (normalized.contains("]>[")
+            || normalized.contains("analyze project")
+            || normalized.contains("run analysis"))
 }
 
 fn terms(value: &str) -> Vec<String> {
@@ -567,6 +603,54 @@ mod tests {
     }
 
     #[test]
+    fn near_duplicate_text_is_suppressed_even_when_it_claims_new_coverage() {
+        let mut primary = candidate("primary", 1, &["A"], 0.9);
+        primary.text =
+            "Open the QAC project and run qacli analyze. Review the analysis progress and results."
+                .to_owned();
+        let mut archived_copy = candidate("archived-copy", 2, &["A", "B"], 0.8);
+        archived_copy.text = primary.text.clone();
+
+        let result = select(&request(
+            &["A", "B"],
+            vec![primary, archived_copy],
+            2,
+            3,
+            5000,
+        ));
+
+        assert_eq!(ids(&result), ["primary"]);
+        assert_eq!(result.redundant_candidates_skipped, 1);
+    }
+
+    #[test]
+    fn archived_copy_of_same_analysis_procedure_is_suppressed() {
+        let mut current = candidate("current", 1, &["A"], 0.9);
+        current.document_title = Some("Perforce-QAC-Manual".to_owned());
+        current.text =
+            "Use [PerforceQAC]>[Analysis]>[File-based Analysis]. Run qacli analyze -P project."
+                .to_owned();
+        let mut archive = candidate("archive", 2, &["B"], 0.85);
+        archive.document_title = Some("Perforce_QAC_Manual".to_owned());
+        archive.text = "Archived wording: [PerforceQAC]>[Analysis]>[File-based Analysis], then qaclianalyze-P project and review results.".to_owned();
+        let mut verification = candidate("verification", 3, &["B"], 0.7);
+        verification.document_title = Some("Analysis Results Guide".to_owned());
+        verification.text =
+            "Review the analysis results and progress in the analysis dialog.".to_owned();
+
+        let result = select(&request(
+            &["A", "B"],
+            vec![current, archive, verification],
+            2,
+            3,
+            5000,
+        ));
+
+        assert_eq!(ids(&result), ["current", "verification"]);
+        assert_eq!(result.redundant_candidates_skipped, 1);
+    }
+
+    #[test]
     fn one_generic_technical_token_does_not_make_distinct_documents_duplicates() {
         let mut install = candidate("install", 1, &["A"], 0.9);
         install.technical_tokens = vec!["QAC".to_owned()];
@@ -651,6 +735,7 @@ mod tests {
             candidate_id: id.to_owned(),
             original_rank: rank,
             source_type: "Manual".to_owned(),
+            document_title: None,
             document_id: None,
             file_path: None,
             section: None,

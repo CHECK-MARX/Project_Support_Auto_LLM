@@ -74,7 +74,7 @@ public sealed record class AiAssistantSettings
     public int CoverageAwareMaxEvidenceItems { get; init; } = 5;
 
     [JsonPropertyName("useRustEvidenceSelector")]
-    public bool UseRustEvidenceSelector { get; init; }
+    public bool UseRustEvidenceSelector { get; init; } = true;
 
     [JsonPropertyName("usePersistentRustEvidenceSelector")]
     public bool UsePersistentRustEvidenceSelector { get; init; }

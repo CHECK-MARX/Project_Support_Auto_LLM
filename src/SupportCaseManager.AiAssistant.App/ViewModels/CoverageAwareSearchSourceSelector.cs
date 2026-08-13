@@ -87,6 +87,8 @@ public static class CoverageAwareSearchSourceSelector
             MaxItems = Math.Clamp(context.CoverageAwareMaxEvidenceItems, 1, 5),
         });
         var compoundFeatureQuestion = ShouldApplyAutomatically(context.InquiryText, context.ProductName);
+        var analysisHowTo = queryProfile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
+            queryProfile.Intents.Contains("HowTo", StringComparer.Ordinal);
         var compoundStreamQuestion = compoundFeatureQuestion &&
             queryProfile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase);
         var requiredCoverage = CoverageAnalyzer.RequiredForCoverageSelection(context.InquiryText, queryProfile).ToList();
@@ -149,6 +151,7 @@ public static class CoverageAwareSearchSourceSelector
                 CandidateId = CandidateId(item, index),
                 OriginalRank = index + 1,
                 SourceType = item.SourceType,
+                DocumentTitle = item.Source.DocumentTitle ?? item.Title,
                 DocumentId = item.Source.DocumentId ?? item.FilePath ?? item.Url ?? item.SupportNumber,
                 FilePath = item.FilePath,
                 Section = item.Source.SectionTitle ?? item.Title,
@@ -156,14 +159,15 @@ public static class CoverageAwareSearchSourceSelector
                 ContentHash = item.Source.ContentHash ?? assessment.TextFingerprint,
                 TechnicalTokens = assessment.ExactTechnicalTokens,
                 Coverage = coverage.Distinct(StringComparer.Ordinal).ToList(),
-                RankingScore = Math.Clamp(assessment.FinalScore + Math.Max(0, analysisAdjustment), 0, 1),
-                TopicScore = Math.Clamp(assessment.TopicScore + Math.Max(0, analysisAdjustment), 0, 1),
+                RankingScore = ApplyBoundedAdjustment(assessment.FinalScore, analysisAdjustment),
+                TopicScore = ApplyBoundedAdjustment(assessment.TopicScore, analysisAdjustment),
                 EntityScore = assessment.EntityScore,
                 TechnicalTokenScore = assessment.TechnicalTokenScore,
                 SourceTrust = assessment.SourceTrustScore,
                 VersionScore = assessment.VersionScore,
                 ConflictPenalty = assessment.ConflictPenalty + Math.Min(0, analysisAdjustment),
-                ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded,
+                ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded ||
+                    (analysisHowTo && !item.IsManuallySelected && !HasDirectAnalysisEvidence(item)),
                 TopicConflict = assessment.TopicConflict ||
                     (queryProfile.Features.Count > 0 && !assessment.HasTopicMatch),
                 ProductMismatch = assessment.ProductMatch is false,
@@ -316,6 +320,8 @@ public static class CoverageAwareSearchSourceSelector
             heading,
             "Dashboard", "ダッシュボード",
             "License", "ライセンス",
+            "IDE", "Visual Studio", "Eclipse",
+            "Backup", "バックアップ",
             "Installation", "インストール",
             "qacli validate build", "qacli validate cibuild",
             "upload", "アップロード");
@@ -325,9 +331,24 @@ public static class CoverageAwareSearchSourceSelector
             return -0.55;
         }
 
-        if (operationInHeading || ContainsAny(text, "qacli analyze", "qaclianalyze"))
+        if (operationInHeading)
         {
             return 0.30;
+        }
+
+        if (ContainsAnalysisGuiProcedure(text))
+        {
+            return 0.55;
+        }
+
+        if (ContainsValidateWorkflow(text))
+        {
+            return -0.60;
+        }
+
+        if (ContainsAny(text, "qacli analyze", "qaclianalyze"))
+        {
+            return 0.24;
         }
 
         if (ContainsAny(
@@ -341,8 +362,58 @@ public static class CoverageAwareSearchSourceSelector
         return -0.35;
     }
 
+    private static bool ContainsValidateWorkflow(string value) =>
+        ContainsAny(value, "qacli validate", "validate build", "validate cibuild") ||
+        (value.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
+         ContainsAny(value, "upload", "アップロード"));
+
+    private static bool HasDirectAnalysisEvidence(SearchSourceViewModel item)
+    {
+        var text = DocumentText(item);
+        if (ContainsValidateWorkflow(text) && !ContainsAnalysisGuiProcedure(text))
+        {
+            return false;
+        }
+
+        if (ContainsAny(text, "qacli project upgrade", "qacliprojectupgrade", "projectupgrade") &&
+            !ContainsAnalysisGuiProcedure(text) &&
+            !ContainsAny(text, "qacli analyze", "qaclianalyze"))
+        {
+            return false;
+        }
+
+        var coverage = CoverageAnalyzer.ObserveForCoverageSelection(text);
+        return ContainsAnalysisGuiProcedure(text) ||
+            ContainsAny(text, "qacli analyze", "qaclianalyze", "Analyze Project", "Run Analysis") ||
+            ContainsAnalysisPreparation(text) ||
+            (coverage.Contains(CoverageAnalyzer.AnalysisVerification) && !ContainsValidateWorkflow(text));
+    }
+
+    private static bool ContainsAnalysisPreparation(string value) =>
+        ContainsAny(value, "解析", "analyze", "analysis") &&
+        ContainsAny(value, "プロジェクト", "project") &&
+        ContainsAny(
+            value,
+            "ソースファイル", "source file", "コンパイラ", "compiler", "CCT", "project setup");
+
     private static bool ContainsAny(string value, params string[] terms) =>
         terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
+
+    private static bool ContainsAnalysisGuiProcedure(string value) =>
+        ContainsAny(
+            value,
+            "]>[解析]>", "]>[解析(", "］＞［解析］＞", "［解析（",
+            "プロジェクト全体のファイルベース解析", "Analyze Project", "Run Analysis") ||
+        (ContainsAny(value, "QAGUIで", "QA GUIで", "GUIで") &&
+         ContainsAny(value, "解析を実行", "解析を開始", "ファイルベース解析を実行"));
+
+    private static double ApplyBoundedAdjustment(double score, double adjustment)
+    {
+        var normalized = Math.Clamp(score, 0, 1);
+        return adjustment >= 0
+            ? normalized + ((1 - normalized) * Math.Clamp(adjustment, 0, 0.95))
+            : normalized * (1 + Math.Clamp(adjustment, -1, 0));
+    }
 
     private static bool IsSourceType(string? actual, string expected) =>
         string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);

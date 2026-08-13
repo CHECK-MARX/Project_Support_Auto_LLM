@@ -8,6 +8,8 @@ public sealed record CoverageEvidenceCandidate
 
     public string SourceType { get; init; } = string.Empty;
 
+    public string? DocumentTitle { get; init; }
+
     public string? DocumentId { get; init; }
 
     public string? FilePath { get; init; }

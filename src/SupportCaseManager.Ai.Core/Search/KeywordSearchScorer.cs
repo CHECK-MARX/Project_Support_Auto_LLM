@@ -131,16 +131,18 @@ internal static class KeywordSearchScorer
 
         var coverage = covered / (double)Math.Max(1, coverageBase.Count);
         var fieldStrength = Math.Min(1.0, weightedScore / Math.Max(4.0, coverageBase.Sum(static term => term.Weight) * 4.0));
-        var score = (coverage * 0.62) + (fieldStrength * 0.28);
+        // Keep the theoretical maximum below 1.0 so strong candidates retain
+        // meaningful ordering instead of collapsing into a large 1.000 tie.
+        var score = (coverage * 0.55) + (fieldStrength * 0.25);
 
         if (titleMatches > 0)
         {
-            score += 0.07;
+            score += 0.10;
         }
 
         if (metadataMatches > 0)
         {
-            score += 0.05;
+            score += 0.06;
         }
 
         if (bodyMatches > 0 && titleMatches == 0 && metadataMatches == 0)

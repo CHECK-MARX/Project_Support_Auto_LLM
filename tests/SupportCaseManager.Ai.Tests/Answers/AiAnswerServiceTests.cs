@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
@@ -418,12 +419,90 @@ public class AiAnswerServiceTests
         var result = await service.GenerateDraftAsync(request);
 
         Assert.StartsWith($"[会社名]{Environment.NewLine}[お客様名] 様", result.CustomerReplyDraft);
-        Assert.Contains("【概要】", result.CustomerReplyDraft, StringComparison.Ordinal);
-        Assert.Contains("【手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【事前準備】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【GUIでの手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【CLIでの手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【解析結果の確認】", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("qacli analyze -P <project-directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("【注意点】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("【参照先】", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(result.Warnings, warning => warning.Contains("QACプロジェクト解析手順を補完", StringComparison.Ordinal));
+        Assert.Contains(result.Warnings, warning => warning.Contains("HowTo回答を選択済み根拠に基づく操作順へ補正", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not-json")]
+    [InlineData("{\"customerReplyDraft\":")]
+    public async Task GenerateDraftAsync_RecoversQacAnalysisProcedureForEmptyOrMalformedResponses(string response)
+    {
+        var service = CreateService(response);
+        var request = CreateAnalysisHowToRequest();
+
+        var result = await service.GenerateDraftAsync(request);
+
+        AssertAnalysisHowToStructure(result.CustomerReplyDraft);
+        Assert.Contains("qacli analyze -P <project-directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_UsesSameAnalysisHowToStructureForTimeout()
+    {
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            CreateAnalysisHowToRequest(),
+            new TimeoutException("simulated timeout"));
+
+        AssertAnalysisHowToStructure(result.CustomerReplyDraft);
+        Assert.Contains("qacli analyze -P <project-directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("PDFマニュアルの該当根拠", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_UsesQaguiProjectAnalysisAndDialogProgressFromEvidence()
+    {
+        var request = CreateAnalysisHowToRequest() with
+        {
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "analysis-live-manual",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    DocumentTitle = "Perforce-QAC-Manual",
+                    Text = "QAGUI以下の手順を実行します。[解析(N)]>プロジェクト全体のファイルベース解析:解析ダイアログボックス。解析中ダイアログボックスにプロセスが表示されます。QA CLIではqaclianalyze-cf-P<directory>を実行します。",
+                    Score = 0.95,
+                },
+            ],
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            request,
+            new TimeoutException("simulated timeout"));
+
+        Assert.Contains("[解析(N)]>プロジェクト全体のファイルベース解析", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("解析中ダイアログにプロセスが表示", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("qacli analyze -cf -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_PreservesStructuredAnalysisHowToFromSuccessfulLlm()
+    {
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "[会社名]\n[お客様名] 様\n\n【事前準備】\nソースとコンパイラ設定を確認します。\n\n【GUIでの手順】\nQAC GUIで解析を実行します。\n\n【CLIでの手順】\nqacli analyze -P <project-directory> を実行します。\n\n【解析結果の確認】\n解析結果を確認します。\n\n【注意点】\n対象バージョンを確認してください。\n\n【参照先】\nPerforce-QAC-Manual",
+            internalMemo = "",
+            needConfirmations = Array.Empty<string>(),
+            evidence = Array.Empty<object>(),
+            confidence = 0.9,
+            warnings = Array.Empty<string>(),
+        });
+        var result = await CreateService(response).GenerateDraftAsync(CreateAnalysisHowToRequest());
+
+        AssertAnalysisHowToStructure(result.CustomerReplyDraft);
+        Assert.Contains("QAC GUIで解析を実行", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -698,6 +777,43 @@ public class AiAnswerServiceTests
             new EvidenceBuilder(),
             new SafetyRedactionService(),
             new FakeLlmClient(llmResponse));
+    }
+
+    private static AnswerDraftRequest CreateAnalysisHowToRequest()
+    {
+        const string question = "QACで、プロジェクトを解析するための手順を教えてください。";
+        return new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = question,
+            InquiryFocus = new InquiryFocusExtractor().Extract(question),
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "analysis-manual",
+                    SourceType = "Manual",
+                    Title = "Perforce-QAC-Manual",
+                    DocumentTitle = "Perforce-QAC-Manual",
+                    PageNumber = 24,
+                    SectionTitle = "プロジェクトの解析",
+                    Text = "解析前にソースファイル、コンパイラ設定、インクルードパス、マクロ定義を確認します。QAC GUIの［解析］メニューで［解析を実行］を選択します。qacli analyze -P <project-directory> を実行します。解析終了後に解析結果を確認します。",
+                    Score = 0.95,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+        };
+    }
+
+    private static void AssertAnalysisHowToStructure(string reply)
+    {
+        Assert.StartsWith($"[会社名]{Environment.NewLine}[お客様名] 様", reply);
+        Assert.Contains("【事前準備】", reply, StringComparison.Ordinal);
+        Assert.Contains("【GUIでの手順】", reply, StringComparison.Ordinal);
+        Assert.Contains("【CLIでの手順】", reply, StringComparison.Ordinal);
+        Assert.Contains("【解析結果の確認】", reply, StringComparison.Ordinal);
+        Assert.Contains("【注意点】", reply, StringComparison.Ordinal);
+        Assert.Contains("【参照先】", reply, StringComparison.Ordinal);
     }
 
     private static AnswerDraftRequest CreateRequest(IReadOnlyList<SearchSource>? sources = null)

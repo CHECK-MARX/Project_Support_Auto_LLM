@@ -57,6 +57,68 @@ public sealed class CoverageAwareEvidenceSelectorTests
         Assert.Contains(result.Selected, static item => item.SourceType == "PastCaseNote");
     }
 
+    [Fact]
+    public void Select_SuppressesNearDuplicateTextEvenWhenItClaimsAdditionalCoverage()
+    {
+        var result = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisVerification"],
+            BaseMaxItems = 2,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("primary", 1, ["AnalysisProcedure"], 0.9) with
+                {
+                    Text = "Open the QAC project and run qacli analyze. Review the analysis progress and results.",
+                },
+                Candidate("archived-copy", 2, ["AnalysisProcedure", "AnalysisVerification"], 0.8) with
+                {
+                    Text = "Open the QAC project and run qacli analyze. Review the analysis progress and results.",
+                },
+            ],
+        });
+
+        Assert.Single(result.Selected);
+        Assert.Equal("primary", result.Selected[0].CandidateId);
+        Assert.Equal(1, result.RedundantCandidatesSkipped);
+    }
+
+    [Fact]
+    public void Select_SuppressesArchivedCopiesOfTheSameAnalysisProcedure()
+    {
+        var result = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisCommand", "AnalysisVerification"],
+            BaseMaxItems = 2,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("current", 1, ["AnalysisProcedure", "AnalysisCommand"], 0.9) with
+                {
+                    DocumentTitle = "Perforce-QAC-Manual",
+                    Text = "Use [PerforceQAC]>[Analysis]>[File-based Analysis]. Run qacli analyze -P project.",
+                },
+                Candidate("archive", 2, ["AnalysisVerification"], 0.85) with
+                {
+                    DocumentTitle = "Perforce_QAC_Manual",
+                    Text = "Archived wording: [PerforceQAC]>[Analysis]>[File-based Analysis], then qaclianalyze-P project and review results.",
+                },
+                Candidate("verification", 3, ["AnalysisVerification"], 0.7) with
+                {
+                    DocumentTitle = "Analysis Results Guide",
+                    Text = "Review the analysis results and progress in the analysis dialog.",
+                },
+            ],
+        });
+
+        Assert.Equal(["current", "verification"], result.Selected.Select(static item => item.CandidateId));
+        Assert.Equal(1, result.RedundantCandidatesSkipped);
+    }
+
     public static IEnumerable<object[]> FixtureCases() => LoadCases()
         .Select(static item => new object[] { item });
 

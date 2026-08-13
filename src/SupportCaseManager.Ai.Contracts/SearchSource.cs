@@ -63,4 +63,19 @@ public sealed record class SearchSource
 
     [JsonPropertyName("contentHash")]
     public string? ContentHash { get; init; }
+
+    [JsonPropertyName("documentTitle")]
+    public string? DocumentTitle { get; init; }
+
+    [JsonPropertyName("pageNumber")]
+    public int? PageNumber { get; init; }
+
+    [JsonPropertyName("chunkId")]
+    public string? ChunkId { get; init; }
+
+    [JsonPropertyName("archivePath")]
+    public string? ArchivePath { get; init; }
+
+    [JsonPropertyName("entryPath")]
+    public string? EntryPath { get; init; }
 }

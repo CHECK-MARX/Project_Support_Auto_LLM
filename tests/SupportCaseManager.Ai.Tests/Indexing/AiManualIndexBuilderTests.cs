@@ -165,7 +165,11 @@ public class AiManualIndexBuilderTests
         Assert.Equal(4, result.IndexedFileCount);
         Assert.Equal(0, result.UnsupportedFileCount);
         var document = await ReadIndexAsync(result.IndexFilePath);
-        Assert.Contains(document.Manuals, manual => manual.DocumentType == "Pdf" && manual.Text.Contains("License PDF Manual", StringComparison.Ordinal));
+        var pdf = Assert.Single(document.Manuals, manual => manual.DocumentType == "Pdf");
+        Assert.Contains("License PDF Manual", pdf.Text, StringComparison.Ordinal);
+        Assert.Equal(1, pdf.PageNumber);
+        Assert.False(string.IsNullOrWhiteSpace(pdf.ChunkId));
+        Assert.Equal(AiManualIndexDocument.CurrentVersion, document.Version);
         Assert.Contains(document.Manuals, manual => manual.DocumentType == "Word" && manual.Text.Contains("Word manual text", StringComparison.Ordinal));
         Assert.Contains(document.Manuals, manual => manual.DocumentType == "Html" && manual.Text.Contains("Browser setup guide", StringComparison.Ordinal));
         Assert.Contains(document.Manuals, manual => manual.DocumentType == "Csv" && manual.Text.Contains("Port setting", StringComparison.Ordinal));

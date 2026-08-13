@@ -64,6 +64,8 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
             ScoreBreakdown = score.ScoreBreakdown,
             DocumentId = note.NoteFilePath,
             SectionTitle = note.NoteKind,
+            DocumentTitle = note.Title,
+            ChunkId = note.Id,
         };
     }
 

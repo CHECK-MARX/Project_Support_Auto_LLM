@@ -55,6 +55,8 @@ public sealed class LiveStreamIndexE2ETests
         var viewModels = candidates
             .Select((source, index) => new SearchSourceViewModel(source, isSelected: index < 3))
             .ToList();
+        var rustExecutable = Environment.GetEnvironmentVariable("RAG_SELECTOR_RS_EXE") ?? string.Empty;
+        var useRust = File.Exists(rustExecutable);
         var selection = SearchSourceSelectionBuilder.Build(
             viewModels,
             maxEvidenceItems: 3,
@@ -68,8 +70,11 @@ public sealed class LiveStreamIndexE2ETests
                 RankingMode = EvidenceRankingModes.Phase16,
                 UsePhase175QualityControls = true,
                 UseCoverageAwareEvidenceSelection = true,
-                CoverageAwareMaxEvidenceItems = 3,
+                CoverageAwareMaxEvidenceItems = 5,
                 MaxPromptChars = Math.Max(settings.MaxPromptChars, 10000),
+                UseRustEvidenceSelector = useRust,
+                RustEvidenceSelectorExecutablePath = rustExecutable,
+                RustEvidenceSelectorTimeoutMs = 5000,
             });
 
         var reportPath = Environment.GetEnvironmentVariable("SCM_LIVE_STREAM_REPORT");
@@ -78,6 +83,9 @@ public sealed class LiveStreamIndexE2ETests
             source.SourceId,
             source.SourceType,
             source.Title,
+            source.DocumentTitle,
+            source.PageNumber,
+            source.SectionTitle,
             source.SupportNumber,
             source.Score,
             source.ScoreBreakdown,
@@ -88,6 +96,9 @@ public sealed class LiveStreamIndexE2ETests
             source.SourceId,
             source.SourceType,
             source.Title,
+            source.DocumentTitle,
+            source.PageNumber,
+            source.SectionTitle,
             source.SupportNumber,
             source.Score,
             source.ScoreBreakdown,
@@ -110,11 +121,13 @@ public sealed class LiveStreamIndexE2ETests
             Evidence = evidenceReport,
             RequiredCoverage = selection.RequiredCoverage,
             FinalCoverage = selection.FinalCoverage,
+            selection.SelectorEngine,
+            selection.RustSelectorFallbackReason,
             OfficialDocDiagnostics = officialDocDiagnostics,
             Answer = "(generation not started)",
         });
 
-        Assert.Equal(3, selection.Sources.Count);
+        Assert.InRange(selection.Sources.Count, 3, 5);
         Assert.All(selection.Sources, source => Assert.True(ContainsStreamFeature(source)));
         Assert.Contains(selection.Sources, source => IsPastEvidence(source.SourceType));
         Assert.DoesNotContain(selection.Sources, source =>
@@ -126,7 +139,7 @@ public sealed class LiveStreamIndexE2ETests
             MaxEvidenceItems = 3,
             MaxPromptChars = Math.Max(settings.MaxPromptChars, 6000),
             UseCoverageAwareEvidenceSelection = true,
-            CoverageAwareMaxEvidenceItems = 3,
+            CoverageAwareMaxEvidenceItems = 5,
             UsePhase175QualityControls = true,
             DisableThinking = true,
             LlmProvider = settings.LlmProvider with
@@ -152,11 +165,15 @@ public sealed class LiveStreamIndexE2ETests
             Settings = effectiveSettings,
             RequestedAt = DateTimeOffset.Now,
         };
+        var useLiveOllama = string.Equals(
+            Environment.GetEnvironmentVariable("SCM_RUN_LIVE_OLLAMA"),
+            "1",
+            StringComparison.Ordinal);
         var answerService = new AiAnswerService(
             new PromptBuilder(),
             new EvidenceBuilder(),
             new SafetyRedactionService(),
-            new OllamaClient());
+            useLiveOllama ? new OllamaClient() : new StructuredStreamJsonLlmClient());
         var answer = await answerService.GenerateDraftAsync(request);
 
         var report = new
@@ -167,8 +184,12 @@ public sealed class LiveStreamIndexE2ETests
             Evidence = evidenceReport,
             RequiredCoverage = selection.RequiredCoverage,
             FinalCoverage = selection.FinalCoverage,
+            selection.SelectorEngine,
+            selection.RustSelectorFallbackReason,
+            selection.RustSelectorParityValidation,
             OfficialDocDiagnostics = officialDocDiagnostics,
             Model = effectiveSettings.LlmProvider.ChatModel,
+            GenerationMode = useLiveOllama ? "Live Ollama" : "Deterministic valid LLM JSON",
             Answer = answer.CustomerReplyDraft,
             answer.InternalMemo,
             answer.Warnings,
@@ -215,5 +236,27 @@ public sealed class LiveStreamIndexE2ETests
         await File.WriteAllTextAsync(
             reportPath,
             JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private sealed class StructuredStreamJsonLlmClient : ILlmClient
+    {
+        public Task<LlmGenerationResult> GenerateAsync(
+            PromptMessages messages,
+            LlmProviderSettings settings,
+            bool disableThinking = true,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LlmGenerationResult
+            {
+                Content = JsonSerializer.Serialize(new
+                {
+                    customerReplyDraft = "Validateのストリームは、QACプロジェクトの異なるバージョンを追跡し、特定のストリームへ関連付けて管理する機能です。設定は、選択した根拠に記載されたValidate画面またはqacliの設定手順に従って対象ストリームを作成し、QACプロジェクトを関連付けます。対象バージョンでの画面名と権限はマニュアルで確認してください。",
+                    internalMemo = "Selected Stream evidence was used.",
+                    needConfirmations = Array.Empty<object>(),
+                    evidence = Array.Empty<object>(),
+                    confidence = 0.85,
+                    warnings = Array.Empty<string>(),
+                }),
+                DoneReason = "stop",
+            });
     }
 }

@@ -110,6 +110,33 @@ public class EvidenceBuilderTests
     }
 
     [Fact]
+    public void BuildEvidence_PreservesDocumentLocationMetadata()
+    {
+        var source = CreateSource("source-1", 0.83) with
+        {
+            DocumentTitle = "Perforce-QAC-Manual",
+            PageNumber = 14,
+            SectionTitle = "Analyzing a project",
+            ChunkId = "chunk-14",
+            DocumentId = "manual-1",
+            ArchivePath = @"C:\docs\manual.zip",
+            EntryPath = "manual/Perforce-QAC-Manual.pdf",
+            Url = "https://example.test/manual#analysis",
+        };
+
+        var item = Assert.Single(new EvidenceBuilder().BuildEvidence(CreateRequest([source])));
+
+        Assert.Equal(source.DocumentTitle, item.DocumentTitle);
+        Assert.Equal(source.PageNumber, item.PageNumber);
+        Assert.Equal(source.SectionTitle, item.SectionTitle);
+        Assert.Equal(source.ChunkId, item.ChunkId);
+        Assert.Equal(source.DocumentId, item.DocumentId);
+        Assert.Equal(source.ArchivePath, item.ArchivePath);
+        Assert.Equal(source.EntryPath, item.EntryPath);
+        Assert.Equal(source.Url, item.Url);
+    }
+
+    [Fact]
     public void CalculateConfidence_ReturnsZeroWhenNoEvidence()
     {
         var builder = new EvidenceBuilder();

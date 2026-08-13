@@ -28,6 +28,8 @@ public static partial class CoverageAnalyzer
     public const string AnalysisProcedure = "AnalysisProcedure";
     public const string AnalysisCommand = "AnalysisCommand";
     public const string AnalysisVerification = "AnalysisVerification";
+    public const string Preparation = "Preparation";
+    public const string ProjectSetup = "ProjectSetup";
 
     private static readonly string[] UploadRequirements =
     [
@@ -53,7 +55,7 @@ public static partial class CoverageAnalyzer
 
     private static readonly string[] CoverageSelectionAnalysisRequirements =
     [
-        AnalysisProcedure, AnalysisCommand, AnalysisVerification,
+        Preparation, ProjectSetup, AnalysisProcedure, AnalysisCommand, AnalysisVerification,
     ];
 
     public static IReadOnlyList<string> Required(string question, TopicEntityProfile profile)
@@ -244,23 +246,64 @@ public static partial class CoverageAnalyzer
 
         var hasAnalysisOperation = ContainsAny(
             value,
-            "qacli analyze", "qaclianalyze", "プロジェクトを解析", "解析を実行", "解析の実行",
-            "解析する", "analyze project", "run analysis", "execute analysis");
+            "解析", "qacli analyze", "qaclianalyze", "プロジェクトを解析", "解析を実行", "解析の実行",
+            "解析する", "解析開始", "analyze project", "run analysis", "execute analysis",
+            "analysis result", "analysis status", "analysis dialog");
         if (hasAnalysisOperation)
         {
-            observed.Add(AnalysisProcedure);
-            if (ContainsAny(value, "qacli analyze", "qaclianalyze", "command", "コマンド", "--", "-P", "-cf"))
+            var hasGuiProcedure = ContainsAnalysisGuiProcedure(value);
+            var hasExplicitProcedure = hasGuiProcedure || ContainsAny(
+                value,
+                "以下の手順", "次の手順", "解析を実行", "解析を開始",
+                "run analysis", "execute analysis", "start analysis");
+            if (hasExplicitProcedure)
+            {
+                observed.Add(AnalysisProcedure);
+            }
+
+            if (ContainsAny(value, "qacli analyze", "qaclianalyze"))
             {
                 observed.Add(AnalysisCommand);
             }
 
-            if (ContainsAny(value, "結果", "確認", "レポート", "status", "result", "report", "verify", "check"))
+            var hasExplicitAnalysisVerification = ContainsAny(
+                value,
+                "解析ダイアログ", "解析中", "解析完了", "解析が完了",
+                "問題パネル", "問題ビュー", "メッセージを確認", "analysis status",
+                "analysis complete", "analysis progress", "analysis dialog");
+            var hasAnalysisResultReview = AnalysisResultReviewRegex().IsMatch(value);
+            if (hasExplicitAnalysisVerification || hasAnalysisResultReview)
             {
                 observed.Add(AnalysisVerification);
             }
         }
+
+        var hasQacProject = ContainsAny(value, "QACプロジェクト", "Perforce QAC project", "QAC project");
+        if (hasQacProject && ContainsAny(
+            value,
+            "ソースファイル", "コンパイラ", "インクルード", "マクロ定義",
+            "source file", "compiler", "include path", "macro"))
+        {
+            observed.Add(Preparation);
+        }
+
+        if (hasQacProject && ContainsAny(
+            value,
+            "作成", "開く", "登録", "設定", "プロジェクトファイル",
+            "create", "open", "register", "configure", "project file"))
+        {
+            observed.Add(ProjectSetup);
+        }
         return observed;
     }
+
+    private static bool ContainsAnalysisGuiProcedure(string value) =>
+        ContainsAny(
+            value,
+            "]>[解析]>", "]>[解析(", "]>[解析]", "［解析］", "[解析]", "］＞［解析］＞", "［解析（",
+            "プロジェクト全体のファイルベース解析", "Analyze Project", "Run Analysis") ||
+        (ContainsAny(value, "QAGUIで", "QA GUIで", "GUIで") &&
+         ContainsAny(value, "解析を実行", "解析を開始", "ファイルベース解析", "ファイルベース解析を実行"));
 
     private static bool ContainsAny(string? value, params string[] terms) =>
         terms.Any(term => (value ?? string.Empty).Contains(term, StringComparison.OrdinalIgnoreCase));
@@ -270,4 +313,7 @@ public static partial class CoverageAnalyzer
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_])--[A-Za-z0-9][A-Za-z0-9_-]*", RegexOptions.CultureInvariant)]
     private static partial Regex OptionRegex();
+
+    [GeneratedRegex(@"(?:解析結果|解析の結果).{0,80}(?:確認|表示|参照)|(?:確認|表示|参照).{0,80}(?:解析結果|解析の結果)|analysis result.{0,80}(?:review|check|view)|(?:review|check|view).{0,80}analysis result", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline)]
+    private static partial Regex AnalysisResultReviewRegex();
 }

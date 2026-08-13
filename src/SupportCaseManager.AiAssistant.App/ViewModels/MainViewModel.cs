@@ -19,6 +19,7 @@ using SupportCaseManager.Ai.Core.Launch;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Notes;
 using SupportCaseManager.Ai.Core.Prompts;
+using SupportCaseManager.Ai.Core.Ranking;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.Ai.Core.Settings;
 using SupportCaseManager.AiAssistant.App.Appearance;
@@ -62,7 +63,7 @@ public sealed class MainViewModel : ObservableObject
     private const int FastManualMaxEvidenceItems = 2;
     private const int FastManualMaxOutputTokens = 600;
     private const int ExpandedProcedureMinPromptChars = 8000;
-    private const int ExpandedProcedureMinOutputTokens = 600;
+    private const int ExpandedProcedureMinOutputTokens = 800;
 
     private readonly IAiSettingsStore settingsStore;
     private readonly ICaseContextBuilder caseContextBuilder;
@@ -2524,23 +2525,23 @@ public sealed class MainViewModel : ObservableObject
                     $"Draft generation canceled. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
                 return;
             }
-            catch (Exception ex) when (CanBuildManualTimeoutFallback(lastRequest, ex))
+            catch (Exception ex) when (CanBuildEvidenceTimeoutFallback(lastRequest, ex))
             {
-                lastResult = BuildManualTimeoutFallbackResult(lastRequest, ex);
+                lastResult = AnswerPostProcessor.BuildFailureFallback(lastRequest, ex);
                 ApplyDraftResult(lastResult);
                 GenerationDiagnosticsText = FormatGenerationFailureDiagnostics(lastRequest, ex)
                     + Environment.NewLine
-                    + "LLMタイムアウトのため、送信済みのマニュアル根拠を回答案として表示しました。";
+                    + "LLMタイムアウトのため、送信済みの選択根拠全体から構造化回答案を生成しました。";
                 ErrorText = FormatExceptionForUi(ex);
                 DraftProviderStatusText = FormatDraftProviderStatus(provider, model, provider == "Ollama", lastUsedSources.Count, isSuccess: false);
-                StatusMessage = "LLMが時間内に完了しなかったため、PDFマニュアルの該当根拠を回答案として表示しました。";
-                LastOperationResult = $"Draft generation completed with manual fallback. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}; Error={ex.GetType().Name}";
+                StatusMessage = "LLMが時間内に完了しなかったため、選択済み根拠から構造化回答案を生成しました。";
+                LastOperationResult = $"Draft generation completed with evidence fallback. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}; Error={ex.GetType().Name}";
                 GenerationState = "CompletedWithFallback";
-                GenerationSkippedReason = "LlmTimeoutManualFallback";
-                SetOperationProgress(100, "マニュアル根拠を表示しました");
+                GenerationSkippedReason = "LlmTimeoutEvidenceFallback";
+                SetOperationProgress(100, "選択根拠から構造化回答を生成しました");
                 UpdateRagDiagnostics();
                 await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
-                    $"Draft generation timed out; manual fallback displayed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
+                    $"Draft generation timed out; structured evidence fallback displayed. Provider={provider}; Model={model}; Evidence={lastUsedSources.Count}");
                 return;
             }
             catch (Exception ex)
@@ -3980,9 +3981,7 @@ public sealed class MainViewModel : ObservableObject
         IReadOnlyList<SearchSource> sources,
         InquiryFocus inquiryFocus)
     {
-        if (sources.Count == 0 || sources.Any(static source =>
-            !string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase)))
+        if (sources.Count == 0)
         {
             return false;
         }
@@ -3990,9 +3989,16 @@ public sealed class MainViewModel : ObservableObject
         var questionTypes = new QuestionClassifier()
             .Classify(InquiryText, inquiryFocus)
             .QuestionTypes;
+        var profile = TopicEntityAnalyzer.Extract(
+            InquiryText,
+            SupportTopicCatalog.Create(ResolveEffectiveProductName(sources)));
+        var analysisHowTo = questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) &&
+            profile.Operations.Contains("Analysis", StringComparer.Ordinal);
+        var configurationHowTo = questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) &&
+            questionTypes.Contains(QuestionTypes.ConfigurationQuestion, StringComparer.OrdinalIgnoreCase);
         return inquiryFocus.RequiredCoverage.Count > 1 ||
-            (questionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) &&
-             questionTypes.Contains(QuestionTypes.ConfigurationQuestion, StringComparer.OrdinalIgnoreCase));
+            analysisHowTo ||
+            configurationHowTo;
     }
 
     private bool ShouldUseFastManualRoute(
@@ -4129,7 +4135,7 @@ public sealed class MainViewModel : ObservableObject
             UsePhase175QualityControls = UsePhase175QualityControls || automaticCoverageSelection,
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection || automaticCoverageSelection,
             CoverageAwareMaxEvidenceItems = automaticCoverageSelection
-                ? Math.Clamp(MaxEvidenceItems, 1, 5)
+                ? Math.Clamp(CoverageAwareMaxEvidenceItems, 3, 5)
                 : CoverageAwareMaxEvidenceItems,
             UseRustEvidenceSelector = UseRustEvidenceSelector,
             UsePersistentRustEvidenceSelector = UsePersistentRustEvidenceSelector,
@@ -4352,10 +4358,10 @@ public sealed class MainViewModel : ObservableObject
             request.Sources.All(static source => !string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase));
     }
 
-    private static bool CanBuildManualTimeoutFallback(AnswerDraftRequest request, Exception exception)
+    private static bool CanBuildEvidenceTimeoutFallback(AnswerDraftRequest request, Exception exception)
     {
         return IsTimeoutException(exception)
-            && request.Sources.Any(static source => string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase));
+            && request.Sources.Count > 0;
     }
 
     private static bool IsTimeoutException(Exception exception)

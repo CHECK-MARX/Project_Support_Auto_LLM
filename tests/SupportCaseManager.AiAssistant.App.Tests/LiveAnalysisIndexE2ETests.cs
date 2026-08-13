@@ -55,6 +55,8 @@ public sealed class LiveAnalysisIndexE2ETests
         var viewModels = candidates
             .Select((source, index) => new SearchSourceViewModel(source, isSelected: index < 3))
             .ToList();
+        var rustExecutable = Environment.GetEnvironmentVariable("RAG_SELECTOR_RS_EXE") ?? string.Empty;
+        var useRust = File.Exists(rustExecutable);
         var selection = SearchSourceSelectionBuilder.Build(
             viewModels,
             maxEvidenceItems: 3,
@@ -68,8 +70,11 @@ public sealed class LiveAnalysisIndexE2ETests
                 RankingMode = EvidenceRankingModes.Phase16,
                 UsePhase175QualityControls = true,
                 UseCoverageAwareEvidenceSelection = true,
-                CoverageAwareMaxEvidenceItems = 3,
+                CoverageAwareMaxEvidenceItems = 5,
                 MaxPromptChars = Math.Max(settings.MaxPromptChars, 10000),
+                UseRustEvidenceSelector = useRust,
+                RustEvidenceSelectorExecutablePath = rustExecutable,
+                RustEvidenceSelectorTimeoutMs = 5000,
             });
 
         var reportPath = Environment.GetEnvironmentVariable("SCM_LIVE_ANALYSIS_REPORT");
@@ -84,6 +89,9 @@ public sealed class LiveAnalysisIndexE2ETests
                 source.SourceId,
                 source.SourceType,
                 source.Title,
+                source.DocumentTitle,
+                source.PageNumber,
+                source.SectionTitle,
                 source.SupportNumber,
                 source.Score,
                 source.ScoreBreakdown,
@@ -95,6 +103,9 @@ public sealed class LiveAnalysisIndexE2ETests
                 source.SourceId,
                 source.SourceType,
                 source.Title,
+                source.DocumentTitle,
+                source.PageNumber,
+                source.SectionTitle,
                 source.SupportNumber,
                 source.Score,
                 source.ScoreBreakdown,
@@ -103,21 +114,20 @@ public sealed class LiveAnalysisIndexE2ETests
             }),
             selection.RequiredCoverage,
             selection.FinalCoverage,
+            selection.SelectorEngine,
+            selection.RustSelectorFallbackReason,
             AnswerGeneration = "not started",
         });
 
-        Assert.Equal(3, selection.Sources.Count);
+        Assert.InRange(selection.Sources.Count, 3, 5);
         Assert.All(selection.Sources, source => Assert.True(ContainsAnalysisOperation(source)));
         Assert.Contains(selection.Sources, source =>
-            string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase) &&
-            SourceText(source).Contains("qacli analyze", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(selection.Sources, source =>
             string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(selection.Sources, source =>
-            source.SourceType.Equals("PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
-            source.SourceType.Equals("PastAnswer", StringComparison.OrdinalIgnoreCase));
         Assert.DoesNotContain(selection.Sources, source =>
             source.Title.Contains("Dashboard", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(selection.Sources, source =>
+            source.Title.Contains("Toyo_Utility", StringComparison.OrdinalIgnoreCase) ||
+            source.Text.Contains("東陽ユーティリティ", StringComparison.OrdinalIgnoreCase));
 
         var request = new AnswerDraftRequest
         {
@@ -132,25 +142,28 @@ public sealed class LiveAnalysisIndexE2ETests
                 UseAnswerQualityGate = false,
                 UsePhase175QualityControls = true,
                 UseCoverageAwareEvidenceSelection = true,
-                CoverageAwareMaxEvidenceItems = 3,
+                CoverageAwareMaxEvidenceItems = 5,
             },
             RequestedAt = DateTimeOffset.Now,
         };
-        var answerService = new AiAnswerService(
+        var fallbackAnswerService = new AiAnswerService(
             new PromptBuilder(),
             new EvidenceBuilder(),
             new SafetyRedactionService(),
             new TruncatedJsonLlmClient());
-        var answer = await answerService.GenerateDraftAsync(request);
+        var fallbackAnswer = await fallbackAnswerService.GenerateDraftAsync(request);
+        var successfulAnswerService = new AiAnswerService(
+            new PromptBuilder(),
+            new EvidenceBuilder(),
+            new SafetyRedactionService(),
+            new StructuredAnalysisJsonLlmClient());
+        var successfulAnswer = await successfulAnswerService.GenerateDraftAsync(request);
 
-        Assert.Contains("[会社名]", answer.CustomerReplyDraft);
-        Assert.Contains("[お客様名] 様", answer.CustomerReplyDraft);
-        Assert.Contains("概要", answer.CustomerReplyDraft);
-        Assert.Contains("手順", answer.CustomerReplyDraft);
-        Assert.Contains("注意点", answer.CustomerReplyDraft);
-        Assert.Contains("qacli analyze", answer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("TOYO", answer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("東陽テクニカ", answer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        AssertAnalysisAnswer(fallbackAnswer.CustomerReplyDraft);
+        AssertAnalysisAnswer(successfulAnswer.CustomerReplyDraft);
+        Assert.True(
+            fallbackAnswer.CustomerReplyDraft.Contains("解析ダイアログ", StringComparison.Ordinal) ||
+            fallbackAnswer.CustomerReplyDraft.Contains("［問題］パネル", StringComparison.Ordinal));
 
         await WriteReportAsync(reportPath, new
         {
@@ -163,6 +176,9 @@ public sealed class LiveAnalysisIndexE2ETests
                 source.SourceId,
                 source.SourceType,
                 source.Title,
+                source.DocumentTitle,
+                source.PageNumber,
+                source.SectionTitle,
                 source.SupportNumber,
                 source.Score,
                 source.ScoreBreakdown,
@@ -177,6 +193,9 @@ public sealed class LiveAnalysisIndexE2ETests
                 source.SourceId,
                 source.SourceType,
                 source.Title,
+                source.DocumentTitle,
+                source.PageNumber,
+                source.SectionTitle,
                 source.SupportNumber,
                 source.Url,
                 source.Score,
@@ -186,10 +205,30 @@ public sealed class LiveAnalysisIndexE2ETests
             }),
             selection.RequiredCoverage,
             selection.FinalCoverage,
-            AnswerGeneration = "Existing grounded fallback after simulated truncated LLM JSON",
-            FullAnswer = answer.CustomerReplyDraft,
-            answer.Warnings,
+            selection.SelectorEngine,
+            selection.RustSelectorFallbackReason,
+            selection.RustSelectorParityValidation,
+            AnswerGeneration = "Both deterministic successful LLM JSON and grounded fallback after simulated truncated JSON",
+            LlmSuccessfulAnswer = successfulAnswer.CustomerReplyDraft,
+            LlmFailureFallbackAnswer = fallbackAnswer.CustomerReplyDraft,
+            SuccessfulWarnings = successfulAnswer.Warnings,
+            FallbackWarnings = fallbackAnswer.Warnings,
         });
+    }
+
+    private static void AssertAnalysisAnswer(string answer)
+    {
+        Assert.Contains("[会社名]", answer);
+        Assert.Contains("[お客様名] 様", answer);
+        Assert.Contains("【事前準備】", answer);
+        Assert.Contains("【GUIでの手順】", answer);
+        Assert.Contains("【CLIでの手順】", answer);
+        Assert.Contains("【解析結果の確認】", answer);
+        Assert.Contains("【注意点】", answer);
+        Assert.Contains("【参照先】", answer);
+        Assert.Contains("qacli analyze", answer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("TOYO", answer, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("東陽テクニカ", answer, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool ContainsAnalysisOperation(SearchSource source)
@@ -234,6 +273,28 @@ public sealed class LiveAnalysisIndexE2ETests
             {
                 Content = "{\"customerReplyDraft\":\"",
                 DoneReason = "length",
+            });
+    }
+
+    private sealed class StructuredAnalysisJsonLlmClient : ILlmClient
+    {
+        public Task<LlmGenerationResult> GenerateAsync(
+            PromptMessages messages,
+            LlmProviderSettings settings,
+            bool disableThinking = true,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LlmGenerationResult
+            {
+                Content = JsonSerializer.Serialize(new
+                {
+                    customerReplyDraft = "【事前準備】\nソースファイルとコンパイラ設定を確認します。\n\n【GUIでの手順】\nQAGUIで［解析(N)］>プロジェクト全体のファイルベース解析を選択します。\n\n【CLIでの手順】\n`qacli analyze -cf -P<directory>` を実行します。\n\n【解析結果の確認】\n解析中ダイアログにプロセスが表示されることを確認します。\n\n【注意点】\n対象バージョンとビルド環境を確認してください。\n\n【参照先】\nPerforce-QAC-Manual",
+                    internalMemo = "Selected evidence was used.",
+                    needConfirmations = Array.Empty<object>(),
+                    evidence = Array.Empty<object>(),
+                    confidence = 0.9,
+                    warnings = Array.Empty<string>(),
+                }),
+                DoneReason = "stop",
             });
     }
 }

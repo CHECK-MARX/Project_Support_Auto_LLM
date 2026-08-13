@@ -57,7 +57,7 @@ internal static class ManualDocumentTextExtractor
             ".adoc" or ".asciidoc" => new ManualDocumentContent(
                 await ReadTextWithFallbackAsync(filePath, cancellationToken),
                 "AsciiDoc"),
-            ".pdf" => new ManualDocumentContent(ReadPdfText(filePath), "Pdf"),
+            ".pdf" => ReadPdfContent(filePath),
             ".docx" => new ManualDocumentContent(ReadDocxText(filePath), "Word"),
             ".xlsx" => new ManualDocumentContent(ReadXlsxText(filePath), "Excel"),
             ".pptx" => new ManualDocumentContent(ReadPptxText(filePath), "PowerPoint"),
@@ -111,9 +111,10 @@ internal static class ManualDocumentTextExtractor
             : text;
     }
 
-    private static string ReadPdfText(string filePath)
+    private static ManualDocumentContent ReadPdfContent(string filePath)
     {
         var builder = new StringBuilder();
+        var pages = new List<ManualDocumentPage>();
         using var document = PdfDocument.Open(filePath);
         foreach (var page in document.GetPages())
         {
@@ -121,10 +122,11 @@ internal static class ManualDocumentTextExtractor
             {
                 builder.AppendLine(page.Text);
                 builder.AppendLine();
+                pages.Add(new ManualDocumentPage(page.Number, page.Text));
             }
         }
 
-        return builder.ToString();
+        return new ManualDocumentContent(builder.ToString(), "Pdf", pages);
     }
 
     private static string ReadDocxText(string filePath)
@@ -219,4 +221,9 @@ internal static class ManualDocumentTextExtractor
     }
 }
 
-internal sealed record ManualDocumentContent(string Text, string DocumentType);
+internal sealed record ManualDocumentContent(
+    string Text,
+    string DocumentType,
+    IReadOnlyList<ManualDocumentPage>? Pages = null);
+
+internal sealed record ManualDocumentPage(int PageNumber, string Text);

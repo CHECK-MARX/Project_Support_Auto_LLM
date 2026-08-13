@@ -31,4 +31,28 @@ public sealed class CustomerReplyRecipientFormatterTests
 
         Assert.StartsWith($"顧客株式会社{Environment.NewLine}山田 太郎 様", result);
     }
+
+    [Fact]
+    public void EnsureHeader_RemovesDuplicatePlaceholderRecipientFromBody()
+    {
+        var result = CustomerReplyRecipientFormatter.EnsureHeader(
+            new CaseContext(),
+            "[会社名]\n[お客様名] 様\n\n[お客様名] 様\n\n回答本文");
+
+        Assert.Equal(1, CountOccurrences(result, "[会社名]"));
+        Assert.Equal(1, CountOccurrences(result, "[お客様名] 様"));
+        Assert.Contains("回答本文", result, StringComparison.Ordinal);
+    }
+
+    private static int CountOccurrences(string value, string term)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = value.IndexOf(term, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count += 1;
+            offset += term.Length;
+        }
+        return count;
+    }
 }
