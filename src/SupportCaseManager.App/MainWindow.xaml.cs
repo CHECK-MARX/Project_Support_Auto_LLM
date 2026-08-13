@@ -2902,6 +2902,12 @@ public partial class MainWindow : Window
                 foreach (var entry in Directory.EnumerateDirectories(current))
                 {
                     token.ThrowIfCancellationRequested();
+                    if (IsLinkedDirectory(entry))
+                    {
+                        _logger.Debug($"Directory scan skipped linked directory: {entry}");
+                        continue;
+                    }
+
                     var normalizedEntry = NormalizePath(entry);
                     if (string.IsNullOrWhiteSpace(normalizedEntry))
                     {
@@ -3069,6 +3075,11 @@ public partial class MainWindow : Window
             {
                 foreach (var entry in Directory.EnumerateDirectories(current))
                 {
+                    if (IsLinkedDirectory(entry))
+                    {
+                        continue;
+                    }
+
                     var info = new DirectoryInfo(entry);
                     var record = CaseParser.ParseCaseFromDirectory(info);
                     if (record != null)
@@ -3914,6 +3925,20 @@ public partial class MainWindow : Window
             ? basePath
             : basePath + Path.DirectorySeparatorChar;
         return target.StartsWith(withSeparator, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsLinkedDirectory(string path)
+    {
+        try
+        {
+            return new DirectoryInfo(path).LinkTarget is not null;
+        }
+        catch (Exception) when (
+            !string.IsNullOrWhiteSpace(path))
+        {
+            // Fail closed for entries whose metadata cannot be inspected.
+            return true;
+        }
     }
 
     private static string NormalizeStatusLabel(string? value)

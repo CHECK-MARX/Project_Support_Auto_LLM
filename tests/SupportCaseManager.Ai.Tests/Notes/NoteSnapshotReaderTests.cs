@@ -88,4 +88,31 @@ public class NoteSnapshotReaderTests
 
         Assert.Equal(expectedLastWriteTime, File.GetLastWriteTime(notePath));
     }
+
+    [Fact]
+    public async Task ReadAllAsync_DoesNotFollowSymbolicLinkOutsideCaseFolder()
+    {
+        using var caseFolder = new TempDirectory();
+        using var outsideFolder = new TempDirectory();
+        var outsidePath = System.IO.Path.Combine(outsideFolder.Path, "outside.txt");
+        var linkedPath = System.IO.Path.Combine(caseFolder.Path, "linked.txt");
+        await File.WriteAllTextAsync(outsidePath, "outside", Encoding.UTF8);
+
+        try
+        {
+            File.CreateSymbolicLink(linkedPath, outsidePath);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var reader = new NoteSnapshotReader();
+
+        var notes = await reader.ReadAllAsync(caseFolder.Path);
+        var direct = await reader.ReadAsync(linkedPath);
+
+        Assert.Empty(notes);
+        Assert.Null(direct);
+    }
 }

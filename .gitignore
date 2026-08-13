@@ -42,6 +42,16 @@ _publish/
 _verify_build/
 **/_verify_build/
 
+# Local Codex diagnostics and temporary integration outputs
+.codex-tmp/
+.pytest-tmp*/
+
+# Rust compiler output
+**/target/
+
+# CI/package output (rebuilt by tools/rag-selector-rs/package.ps1)
+artifacts/rag-selector/
+
 # Generated document iterations
 docs/*.docx
 docs/assets/

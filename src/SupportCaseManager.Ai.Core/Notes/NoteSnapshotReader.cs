@@ -15,11 +15,26 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
             return [];
         }
 
+        string normalizedCaseFolder;
+        try
+        {
+            normalizedCaseFolder = Path.GetFullPath(caseFolderPath);
+        }
+        catch (Exception) when (!string.IsNullOrWhiteSpace(caseFolderPath))
+        {
+            return [];
+        }
+
         var notes = new List<NoteSnapshot>();
-        foreach (var path in Directory.EnumerateFiles(caseFolderPath, "*.txt").OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
+        foreach (var path in Directory.EnumerateFiles(normalizedCaseFolder, "*.txt").OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var snapshot = await ReadAsync(path, cancellationToken);
+            if (!TryResolveReadableFile(normalizedCaseFolder, path, out var normalizedPath))
+            {
+                continue;
+            }
+
+            var snapshot = await ReadCoreAsync(normalizedPath, cancellationToken);
             if (snapshot is not null)
             {
                 notes.Add(snapshot);
@@ -33,11 +48,18 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
         string noteFilePath,
         CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(noteFilePath) || !File.Exists(noteFilePath))
+        if (!TryResolveReadableFile(rootPath: null, noteFilePath, out var normalizedPath))
         {
             return null;
         }
 
+        return await ReadCoreAsync(normalizedPath, cancellationToken);
+    }
+
+    private static async Task<NoteSnapshot?> ReadCoreAsync(
+        string noteFilePath,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var bytes = await File.ReadAllBytesAsync(noteFilePath, cancellationToken);
@@ -61,6 +83,41 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
         catch (UnauthorizedAccessException)
         {
             return null;
+        }
+    }
+
+    private static bool TryResolveReadableFile(string? rootPath, string? filePath, out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(filePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            normalizedPath = Path.GetFullPath(filePath);
+            if (!File.Exists(normalizedPath) || new FileInfo(normalizedPath).LinkTarget is not null)
+            {
+                return false;
+            }
+
+            if (string.IsNullOrWhiteSpace(rootPath))
+            {
+                return true;
+            }
+
+            var normalizedRoot = Path.GetFullPath(rootPath);
+            var relative = Path.GetRelativePath(normalizedRoot, normalizedPath);
+            return !Path.IsPathRooted(relative)
+                && !string.Equals(relative, "..", StringComparison.Ordinal)
+                && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+        }
+        catch (Exception) when (!string.IsNullOrWhiteSpace(filePath))
+        {
+            normalizedPath = string.Empty;
+            return false;
         }
     }
 

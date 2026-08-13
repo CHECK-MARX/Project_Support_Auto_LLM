@@ -1,0 +1,39 @@
+name: Repository Hygiene
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  generated-output-check:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject tracked generated outputs
+        run: |
+          $patterns = @(
+            '(^|/)\.codex-tmp/',
+            '(^|/)\.pytest-tmp[^/]*/',
+            '(^|/)target/',
+            '(^|/)[Bb]in/',
+            '(^|/)[Oo]bj/',
+            '(^|/)TestResults/',
+            '^tools/rag-lab/reports/generated/',
+            '^artifacts/rag-selector/'
+          )
+          $tracked = @(git ls-files)
+          $generated = @($tracked | Where-Object {
+            $path = $_
+            $patterns | Where-Object { $path -match $_ } | Select-Object -First 1
+          })
+
+          if ($generated.Count -gt 0) {
+            Write-Error ("Generated output is tracked by Git:`n" + ($generated -join "`n"))
+            exit 1
+          }
+
+          Write-Host "Repository hygiene check passed: no generated build or test output is tracked."
