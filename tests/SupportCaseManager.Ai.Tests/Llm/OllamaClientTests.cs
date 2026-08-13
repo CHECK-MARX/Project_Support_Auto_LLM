@@ -85,6 +85,77 @@ public class OllamaClientTests
         Assert.Equal(8192, options.GetProperty("num_ctx").GetInt32());
     }
 
+    [Fact]
+    public async Task GenerateAsync_OmitsThinkAndFormatForPlainTextModelProfile()
+    {
+        string? requestJson = null;
+        var client = new OllamaClient(new StubHttpMessageHandler(async request =>
+        {
+            requestJson = await request.Content!.ReadAsStringAsync();
+            return JsonResponse("""
+                {
+                  "message": { "role": "assistant", "content": "plain answer" },
+                  "done": true
+                }
+                """);
+        }));
+        var settings = CreateSettings(chatModel: "gemma4:26b") with
+        {
+            ThinkingParameterType = ThinkingParameterTypes.None,
+            StructuredOutputMode = StructuredOutputModes.PlainText,
+        };
+
+        _ = await client.GenerateAsync(CreateMessages(), settings);
+
+        using var document = JsonDocument.Parse(Assert.IsType<string>(requestJson));
+        Assert.False(document.RootElement.TryGetProperty("think", out _));
+        Assert.False(document.RootElement.TryGetProperty("format", out _));
+        var messages = document.RootElement.GetProperty("messages").EnumerateArray().ToList();
+        Assert.Equal("system prompt", messages[0].GetProperty("content").GetString());
+        Assert.Equal("user prompt", messages[1].GetProperty("content").GetString());
+    }
+
+    [Fact]
+    public async Task GenerateAsync_RetriesWithoutUnsupportedThinkAndFormatParameters()
+    {
+        var requests = new List<string>();
+        var client = new OllamaClient(new StubHttpMessageHandler(async request =>
+        {
+            requests.Add(await request.Content!.ReadAsStringAsync());
+            if (requests.Count == 1)
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest)
+                {
+                    Content = new StringContent("unsupported parameter: think", Encoding.UTF8, "text/plain"),
+                };
+            }
+
+            return JsonResponse("""
+                {
+                  "message": { "role": "assistant", "content": "{}" },
+                  "done": true
+                }
+                """);
+        }));
+        var settings = CreateSettings(chatModel: "qwen3:8b") with
+        {
+            ThinkingParameterType = ThinkingParameterTypes.Boolean,
+            ThinkingValue = "false",
+            StructuredOutputMode = StructuredOutputModes.Json,
+        };
+
+        var result = await client.GenerateAsync(CreateMessages(), settings);
+
+        Assert.Equal(2, requests.Count);
+        using var first = JsonDocument.Parse(requests[0]);
+        using var retry = JsonDocument.Parse(requests[1]);
+        Assert.True(first.RootElement.TryGetProperty("think", out _));
+        Assert.True(first.RootElement.TryGetProperty("format", out _));
+        Assert.False(retry.RootElement.TryGetProperty("think", out _));
+        Assert.False(retry.RootElement.TryGetProperty("format", out _));
+        Assert.Contains(result.Diagnostics, item => item.Contains("Unsupported Ollama parameter", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("http://localhost:11434", "http://localhost:11434/api/chat")]
     [InlineData("http://localhost:11434/", "http://localhost:11434/api/chat")]

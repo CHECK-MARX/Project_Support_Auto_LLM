@@ -14,6 +14,28 @@ namespace SupportCaseManager.Ai.Tests.Facts;
 public sealed class GoldenQuestionFactTests
 {
     [Fact]
+    public void QuestionClassifier_DetectsCommandAndHowToQuestion()
+    {
+        var classification = new QuestionClassifier().Classify(
+            "QACの結果をValidateへアップロードするコマンドと一連の手順を教えてください。");
+
+        Assert.Contains(QuestionTypes.CommandQuestion, classification.QuestionTypes);
+        Assert.Contains(QuestionTypes.HowToQuestion, classification.QuestionTypes);
+    }
+
+    [Theory]
+    [InlineData("接続設定を確認したい", QuestionTypes.ConfigurationQuestion)]
+    [InlineData("対象バージョンを教えて", QuestionTypes.VersionQuestion)]
+    [InlineData("権限不足を解消したい", QuestionTypes.PermissionQuestion)]
+    [InlineData("エラーコードの意味を教えて", QuestionTypes.ErrorMessageQuestion)]
+    public void QuestionClassifier_DetectsAdditionalPhase15Types(string inquiry, string expected)
+    {
+        var classification = new QuestionClassifier().Classify(inquiry);
+
+        Assert.Contains(expected, classification.QuestionTypes);
+    }
+
+    [Fact]
     public void QuestionClassifier_ClassifiesLatestVersionQuestion()
     {
         var classification = new QuestionClassifier().Classify("現在のCxSAST最新バージョンは何でしょうか？EP、HFの最新バージョンも教えてください。");
@@ -45,6 +67,17 @@ public sealed class GoldenQuestionFactTests
         Assert.Contains(FactKeys.UpgradePossibility, classification.RequestedFacts);
         Assert.Contains(FactKeys.CurrentInstalledVersion, classification.RequestedFacts);
         Assert.Equal("SAST 9.7.4 HF2", classification.CurrentInstalledVersion);
+    }
+
+    [Theory]
+    [InlineData("How to configure the license server?", QuestionTypes.HowToQuestion)]
+    [InlineData("Is this feature supported?", QuestionTypes.FeatureAvailabilityQuestion)]
+    [InlineData("The application throws an exception and timeout.", QuestionTypes.TroubleshootingQuestion)]
+    public void QuestionClassifier_ClassifiesOperationalQuestions(string inquiry, string expectedType)
+    {
+        var classification = new QuestionClassifier().Classify(inquiry);
+
+        Assert.Contains(expectedType, classification.QuestionTypes);
     }
 
     [Fact]
@@ -303,6 +336,23 @@ public sealed class GoldenQuestionFactTests
     }
 
     [Fact]
+    public void FactResolver_StreamProcedureQuestionDoesNotRequireVersionFactCatalog()
+    {
+        using var temp = new TempDirectory();
+
+        var result = new FactResolver().Resolve(
+            "HelixQAC",
+            temp.Path,
+            "Validateのストリームはどのような機能でしょうか？またそのストリームの設定方法について教えてください。");
+
+        Assert.Empty(result.CandidateFacts);
+        Assert.Empty(result.ResolvedFacts);
+        Assert.Contains(QuestionTypes.HowToQuestion, result.Classification.QuestionTypes);
+        Assert.Contains(QuestionTypes.ConfigurationQuestion, result.Classification.QuestionTypes);
+        Assert.Equal(AnswerReadiness.NeedsConfirmation, result.AnswerReadiness);
+    }
+
+    [Fact]
     public async Task PromptBuilder_IncludesResolvedFacts()
     {
         using var temp = new TempDirectory();
@@ -320,6 +370,36 @@ public sealed class GoldenQuestionFactTests
         Assert.Contains("CxSAST: 9.7.0", messages.UserPrompt);
         Assert.Contains("Engine Pack: 9.7.6", messages.UserPrompt);
         Assert.Contains("Hotfix: HF10", messages.UserPrompt);
+        Assert.Contains("LatestSastVersion: 9.7.0", messages.UserPrompt);
+        Assert.Contains("LatestEnginePackVersion: 9.7.6", messages.UserPrompt);
+        Assert.Contains("LatestHotfixVersion: HF10", messages.UserPrompt);
+    }
+
+    [Theory]
+    [InlineData("qwen3:8b")]
+    [InlineData("gemma4:26b")]
+    [InlineData("gemma4:31b")]
+    public async Task GoldenLatestVersionFacts_DoNotDependOnAnswerModel(string modelName)
+    {
+        using var temp = new TempDirectory();
+        await WriteOfficialIndexAsync(temp.Path, "Checkmarx");
+        var factResolution = new FactResolver().Resolve(
+            "Checkmarx",
+            temp.Path,
+            "現在のCxSAST最新バージョンは何でしょうか？EP、HFの最新バージョンも教えてください。");
+        var request = CreateRequest(factResolution) with
+        {
+            Settings = new AiAssistantSettings
+            {
+                LlmProvider = new LlmProviderSettings { ChatModel = modelName },
+            },
+        };
+
+        var messages = new PromptBuilder().Build(request);
+
+        AssertFact(factResolution, FactKeys.LatestSastVersion, "9.7.0");
+        AssertFact(factResolution, FactKeys.LatestEnginePackVersion, "9.7.6");
+        AssertFact(factResolution, FactKeys.LatestHotfixVersion, "HF10");
         Assert.Contains("LatestSastVersion: 9.7.0", messages.UserPrompt);
         Assert.Contains("LatestEnginePackVersion: 9.7.6", messages.UserPrompt);
         Assert.Contains("LatestHotfixVersion: HF10", messages.UserPrompt);

@@ -31,6 +31,7 @@ public sealed class ProductScopedSearchOfficialDocTests
         Assert.True(focus.IsFreshnessSensitive);
         Assert.NotEmpty(results);
         Assert.Equal("OfficialDoc", results[0].SourceType);
+        Assert.DoesNotContain(results, source => source.SourceType == "PastCaseNote");
     }
 
     private static async Task WriteOfficialIndexAsync(string aiIndexFolder, string productName)

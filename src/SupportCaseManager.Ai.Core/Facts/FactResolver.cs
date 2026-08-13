@@ -284,6 +284,19 @@ public sealed class FactResolver : IFactResolver
                 : AnswerReadiness.InsufficientEvidence;
         }
 
+        if (classification.RequestedFacts.Count == 0 &&
+            classification.QuestionTypes.Any(static questionType =>
+                questionType is QuestionTypes.HowToQuestion
+                    or QuestionTypes.ConfigurationQuestion
+                    or QuestionTypes.CommandQuestion
+                    or QuestionTypes.FeatureAvailabilityQuestion
+                    or QuestionTypes.GeneralSupportQuestion))
+        {
+            // Procedural questions are grounded by selected documents rather than
+            // the version-oriented CandidateFacts catalog.
+            return AnswerReadiness.NeedsConfirmation;
+        }
+
         return resolvedFacts.Any(static fact => string.Equals(fact.Status, FactStatuses.Confirmed, StringComparison.OrdinalIgnoreCase))
             ? AnswerReadiness.NeedsConfirmation
             : AnswerReadiness.InsufficientEvidence;

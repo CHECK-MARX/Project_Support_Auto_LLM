@@ -162,6 +162,63 @@ public class AiManualKeywordSearcherTests
         Assert.Contains("ライセンス", result.Title + result.Text);
     }
 
+    [Fact]
+    public async Task SearchAsync_ProcedureNearNamedSubjectRanksAboveBroadMention()
+    {
+        using var temp = new TempDirectory();
+        await WriteIndexAsync(temp.Path, new[]
+        {
+            CreateManual(
+                "broad",
+                "general.txt",
+                "一般説明",
+                $"CCT {new string('x', 180)} 生成方法を含む一般説明です。"),
+            CreateManual(
+                "procedure",
+                "cct.txt",
+                "CCT設定",
+                "QA GUIで［CCTを生成］にチェックし、ビルドコマンドを指定して［同期］をクリックします。"),
+        });
+        var searcher = new AiManualKeywordSearcher();
+
+        var results = await searcher.SearchAsync(temp.Path, "CCTの生成方法について教えてください。", maxResults: 8);
+
+        Assert.True(results.Count >= 2);
+        Assert.Equal("procedure", results[0].SourceId);
+        Assert.Contains("procedureProximity=0.22", results[0].ScoreBreakdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAsync_ValidateUploadProcedureRanksAbovePdfTableOfContents()
+    {
+        using var temp = new TempDirectory();
+        await WriteIndexAsync(temp.Path, new[]
+        {
+            CreateManual(
+                "toc",
+                "Perforce_QAC_Manual.pdf",
+                "Perforce_QAC_Manual",
+                "Perforce Validateを使って作業する136 Validateの認証情報136 QA·GUIを使用して認証する136 QA·CLIを使用して認証する137 Validateからログオフする137 QA·GUIを使用してログオフする138 QA·CLIを使用してログオフする138 解析結果をValidateにアップロードする138 QA·GUIを使用して解析結果をアップロードする138 QA·CLIを使用して解析結果をアップロードする139 結合プロジェクトの作成とアップロード140 QA·GUIを使用して結合プロジェクトを作成する140 QA·CLIを使用して結合プロジェクトを作成する141"),
+            CreateManual(
+                "procedure",
+                "Perforce_QAC_Manual.pdf",
+                "Perforce_QAC_Manual",
+                "QA·GUIからValidateに解析結果をアップロードするには以下のメニューを使用します。［ポータル］>［Validate］>［解析結果をアップロード］。QA·CLIではqacli validate build --qaf-project . を実行します。アップロードにはValidateでの認証、適切な権限、ビルドライセンスが必要です。"),
+        });
+        var searcher = new AiManualKeywordSearcher();
+
+        var results = await searcher.SearchAsync(
+            temp.Path,
+            "QACで解析した結果をValidateへアップロードする方法を教えて。GUI及びCLIの方法も教えて。",
+            maxResults: 8);
+
+        Assert.Equal("procedure", results[0].SourceId);
+        var toc = Assert.Single(results, static result => result.SourceId == "toc");
+        Assert.Contains("tableOfContentsPenalty=-0.38", toc.ScoreBreakdown, StringComparison.Ordinal);
+        Assert.DoesNotContain("tableOfContentsPenalty", results[0].ScoreBreakdown, StringComparison.Ordinal);
+        Assert.Contains("qacli validate build", results[0].Text, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static AiIndexedManual CreateManual(
         string id,
         string fileName,

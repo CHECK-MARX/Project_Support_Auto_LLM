@@ -15,7 +15,7 @@ internalMemoは単独のsourceIdや「string」だけにせず、人間が読め
 根拠がない場合、evidenceは空配列にしてください。
 不明なことは断定せず、needConfirmationsへ入れてください。
 customerReplyDraftはサポートメール本文として丁寧で簡潔な日本語にしてください。
-customerReplyDraftの冒頭には、現在案件の会社名と担当者名を宛名として含めてください。担当者名が未設定の場合は「ご担当者様」にしてください。
+customerReplyDraftの冒頭には、現在案件で取得できた会社名と担当者名だけを宛名として含めてください。会社名が未設定の場合は「[会社名]」、担当者名が未設定の場合は「[お客様名] 様」にしてください。TOYO、東陽テクニカなど自社名を宛先として推測・補完しないでください。
 customerReplyDraftは、要点、確認できた内容、確認が必要な内容、次の対応を含めてください。
 customerReplyDraftには署名を含めないでください。あいさつ文は固定テンプレート差し込み予定のため、過剰な定型挨拶は避けてください。
 customerReply / internal memo / required checks / confidence / warnings の形式で出力してください。

@@ -1,0 +1,164 @@
+[
+  {
+    "id": "top-results-repeat-coverage",
+    "requiredCoverage": ["A", "B", "C"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["top-a", "coverage-b", "coverage-c"],
+    "candidates": [
+      { "id": "top-a", "rank": 1, "coverage": ["A"], "quality": 0.90, "documentId": "doc-a", "section": "upload", "text": "upload build command" },
+      { "id": "repeat-a", "rank": 2, "coverage": ["A"], "quality": 0.89, "documentId": "doc-a", "section": "upload", "text": "upload build command" },
+      { "id": "coverage-b", "rank": 3, "coverage": ["B"], "quality": 0.75, "documentId": "doc-b", "section": "auth", "text": "authentication connection" },
+      { "id": "coverage-c", "rank": 4, "coverage": ["C"], "quality": 0.70, "documentId": "doc-c", "section": "verify", "text": "validate verification" }
+    ]
+  },
+  {
+    "id": "three-items-satisfy-coverage",
+    "requiredCoverage": ["A", "B", "C"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["a", "b", "c"],
+    "candidates": [
+      { "id": "a", "rank": 1, "coverage": ["A"], "quality": 0.90 },
+      { "id": "b", "rank": 2, "coverage": ["B"], "quality": 0.80 },
+      { "id": "c", "rank": 3, "coverage": ["C"], "quality": 0.70 },
+      { "id": "extra", "rank": 4, "coverage": ["D"], "quality": 0.65 }
+    ]
+  },
+  {
+    "id": "four-items-needed",
+    "requiredCoverage": ["A", "B", "C", "D"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["a", "b", "c", "d"],
+    "candidates": [
+      { "id": "a", "rank": 1, "coverage": ["A"], "quality": 0.90 },
+      { "id": "b", "rank": 2, "coverage": ["B"], "quality": 0.80 },
+      { "id": "c", "rank": 3, "coverage": ["C"], "quality": 0.70 },
+      { "id": "d", "rank": 4, "coverage": ["D"], "quality": 0.60 }
+    ]
+  },
+  {
+    "id": "five-items-still-insufficient",
+    "requiredCoverage": ["A", "B", "C", "D", "E", "F"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["a", "b", "c", "d", "e"],
+    "candidates": [
+      { "id": "a", "rank": 1, "coverage": ["A"], "quality": 0.90 },
+      { "id": "b", "rank": 2, "coverage": ["B"], "quality": 0.80 },
+      { "id": "c", "rank": 3, "coverage": ["C"], "quality": 0.70 },
+      { "id": "d", "rank": 4, "coverage": ["D"], "quality": 0.60 },
+      { "id": "e", "rank": 5, "coverage": ["E"], "quality": 0.50 }
+    ]
+  },
+  {
+    "id": "excluded-topic-not-selected",
+    "requiredCoverage": ["A", "B"],
+    "baseMaxItems": 2,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["a", "allowed-b"],
+    "candidates": [
+      { "id": "excluded-b", "rank": 1, "coverage": ["B"], "quality": 0.99, "explicitlyExcluded": true },
+      { "id": "a", "rank": 2, "coverage": ["A"], "quality": 0.80 },
+      { "id": "allowed-b", "rank": 3, "coverage": ["B"], "quality": 0.70 }
+    ]
+  },
+  {
+    "id": "low-quality-not-forced",
+    "requiredCoverage": ["A", "B"],
+    "baseMaxItems": 2,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "minimumQualityScore": 0.30,
+    "expectedSelectedIds": ["a"],
+    "candidates": [
+      { "id": "a", "rank": 1, "coverage": ["A"], "quality": 0.80 },
+      { "id": "low-b", "rank": 2, "coverage": ["B"], "quality": 0.10 }
+    ]
+  },
+  {
+    "id": "adjacent-manual-chunk-deduplicated",
+    "requiredCoverage": ["A"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["section-a"],
+    "candidates": [
+      { "id": "section-a", "rank": 1, "coverage": ["A"], "quality": 0.90, "documentId": "manual-1", "section": "upload", "text": "same adjacent manual content" },
+      { "id": "section-a-copy", "rank": 2, "coverage": ["A"], "quality": 0.85, "documentId": "manual-1", "section": "upload", "text": "same adjacent manual content" }
+    ]
+  },
+  {
+    "id": "same-manual-different-section",
+    "requiredCoverage": ["A", "B"],
+    "baseMaxItems": 2,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["auth-section", "build-section"],
+    "candidates": [
+      { "id": "auth-section", "rank": 1, "coverage": ["A"], "quality": 0.90, "documentId": "manual-1", "section": "auth", "text": "authentication token" },
+      { "id": "build-section", "rank": 2, "coverage": ["B"], "quality": 0.80, "documentId": "manual-1", "section": "build", "text": "upload build name" }
+    ]
+  },
+  {
+    "id": "manual-selection-completed",
+    "requiredCoverage": ["A", "B", "C"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["manual-a", "manual-b", "auto-c"],
+    "candidates": [
+      { "id": "manual-a", "rank": 1, "coverage": ["A"], "quality": 0.20, "manuallySelected": true },
+      { "id": "manual-b", "rank": 2, "coverage": ["B"], "quality": 0.20, "manuallySelected": true },
+      { "id": "repeat-a", "rank": 3, "coverage": ["A"], "quality": 0.95 },
+      { "id": "auto-c", "rank": 4, "coverage": ["C"], "quality": 0.70 }
+    ]
+  },
+  {
+    "id": "manual-selection-over-limit",
+    "requiredCoverage": ["A"],
+    "baseMaxItems": 3,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["m1", "m2", "m3", "m4", "m5", "m6"],
+    "candidates": [
+      { "id": "m1", "rank": 1, "coverage": ["A"], "quality": 0.50, "manuallySelected": true },
+      { "id": "m2", "rank": 2, "coverage": [], "quality": 0.50, "manuallySelected": true },
+      { "id": "m3", "rank": 3, "coverage": [], "quality": 0.50, "manuallySelected": true },
+      { "id": "m4", "rank": 4, "coverage": [], "quality": 0.50, "manuallySelected": true },
+      { "id": "m5", "rank": 5, "coverage": [], "quality": 0.50, "manuallySelected": true },
+      { "id": "m6", "rank": 6, "coverage": [], "quality": 0.50, "manuallySelected": true }
+    ]
+  },
+  {
+    "id": "character-budget",
+    "requiredCoverage": ["A", "B"],
+    "baseMaxItems": 2,
+    "expansionMaxItems": 5,
+    "characterBudget": 200,
+    "expectedSelectedIds": ["a", "small-no-coverage"],
+    "candidates": [
+      { "id": "a", "rank": 1, "coverage": ["A"], "quality": 0.90, "estimatedChars": 100 },
+      { "id": "large-b", "rank": 2, "coverage": ["B"], "quality": 0.80, "estimatedChars": 150 },
+      { "id": "small-no-coverage", "rank": 3, "coverage": [], "quality": 0.70, "estimatedChars": 50 }
+    ]
+  },
+  {
+    "id": "zip-manual-has-no-source-bias",
+    "requiredCoverage": ["A", "B"],
+    "baseMaxItems": 2,
+    "expansionMaxItems": 5,
+    "characterBudget": 2000,
+    "expectedSelectedIds": ["zip-manual", "normal-manual"],
+    "candidates": [
+      { "id": "normal-manual", "rank": 1, "coverage": ["B"], "quality": 0.80, "sourceType": "Manual", "filePath": "manual.pdf" },
+      { "id": "zip-manual", "rank": 2, "coverage": ["A"], "quality": 0.85, "sourceType": "Manual", "filePath": "archive.zip!/guide.pdf" }
+    ]
+  }
+]

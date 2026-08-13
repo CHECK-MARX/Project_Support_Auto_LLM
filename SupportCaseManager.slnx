@@ -10,6 +10,7 @@
     <Project Path="tests/SupportCaseManager.App.Tests/SupportCaseManager.App.Tests.csproj" />
     <Project Path="tests/SupportCaseManager.AiAssistant.App.Tests/SupportCaseManager.AiAssistant.App.Tests.csproj" />
     <Project Path="tests/SupportCaseManager.Ai.Tests/SupportCaseManager.Ai.Tests.csproj" />
+    <Project Path="tests/SupportCaseManager.Codex.FakeServer/SupportCaseManager.Codex.FakeServer.csproj" />
     <Project Path="tests/SupportCaseManager.Tests/SupportCaseManager.Tests.csproj" />
   </Folder>
 </Solution>

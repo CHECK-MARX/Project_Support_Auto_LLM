@@ -59,8 +59,23 @@ public sealed class AiSettingsStore : IAiSettingsStore
         Directory.CreateDirectory(settings.AiDataFolder);
 
         var settingsPath = ResolveSettingsPath(settings.AiDataFolder);
-        await using var stream = File.Create(settingsPath);
-        await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
+        var temporaryPath = $"{settingsPath}.{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await using (var stream = File.Create(temporaryPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
+            }
+
+            File.Move(temporaryPath, settingsPath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
     }
 
     public static string ResolveSettingsPath(string aiDataFolder)

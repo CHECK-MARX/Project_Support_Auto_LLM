@@ -22,6 +22,18 @@ public sealed record class AiCaseIndexBuildResult
 
     public int ErrorCount { get; init; }
 
+    public int AddedCaseCount { get; init; }
+
+    public int ChangedCaseCount { get; init; }
+
+    public int DeletedCaseCount { get; init; }
+
+    public int UnchangedCaseCount { get; init; }
+
+    public int IndexedAnswerPairCount { get; init; }
+
+    public string AnswerPairIndexFilePath { get; init; } = string.Empty;
+
     public string IndexFilePath { get; init; } = string.Empty;
 
     public IReadOnlyList<string> Warnings { get; init; } = [];

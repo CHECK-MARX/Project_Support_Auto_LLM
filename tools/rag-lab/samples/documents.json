@@ -1,0 +1,52 @@
+{
+  "documents": [
+    {
+      "document_id": "sample-checkmarx-001",
+      "text": "# Path Traversalの判定\n\n## 質問\nPath TraversalをNot Exploitableと判定できる条件を確認したい。\n\n## 原因\n外部入力が検証されずにファイルパスへ到達する可能性がある。\n\n## 対処\n入力値を許可リストで検証し、正規化後のパスが許可ディレクトリ内であることを確認する。\n\n## お客様向け最終回答\n検証処理とCanonical Pathの確認結果を根拠として判定してください。",
+      "metadata": {
+        "product_id": "synthetic-product-checkmarx",
+        "product_name": "Checkmarx",
+        "support_id": "SYN-0001",
+        "information_type": "SyntheticCase",
+        "document_name": "path-traversal-judgement.md",
+        "source_path": "synthetic/checkmarx/path-traversal-judgement.md",
+        "target_version": "SYNTHETIC-1.0",
+        "os": "Windows",
+        "error_code": null,
+        "command": null,
+        "created_or_updated_at": "2026-01-15T09:00:00+09:00",
+        "source_type": "SyntheticManual",
+        "confidence": 1.0,
+        "question": "Path TraversalをNot Exploitableと判定できる条件を確認したい。",
+        "cause": "外部入力が検証されずにファイルパスへ到達する可能性がある。",
+        "resolution": "入力値を許可リストで検証し、正規化後のパスが許可ディレクトリ内であることを確認する。",
+        "manufacturer_reply": null,
+        "customer_final_reply": "検証処理とCanonical Pathの確認結果を根拠として判定してください。"
+      }
+    },
+    {
+      "document_id": "sample-helixqac-001",
+      "text": "# CCT生成\n\n## 質問\nCCTを生成する基本手順を確認したい。\n\n## 対処\n解析対象とコンパイラ設定を確認してから、専用の生成コマンドを実行する。",
+      "metadata": {
+        "product_id": "synthetic-product-helixqac",
+        "product_name": "HelixQAC",
+        "support_id": "SYN-0002",
+        "information_type": "SyntheticManual",
+        "document_name": "cct-generation.md",
+        "source_path": "synthetic/helixqac/cct-generation.md",
+        "target_version": "SYNTHETIC-2.0",
+        "os": "Linux",
+        "error_code": null,
+        "command": "synthetic-cct-command",
+        "created_or_updated_at": "2026-01-16T09:00:00+09:00",
+        "source_type": "SyntheticManual",
+        "confidence": 1.0,
+        "question": "CCTを生成する基本手順を確認したい。",
+        "cause": null,
+        "resolution": "解析対象とコンパイラ設定を確認してから、専用の生成コマンドを実行する。",
+        "manufacturer_reply": null,
+        "customer_final_reply": null
+      }
+    }
+  ]
+}

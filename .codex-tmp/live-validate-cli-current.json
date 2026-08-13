@@ -1,0 +1,98 @@
+{
+  "Question": "QAC\u3067\u89E3\u6790\u3057\u305F\u7D50\u679C\u3092Validate\u3078\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u3059\u308B\u65B9\u6CD5\u3092\u6559\u3048\u3066\u304F\u3060\u3055\u3044\u3002GUI\u3067\u306E\u30A2\u30C3\u30D7\u30ED\u30FC\u30C9\u65B9\u6CD5\u53CA\u3073CLI\u3067\u306E\u65B9\u6CD5\u306B\u3064\u3044\u3066\u3082\u6559\u3048\u3066\u304F\u3060\u3055\u3044\u3002",
+  "CandidateCount": 36,
+  "SourceTypeCandidateCounts": {
+    "Manual": 27,
+    "PastAnswer": 1,
+    "OfficialDoc": 2,
+    "PastCaseNote": 6
+  },
+  "Evidence": [
+    {
+      "SourceId": "a449ee6771da853899298f33",
+      "SourceType": "Manual",
+      "Title": "Perforce-QAC-Manual",
+      "DocumentTitle": "Perforce-QAC-Manual",
+      "PageNumber": null,
+      "SectionTitle": "",
+      "SupportNumber": null,
+      "Score": 0.6630133103664266,
+      "ScoreBreakdown": "coverage=0.71; fieldStrength=1.00; title=4; body=116; metadata=4; procedureProximity=0.34; Hybrid local=0.000, rrf=0.026",
+      "Coverage": [
+        "Authentication",
+        "UploadCommand",
+        "BuildName",
+        "ValidateVerification",
+        "Troubleshooting",
+        "AnalysisVerification"
+      ]
+    },
+    {
+      "SourceId": "1157dfc47bbcc70c3ad4c761",
+      "SourceType": "Manual",
+      "Title": "Perforce-QAC-Manual",
+      "DocumentTitle": "Perforce-QAC-Manual",
+      "PageNumber": null,
+      "SectionTitle": "",
+      "SupportNumber": null,
+      "Score": 0.6120798701298702,
+      "ScoreBreakdown": "coverage=0.71; fieldStrength=1.00; title=4; body=87; metadata=4; Hybrid local=0.000, rrf=0.023",
+      "Coverage": [
+        "Connection",
+        "UploadCommand",
+        "CommandOptions",
+        "ValidateVerification",
+        "AnalysisProcedure",
+        "Preparation",
+        "ProjectSetup"
+      ]
+    },
+    {
+      "SourceId": "official:bee1c3ba3f5c2c405ff80104",
+      "SourceType": "OfficialDoc",
+      "Title": "qacli validate build - qacli validate build",
+      "DocumentTitle": "qacli validate build",
+      "PageNumber": null,
+      "SectionTitle": "qacli validate build",
+      "SupportNumber": null,
+      "Score": 0.6120390235210265,
+      "ScoreBreakdown": "coverage=0.57; fieldStrength=1.00; title=64; body=92; metadata=36; procedureProximity=0.22; Hybrid local=0.000, rrf=0.027",
+      "Coverage": [
+        "UploadCommand",
+        "CommandOptions",
+        "BuildName",
+        "ValidateVerification",
+        "Troubleshooting",
+        "AnalysisProcedure"
+      ]
+    }
+  ],
+  "RequiredCoverage": [
+    "Authentication",
+    "BuildName",
+    "CommandOptions",
+    "Connection",
+    "IncrementalBuild",
+    "ProjectAssociation",
+    "Troubleshooting",
+    "UploadCommand",
+    "ValidateVerification"
+  ],
+  "FinalCoverage": [
+    "AnalysisProcedure",
+    "AnalysisVerification",
+    "Authentication",
+    "BuildName",
+    "CommandOptions",
+    "Connection",
+    "Preparation",
+    "ProjectSetup",
+    "Troubleshooting",
+    "UploadCommand",
+    "ValidateVerification"
+  ],
+  "SelectorEngine": "Rust",
+  "RustSelectorFallbackReason": "",
+  "HasGuiEvidence": true,
+  "HasCliEvidence": true
+}

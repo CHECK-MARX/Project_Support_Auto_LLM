@@ -4,5 +4,11 @@ namespace SupportCaseManager.App.AiHandoff;
 
 public interface IProcessStarter
 {
-    void Start(ProcessStartInfo startInfo);
+    IStartedProcess Start(ProcessStartInfo startInfo);
+}
+
+public interface IStartedProcess : IDisposable
+{
+    bool HasExited { get; }
+    int ExitCode { get; }
 }

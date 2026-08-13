@@ -61,6 +61,12 @@ public sealed class OllamaClient : ILlmClient
             throw new ArgumentNullException(nameof(settings));
         }
 
+        if (string.IsNullOrWhiteSpace(settings.ChatModel))
+        {
+            throw new InvalidOperationException(
+                "Ollama回答モデルが未設定です。利用可能モデルを取得してから回答モデルを選択してください。");
+        }
+
         var endpoint = settings.Endpoint?.Trim() ?? string.Empty;
         if (!TryBuildChatUri(endpoint, out var uri))
         {
@@ -74,9 +80,9 @@ public sealed class OllamaClient : ILlmClient
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(configuredTimeoutSeconds));
         var stopwatch = Stopwatch.StartNew();
 
-        var thinkDisabled = OllamaThinkingHelper.ShouldDisableThinking(settings.ChatModel, disableThinking);
-        var systemPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.SystemPrompt, settings.ChatModel, disableThinking);
-        var userPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.UserPrompt, settings.ChatModel, disableThinking);
+        var thinkDisabled = OllamaThinkingHelper.ShouldDisableThinking(settings, disableThinking);
+        var systemPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.SystemPrompt, settings, disableThinking);
+        var userPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.UserPrompt, settings, disableThinking);
 
         var requestBody = OllamaRequestBuilder.BuildChatRequestBody(settings, systemPrompt, userPrompt, thinkDisabled);
 
@@ -86,7 +92,28 @@ public sealed class OllamaClient : ILlmClient
             {
                 return await SendChatRequestAsync(uri, requestBody, thinkDisabled, timeoutCts.Token);
             }
-            catch (OllamaThinkingOnlyException) when (thinkDisabled)
+            catch (OllamaUnsupportedParameterException)
+            {
+                var compatibilitySettings = settings with
+                {
+                    ThinkingParameterType = ThinkingParameterTypes.None,
+                    ThinkingValue = string.Empty,
+                    StructuredOutputMode = StructuredOutputModes.PlainText,
+                };
+                var compatibilityBody = OllamaRequestBuilder.BuildChatRequestBody(
+                    compatibilitySettings,
+                    systemPrompt,
+                    userPrompt,
+                    thinkDisabled: false);
+                var compatibilityResult = await SendChatRequestAsync(uri, compatibilityBody, false, timeoutCts.Token);
+                return compatibilityResult with
+                {
+                    Diagnostics = new[] { "Unsupported Ollama parameter was removed and the request was retried safely." }
+                        .Concat(compatibilityResult.Diagnostics)
+                        .ToList(),
+                };
+            }
+            catch (OllamaThinkingOnlyException)
             {
                 var retrySettings = BuildThinkingRetrySettings(settings);
                 var retryRequestBody = OllamaRequestBuilder.BuildChatRequestBody(
@@ -149,6 +176,11 @@ public sealed class OllamaClient : ILlmClient
         if (!response.IsSuccessStatusCode)
         {
             var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+            if ((int)response.StatusCode == 400 && LooksLikeUnsupportedParameter(responseText))
+            {
+                throw new OllamaUnsupportedParameterException(responseText);
+            }
+
             throw new InvalidOperationException(
                 $"Ollama /api/chat returned HTTP {(int)response.StatusCode}. {Truncate(responseText)}");
         }
@@ -253,6 +285,14 @@ public sealed class OllamaClient : ILlmClient
         return value.Length <= maxLength ? value : value[..maxLength] + "...";
     }
 
+    private static bool LooksLikeUnsupportedParameter(string responseText)
+    {
+        return responseText.Contains("unsupported", StringComparison.OrdinalIgnoreCase)
+            || responseText.Contains("unknown field", StringComparison.OrdinalIgnoreCase)
+            || responseText.Contains("invalid option", StringComparison.OrdinalIgnoreCase)
+            || responseText.Contains("does not support", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string BuildTimeoutMessage(
         int configuredTimeoutSeconds,
         TimeSpan elapsed,
@@ -280,6 +320,14 @@ public sealed class OllamaClient : ILlmClient
 internal sealed class OllamaThinkingOnlyException : InvalidOperationException
 {
     public OllamaThinkingOnlyException(string message)
+        : base(message)
+    {
+    }
+}
+
+internal sealed class OllamaUnsupportedParameterException : InvalidOperationException
+{
+    public OllamaUnsupportedParameterException(string message)
         : base(message)
     {
     }

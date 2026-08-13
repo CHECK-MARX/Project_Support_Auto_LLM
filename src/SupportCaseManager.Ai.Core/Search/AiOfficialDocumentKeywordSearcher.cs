@@ -1,6 +1,7 @@
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -45,13 +46,17 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
 
         var query = BuildQuery(inquiryFocus);
         return document.Documents
-            .Select(doc => new ScoredOfficialDocument(doc, Score(doc, query, inquiryFocus)))
+            .Select(doc => new ScoredOfficialDocument(
+                doc,
+                Score(doc, query, inquiryFocus),
+                ProcedureSearchBoost.Calculate(query, doc.Title, doc.SectionTitle, doc.Url, doc.Text)))
             .Where(item => item.Score.Score > 0)
-            .OrderByDescending(item => item.Score.Score)
+            .OrderByDescending(item => item.ProcedureSpecificity)
+            .ThenByDescending(item => item.Score.Score)
             .ThenByDescending(item => item.Document.RetrievedAt)
             .ThenBy(item => item.Document.Title, StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
-            .Select(item => ToSearchSource(item.Document, item.Score))
+            .Select(item => ToSearchSource(item.Document, item.Score, inquiryFocus))
             .ToList();
     }
 
@@ -102,6 +107,23 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         }
 
         var score = KeywordSearchScorer.Score(query, fields);
+        var procedureBoost = ProcedureSearchBoost.Calculate(
+            query,
+            document.Title,
+            document.SectionTitle,
+            document.Url,
+            document.Text);
+        if (procedureBoost > 0)
+        {
+            score = score with
+            {
+                Score = Math.Round(ApplyBoundedBoost(score.Score, procedureBoost), 3),
+                ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
+                    ? $"procedureProximity={procedureBoost:0.00}"
+                    : $"{score.ScoreBreakdown}; procedureProximity={procedureBoost:0.00}",
+            };
+        }
+
         if (score.Score <= 0 || inquiryFocus.TargetVersions.Count == 0)
         {
             return score;
@@ -124,7 +146,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
 
         return score with
         {
-            Score = Math.Round(Math.Clamp(score.Score + 0.18, 0.0, 1.0), 3),
+            Score = Math.Round(ApplyBoundedBoost(score.Score, 0.18), 3),
             MatchedTerms = matchedVersions
                 .Concat(score.MatchedTerms)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -136,14 +158,17 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         };
     }
 
-    private static SearchSource ToSearchSource(AiIndexedOfficialDocument document, SearchScoreDetails score)
+    private static SearchSource ToSearchSource(
+        AiIndexedOfficialDocument document,
+        SearchScoreDetails score,
+        InquiryFocus inquiryFocus)
     {
         return new SearchSource
         {
             SourceId = document.Id,
             SourceType = "OfficialDoc",
             Title = BuildTitle(document),
-            Text = BuildExcerpt(document.Text),
+            Text = BuildExcerpt(document.Text, inquiryFocus, document.ProductName),
             FilePath = null,
             Url = document.Url,
             RetrievedAt = document.RetrievedAt,
@@ -153,6 +178,10 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             MatchedTerms = score.MatchedTerms,
             QueryCoverage = score.QueryCoverage,
             ScoreBreakdown = score.ScoreBreakdown,
+            DocumentId = document.Url,
+            SectionTitle = document.SectionTitle,
+            DocumentTitle = document.Title,
+            ChunkId = document.Id,
         };
     }
 
@@ -163,7 +192,7 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             : $"{document.Title} - {document.SectionTitle}";
     }
 
-    private static string BuildExcerpt(string text)
+    private static string BuildExcerpt(string text, InquiryFocus inquiryFocus, string productName)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -173,10 +202,55 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         var normalized = string.Join(
             " ",
             text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
-        return normalized.Length <= SearchTextMaxLength
-            ? normalized
-            : normalized[..SearchTextMaxLength] + "...";
+        if (normalized.Length <= SearchTextMaxLength)
+        {
+            return normalized;
+        }
+
+        var catalog = SupportTopicCatalog.Create(productName);
+        var profile = TopicEntityAnalyzer.Extract(inquiryFocus.FocusText, catalog);
+        var focusTerms = catalog.Features
+            .Where(feature => profile.Features.Contains(
+                feature.CanonicalName,
+                StringComparer.OrdinalIgnoreCase))
+            .SelectMany(feature => new[] { feature.CanonicalName }.Concat(feature.Aliases))
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (profile.Operations.Contains("Analysis", StringComparer.Ordinal))
+        {
+            focusTerms.InsertRange(0, ["qacli analyze", "qaclianalyze", "analyze project", "run analysis", "project analysis", "解析を実行"]);
+        }
+
+        var matchIndex = focusTerms
+            .Select(term => normalized.IndexOf(term, StringComparison.OrdinalIgnoreCase))
+            .Where(static index => index >= 0)
+            .DefaultIfEmpty(-1)
+            .Min();
+        if (matchIndex < 0)
+        {
+            return normalized[..SearchTextMaxLength] + "...";
+        }
+
+        var startIndex = Math.Max(0, matchIndex - 240);
+        if (startIndex + SearchTextMaxLength > normalized.Length)
+        {
+            startIndex = normalized.Length - SearchTextMaxLength;
+        }
+
+        var prefix = startIndex > 0 ? "..." : string.Empty;
+        var suffix = startIndex + SearchTextMaxLength < normalized.Length ? "..." : string.Empty;
+        return $"{prefix}{normalized.Substring(startIndex, SearchTextMaxLength)}{suffix}";
     }
 
-    private sealed record ScoredOfficialDocument(AiIndexedOfficialDocument Document, SearchScoreDetails Score);
+    private static double ApplyBoundedBoost(double score, double boost)
+    {
+        var normalized = Math.Clamp(score, 0, 1);
+        return normalized + ((1 - normalized) * Math.Clamp(boost, 0, 0.95));
+    }
+
+    private sealed record ScoredOfficialDocument(
+        AiIndexedOfficialDocument Document,
+        SearchScoreDetails Score,
+        double ProcedureSpecificity);
 }

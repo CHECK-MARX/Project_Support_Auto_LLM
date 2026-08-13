@@ -135,6 +135,36 @@ public sealed class OllamaConnectionCheckerChatTestTests
         Assert.Equal(512, options.GetProperty("num_ctx").GetInt32());
     }
 
+    [Fact]
+    public async Task CheckAsync_GemmaProfileOmitsUnsupportedThinkingParameter()
+    {
+        var handler = new SequenceHttpMessageHandler(
+            JsonResponse("""{ "models": [{ "name": "gemma4:26b" }] }"""),
+            JsonResponse("""
+                {
+                  "message": { "role": "assistant", "content": "OK" },
+                  "done_reason": "stop"
+                }
+                """));
+        var checker = new OllamaConnectionChecker(handler);
+        var settings = CreateSettings("gemma4:26b") with
+        {
+            ThinkingParameterType = ThinkingParameterTypes.None,
+            StructuredOutputMode = StructuredOutputModes.PlainText,
+        };
+
+        var result = await checker.CheckAsync(settings, disableThinking: true);
+
+        Assert.True(result.ChatTestSuccess);
+        var chatRequestJson = Assert.Single(
+            handler.RequestBodies,
+            static body => body.Contains("\"messages\"", StringComparison.Ordinal));
+        using var document = JsonDocument.Parse(chatRequestJson);
+        Assert.False(document.RootElement.TryGetProperty("think", out _));
+        var prompt = document.RootElement.GetProperty("messages")[0].GetProperty("content").GetString();
+        Assert.Equal("Reply with exactly this text: OK", prompt);
+    }
+
     private static LlmProviderSettings CreateSettings(string chatModel)
     {
         return new LlmProviderSettings

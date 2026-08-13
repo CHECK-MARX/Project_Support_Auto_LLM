@@ -13,6 +13,8 @@ public sealed class UserSettings
     public List<Dictionary<string, string>> NoteTemplates { get; set; } = new();
     public List<ProductProfile> Products { get; set; } = new();
     public string ActiveProduct { get; set; } = string.Empty;
+    public Guid? ActiveProductId { get; set; }
+    public string CommonPromptFilePath { get; set; } = ProductDefinitionDefaults.CommonPromptFilePath;
     public List<string> ExcludedCases { get; set; } = new();
 
     public UserSettings Update(string? basePath = null, bool? darkMode = null)

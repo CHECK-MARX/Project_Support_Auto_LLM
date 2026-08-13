@@ -1,5 +1,6 @@
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -52,6 +53,19 @@ public static class OfficialDocDiagnosticsBuilder
         builder.AppendLine($"OfficialDoc search results: {officialSearchResults.Count}");
         builder.AppendLine($"OfficialDoc selected: {officialSelected.Count}");
         builder.AppendLine($"OfficialDoc will send: {officialWillSend.Count}");
+        var queryFeatures = ExtractQueryFeatures(inquiryFocus, product?.ProductName);
+        var indexedFeatureMatches = CountIndexedFeatureMatches(indexDocument, queryFeatures, product?.ProductName);
+        builder.AppendLine($"OfficialDoc query features: {FormatList(queryFeatures)}");
+        builder.AppendLine($"OfficialDoc indexed feature matches: {indexedFeatureMatches}");
+        builder.AppendLine($"OfficialDoc availability diagnosis: {ClassifyAvailability(
+            product,
+            indexExists,
+            indexDocument,
+            queryFeatures,
+            indexedFeatureMatches,
+            officialSearchResults.Count,
+            officialSelected.Count,
+            officialWillSend.Count)}");
         builder.AppendLine($"FreshnessSensitive: {(inquiryFocus?.IsFreshnessSensitive == true).ToString().ToLowerInvariant()}");
         builder.AppendLine($"Freshness reason: {ValueOrUnset(inquiryFocus?.FreshnessReason)}");
         builder.AppendLine($"Detected target version: {FormatList(inquiryFocus?.TargetVersions)}");
@@ -145,6 +159,85 @@ public static class OfficialDocDiagnosticsBuilder
         {
             return null;
         }
+    }
+
+    private static IReadOnlyList<string> ExtractQueryFeatures(
+        InquiryFocus? inquiryFocus,
+        string? productName)
+    {
+        var query = inquiryFocus?.FocusText;
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            return [];
+        }
+
+        var catalog = SupportTopicCatalog.Create(productName);
+        return TopicEntityAnalyzer.Extract(query, catalog).Features;
+    }
+
+    private static int CountIndexedFeatureMatches(
+        AiOfficialDocumentIndexDocument? indexDocument,
+        IReadOnlyList<string> queryFeatures,
+        string? productName)
+    {
+        if (indexDocument is null || queryFeatures.Count == 0)
+        {
+            return 0;
+        }
+
+        var catalog = SupportTopicCatalog.Create(productName);
+        return indexDocument.Documents.Count(document =>
+        {
+            var profile = TopicEntityAnalyzer.Extract(
+                string.Join('\n', document.Title, document.SectionTitle, document.Url, document.Text),
+                catalog);
+            return queryFeatures.Any(feature =>
+                profile.Features.Contains(feature, StringComparer.OrdinalIgnoreCase));
+        });
+    }
+
+    private static string ClassifyAvailability(
+        ProductKnowledgeSettings? product,
+        bool indexExists,
+        AiOfficialDocumentIndexDocument? indexDocument,
+        IReadOnlyList<string> queryFeatures,
+        int indexedFeatureMatches,
+        int searchResultCount,
+        int selectedCount,
+        int willSendCount)
+    {
+        if (product is null || product.DocumentUrls.Count == 0)
+        {
+            return "CrawlNotConfigured";
+        }
+        if (!indexExists)
+        {
+            return "IndexMissing";
+        }
+        if ((indexDocument?.Documents.Count ?? 0) == 0)
+        {
+            return (indexDocument?.FetchFailureCount ?? 0) > 0
+                ? "CrawlFailed"
+                : "IndexEmpty";
+        }
+        if (queryFeatures.Count > 0 && indexedFeatureMatches == 0)
+        {
+            return "IndexCoverageMissing";
+        }
+        if (searchResultCount == 0)
+        {
+            return "SearchMismatch";
+        }
+        if (selectedCount == 0)
+        {
+            return "SelectorExcluded";
+        }
+        if (willSendCount == 0)
+        {
+            return "FinalSelectionExcluded";
+        }
+
+        return "Selected";
     }
 
     private static string ValueOrUnset(string? value)

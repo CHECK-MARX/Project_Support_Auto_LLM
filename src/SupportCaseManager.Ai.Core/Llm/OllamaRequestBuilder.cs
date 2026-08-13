@@ -17,44 +17,35 @@ public static class OllamaRequestBuilder
         string userPrompt,
         bool thinkDisabled)
     {
-        if (!thinkDisabled)
+        var request = new Dictionary<string, object?>
         {
-            return new
-            {
-                model = settings.ChatModel,
-                messages = new[]
-                {
-                    new { role = "system", content = systemPrompt },
-                    new { role = "user", content = userPrompt },
-                },
-                stream = false,
-                format = "json",
-                options = new
-                {
-                    temperature = settings.Temperature,
-                    num_predict = settings.MaxOutputTokens,
-                    num_ctx = EffectiveContextWindowTokens(settings),
-                },
-            };
-        }
-
-        return new
-        {
-            model = settings.ChatModel,
-            messages = new[]
+            ["model"] = settings.ChatModel,
+            ["messages"] = new[]
             {
                 new { role = "system", content = systemPrompt },
                 new { role = "user", content = userPrompt },
             },
-            stream = false,
-            think = false,
-            format = "json",
-            options = new
+            ["stream"] = false,
+            ["options"] = new
             {
                 temperature = settings.Temperature,
                 num_predict = settings.MaxOutputTokens,
                 num_ctx = EffectiveContextWindowTokens(settings),
             },
         };
+
+        var structuredOutputMode = settings.StructuredOutputMode;
+        if (string.IsNullOrWhiteSpace(structuredOutputMode) ||
+            string.Equals(structuredOutputMode, StructuredOutputModes.Json, StringComparison.OrdinalIgnoreCase))
+        {
+            request["format"] = "json";
+        }
+
+        if (thinkDisabled)
+        {
+            request["think"] = false;
+        }
+
+        return request;
     }
 }

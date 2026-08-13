@@ -115,6 +115,47 @@ public sealed class OfficialDocDiagnosticsTests
         Assert.Contains("DocumentUrls が未登録です", text);
     }
 
+    [Fact]
+    public void Build_StreamQuestionDistinguishesIndexCoverageMissingFromSearchMismatch()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, "HelixQAC");
+        Directory.CreateDirectory(productFolder);
+        File.WriteAllText(
+            Path.Combine(productFolder, AiOfficialDocumentIndexBuilder.IndexFileName),
+            """
+            {
+              "productName": "HelixQAC",
+              "fetchSuccessCount": 8,
+              "fetchFailureCount": 0,
+              "documents": [
+                { "id": "1", "productName": "HelixQAC", "url": "https://docs.example.test/install", "title": "Installation", "text": "Perforce QAC installation procedure", "retrievedAt": "2026-08-10T00:00:00+09:00", "contentHash": "abc" }
+              ]
+            }
+            """);
+
+        var text = OfficialDocDiagnosticsBuilder.Build(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "HelixQAC",
+                DocumentUrls = ["https://docs.example.test"],
+            },
+            aiIndexFolder,
+            new InquiryFocus
+            {
+                FocusText = "Validateのストリーム機能と設定方法を教えてください。",
+            },
+            [],
+            [],
+            []);
+
+        Assert.Contains("OfficialDoc query features: Stream", text);
+        Assert.Contains("OfficialDoc indexed feature matches: 0", text);
+        Assert.Contains("OfficialDoc availability diagnosis: IndexCoverageMissing", text);
+        Assert.DoesNotContain("OfficialDoc availability diagnosis: CrawlFailed", text);
+    }
+
     private static SearchSource CreateSource(string id, string sourceType)
     {
         return new SearchSource

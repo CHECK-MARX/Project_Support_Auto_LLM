@@ -13,6 +13,33 @@ public sealed record class EvidenceItem
     [JsonPropertyName("title")]
     public string Title { get; init; } = string.Empty;
 
+    [JsonPropertyName("documentTitle")]
+    public string? DocumentTitle { get; init; }
+
+    [JsonPropertyName("pageNumber")]
+    public int? PageNumber { get; init; }
+
+    [JsonPropertyName("sectionTitle")]
+    public string? SectionTitle { get; init; }
+
+    [JsonPropertyName("url")]
+    public string? Url { get; init; }
+
+    [JsonPropertyName("chunkId")]
+    public string? ChunkId { get; init; }
+
+    [JsonPropertyName("documentId")]
+    public string? DocumentId { get; init; }
+
+    [JsonPropertyName("contentHash")]
+    public string? ContentHash { get; init; }
+
+    [JsonPropertyName("archivePath")]
+    public string? ArchivePath { get; init; }
+
+    [JsonPropertyName("entryPath")]
+    public string? EntryPath { get; init; }
+
     [JsonPropertyName("excerpt")]
     public string Excerpt { get; init; } = string.Empty;
 

@@ -8,6 +8,9 @@
         MinHeight="640"
         Background="{DynamicResource AppBackgroundBrush}"
         Foreground="{DynamicResource AppForegroundBrush}">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Window.Resources>
     <DockPanel Margin="12" Background="{DynamicResource AppBackgroundBrush}">
         <Border DockPanel.Dock="Bottom"
                 BorderBrush="{DynamicResource AppBorderBrush}"
@@ -16,6 +19,10 @@
                 Margin="0,8,0,0"
                 Background="{DynamicResource AppPanelBackgroundBrush}">
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
@@ -23,11 +30,20 @@
                 </Grid.ColumnDefinitions>
                 <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" />
                 <TextBlock Grid.Column="1"
-                           Text="{DynamicResource BusyLabel}"
+                           Margin="12,0,0,0"
+                           Text="{Binding GenerationState}"
                            Foreground="{DynamicResource AppMutedForegroundBrush}" />
                 <TextBlock Grid.Column="2"
-                           Text="{Binding IsBusy}"
+                           Margin="12,0,0,0"
+                           Text="{Binding OperationProgressText}"
                            Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                <ProgressBar Grid.Row="1"
+                             Grid.ColumnSpan="3"
+                             Height="8"
+                             Margin="0,7,0,0"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="{Binding OperationProgressPercent, Mode=OneWay}" />
             </Grid>
         </Border>
 
@@ -35,13 +51,20 @@
             <TabItem Header="{DynamicResource SettingsTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
-                        <GroupBox Header="{DynamicResource AppearanceSettingsHeader}">
+                        <GroupBox Header="基本設定">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="180" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -60,9 +83,109 @@
                                 <CheckBox Grid.Row="1"
                                           Grid.Column="1"
                                           IsChecked="{Binding UseDarkMode, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Text="選択製品" />
+                                <ComboBox Grid.Row="2"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding Products}"
+                                          SelectedItem="{Binding SelectedProductKnowledge, UpdateSourceTrigger=PropertyChanged}"
+                                          DisplayMemberPath="ProductName" />
+
+                                <TextBlock Grid.Row="3" Text="回答品質モード" />
+                                <ComboBox Grid.Row="3"
+                                          Grid.Column="1"
+                                          SelectedValue="{Binding AnswerQualityMode, UpdateSourceTrigger=PropertyChanged}"
+                                          SelectedValuePath="Tag">
+                                    <ComboBoxItem Tag="Fast" Content="高速" />
+                                    <ComboBoxItem Tag="Standard" Content="標準" />
+                                    <ComboBoxItem Tag="Quality" Content="高品質" />
+                                    <ComboBoxItem Tag="Custom" Content="カスタム" />
+                                </ComboBox>
+
+                                <TextBlock Grid.Row="4" Text="現在の回答モデル" />
+                                <ComboBox Grid.Row="4"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding AvailableModels}"
+                                          SelectedItem="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEditable="False" />
+                                <Button Grid.Row="4"
+                                        Grid.Column="2"
+                                        Content="接続確認"
+                                        Command="{Binding CheckOllamaConnectionCommand}" />
+
+                                <TextBlock Grid.Row="5" Text="Ollama接続状態" />
+                                <TextBlock Grid.Row="5"
+                                           Grid.Column="1"
+                                           Grid.ColumnSpan="2"
+                                           Text="{Binding OllamaConnectionResultText, Mode=OneWay}"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="6" Text="ナレッジ状態" />
+                                <TextBox Grid.Row="6"
+                                         Grid.Column="1"
+                                         Text="{Binding KnowledgeStatusText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         MinHeight="90" />
+                                <Button Grid.Row="6"
+                                        Grid.Column="2"
+                                        VerticalAlignment="Top"
+                                        Content="ナレッジを更新"
+                                        Command="{Binding UpdateKnowledgeCommand}" />
                             </Grid>
                         </GroupBox>
 
+                        <GroupBox Header="Codex App Server">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="Codex実行ファイル" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding CodexExecutablePath, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2"
+                                        Content="参照"
+                                        Command="{Binding SelectCodexExecutableCommand}" />
+
+                                <TextBlock Grid.Row="1" Text="接続テスト" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="1"
+                                        HorizontalAlignment="Left"
+                                        Content="Codexへ接続"
+                                        Command="{Binding Codex.ConnectCommand}" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="2"
+                                        Content="再接続"
+                                        Command="{Binding Codex.ReconnectCommand}" />
+
+                                <TextBlock Grid.Row="2" Text="Codexバージョン" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.Version, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="3" Text="App Server" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.ConnectionDetails, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="4" Text="ChatGPT認証" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.AccountStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="5" Text="既定モデル" />
+                                <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.Model, Mode=OneWay}" TextWrapping="Wrap" />
+                            </Grid>
+                        </GroupBox>
+
+                        <Expander Header="詳細設定" IsExpanded="False">
+                            <StackPanel>
                         <GroupBox Header="{DynamicResource AiDataFoldersHeader}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -88,6 +211,54 @@
                                 <TextBlock Grid.Row="2" Text="{DynamicResource ClosedCasesFolderLabel}" />
                                 <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding CloseFolder, UpdateSourceTrigger=PropertyChanged}" />
                                 <Button Grid.Row="2" Grid.Column="2" Content="{DynamicResource SelectButton}" Command="{Binding SelectCloseFolderCommand}" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="{DynamicResource RagLabEvidenceSettingsHeader}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="180" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <CheckBox Grid.ColumnSpan="3"
+                                          Content="{DynamicResource UseRagLabEvidenceLabel}"
+                                          IsChecked="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="1" Text="{DynamicResource RagLabEvidenceFileLabel}" />
+                                <TextBox Grid.Row="1"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabEvidenceFilePath, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
+                                <Button Grid.Row="1"
+                                        Grid.Column="2"
+                                        Content="{DynamicResource SelectButton}"
+                                        Command="{Binding SelectRagLabEvidenceFileCommand}"
+                                        IsEnabled="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="2" Text="{DynamicResource RagLabReadinessFileLabel}" />
+                                <TextBox Grid.Row="2"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabBaselineReadinessFilePath, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
+                                <Button Grid.Row="2"
+                                        Grid.Column="2"
+                                        Content="{DynamicResource SelectButton}"
+                                        Command="{Binding SelectRagLabBaselineReadinessFileCommand}"
+                                        IsEnabled="{Binding UseRagLabEvidence}" />
+
+                                <TextBlock Grid.Row="3" Text="{DynamicResource RagLabEvidenceMaxItemsLabel}" />
+                                <TextBox Grid.Row="3"
+                                         Grid.Column="1"
+                                         Text="{Binding RagLabEvidenceMaxItems, UpdateSourceTrigger=PropertyChanged}"
+                                         IsEnabled="{Binding UseRagLabEvidence}" />
                             </Grid>
                         </GroupBox>
 
@@ -194,6 +365,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="既存設定ファイル" />
@@ -276,28 +448,24 @@
                                              MinHeight="70" />
                                 </DockPanel>
 
-                                <TextBlock Grid.Row="8" Text="状態" />
+                                <TextBlock Grid.Row="8" Text="クロール深度" />
                                 <TextBox Grid.Row="8"
+                                         Grid.Column="1"
+                                         Text="{Binding SelectedProductKnowledge.CrawlMaxDepth, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="9" Text="最大ページ数" />
+                                <TextBox Grid.Row="9"
+                                         Grid.Column="1"
+                                         Text="{Binding SelectedProductKnowledge.CrawlMaxPages, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="10" Text="状態" />
+                                <TextBox Grid.Row="10"
                                          Grid.Column="1"
                                          Grid.ColumnSpan="2"
                                          Text="{Binding ProductKnowledgeStatusText, Mode=OneWay}"
                                          IsReadOnly="True" />
 
-                                <StackPanel Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal">
-                                    <Button Content="選択製品を検索対象にする" Command="{Binding UseSelectedProductCommand}" />
-                                    <Button Content="製品別設定を保存" Command="{Binding SaveProductKnowledgeSettingsCommand}" Margin="8,0,0,0" />
-                                    <Button Content="公式URLインデックス作成" Command="{Binding BuildOfficialDocumentIndexCommand}" Margin="8,0,0,0" />
-                                </StackPanel>
                             </Grid>
-                        </GroupBox>
-
-                        <GroupBox Header="公式URLインデックス作成結果">
-                            <TextBox Text="{Binding OfficialDocumentIndexBuildResultText, Mode=OneWay}"
-                                     AcceptsReturn="True"
-                                     IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     MinHeight="90" />
                         </GroupBox>
 
                         <GroupBox Header="{DynamicResource LlmSettingsHeader}">
@@ -325,7 +493,11 @@
                                 <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding OllamaEndpoint, UpdateSourceTrigger=PropertyChanged}" />
 
                                 <TextBlock Grid.Row="2" Text="{DynamicResource ChatModelLabel}" />
-                                <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}" />
+                                <ComboBox Grid.Row="2"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding AvailableModels}"
+                                          SelectedItem="{Binding ChatModel, UpdateSourceTrigger=PropertyChanged}"
+                                          IsEditable="False" />
 
                                 <TextBlock Grid.Row="3" Text="{DynamicResource EmbeddingModelLabel}" />
                                 <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding EmbeddingModel, UpdateSourceTrigger=PropertyChanged}" />
@@ -350,13 +522,63 @@
                             </Grid>
                         </GroupBox>
 
-                        <StackPanel Orientation="Horizontal">
+                        <WrapPanel>
                             <CheckBox Content="{DynamicResource EnableCloudLlmLabel}" IsChecked="{Binding EnableCloudLlm}" />
                             <CheckBox Content="{DynamicResource MaskSensitiveDataForCloudLabel}" IsChecked="{Binding MaskSensitiveDataForCloud}" />
                             <CheckBox Content="{DynamicResource DisableThinkingLabel}" IsChecked="{Binding DisableThinking}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource SkipGenerationWhenNoEvidenceLabel}" IsChecked="{Binding SkipGenerationWhenNoEvidence}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource EnableTopNFallbackLabel}" IsChecked="{Binding EnableTopNFallback}" Margin="12,0,0,0" />
-                        </StackPanel>
+                            <CheckBox Content="質問適合性を考慮した根拠選定" IsChecked="{Binding UseQuestionAwareEvidenceSelection}" Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UseAnswerQualityGateLabel}"
+                                      IsChecked="{Binding UseAnswerQualityGate}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UsePhase175QualityControlsLabel}"
+                                      IsChecked="{Binding UsePhase175QualityControls}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UseCoverageAwareEvidenceSelectionLabel}"
+                                      IsChecked="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource CoverageAwareMaxEvidenceItemsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="42"
+                                     Text="{Binding CoverageAwareMaxEvidenceItems, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UseCoverageAwareEvidenceSelection}" />
+                            <CheckBox Content="{DynamicResource UseRustEvidenceSelectorLabel}"
+                                      IsChecked="{Binding UseRustEvidenceSelector}"
+                                      IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="{DynamicResource UsePersistentRustEvidenceSelectorLabel}"
+                                      IsChecked="{Binding UsePersistentRustEvidenceSelector}"
+                                      IsEnabled="{Binding UseRustEvidenceSelector}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource MaxWorkerRestartsPerMinuteLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="42"
+                                     Text="{Binding MaxWorkerRestartsPerMinute, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UsePersistentRustEvidenceSelector}" />
+                            <CheckBox Content="{DynamicResource EnableRustSelectorShadowModeLabel}"
+                                      IsChecked="{Binding EnableRustSelectorShadowMode}"
+                                      IsEnabled="{Binding UseCoverageAwareEvidenceSelection}"
+                                      Margin="12,0,0,0" />
+                            <TextBlock Text="{DynamicResource RustEvidenceSelectorTimeoutLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="72"
+                                     Text="{Binding RustEvidenceSelectorTimeoutMs, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding UseCoverageAwareEvidenceSelection}" />
+                            <TextBlock Text="{DynamicResource ShadowMinimumRunsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="58"
+                                     Text="{Binding ShadowMinimumRunsForReadiness, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding EnableRustSelectorShadowMode}" />
+                            <TextBlock Text="{DynamicResource ShadowMaxRecordsLabel}" Margin="12,4,4,0" />
+                            <TextBox Width="64"
+                                     Text="{Binding ShadowMaxStoredRecords, UpdateSourceTrigger=PropertyChanged}"
+                                     IsEnabled="{Binding EnableRustSelectorShadowMode}" />
+                            <TextBlock Text="ランキング方式" Margin="12,4,4,0" />
+                            <ComboBox Width="100"
+                                      IsEnabled="{Binding UseQuestionAwareEvidenceSelection}"
+                                      SelectedValue="{Binding EvidenceRankingMode, UpdateSourceTrigger=PropertyChanged}"
+                                      SelectedValuePath="Tag">
+                                <ComboBoxItem Tag="Phase15" Content="Phase 15" />
+                                <ComboBoxItem Tag="Phase16" Content="Phase 16" />
+                            </ComboBox>
+                        </WrapPanel>
 
                         <GroupBox Header="モデル比較 / 推奨設定">
                             <TextBox Text="{Binding ModelRecommendationText, Mode=OneWay}"
@@ -368,10 +590,18 @@
                         </GroupBox>
 
                         <StackPanel Orientation="Horizontal">
-                            <Button Content="{DynamicResource LoadSettingsButton}" Command="{Binding LoadSettingsCommand}" />
-                            <Button Content="{DynamicResource SaveSettingsButton}" Command="{Binding SaveSettingsCommand}" />
                             <Button Content="{DynamicResource CheckOllamaConnectionButton}" Command="{Binding CheckOllamaConnectionCommand}" />
                             <Button Content="Ollama本番生成ミニテスト" Command="{Binding RunOllamaProductionMiniTestCommand}" />
+                            <Button Content="モデル一覧を更新" Command="{Binding RefreshOllamaModelsCommand}" />
+                            <Button Content="モデル互換性テスト" Command="{Binding RunModelCompatibilityTestCommand}" />
+                            <Button Content="設定を初期値に戻す" Command="{Binding ResetSettingsCommand}" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="完全再構築" Command="{Binding RebuildKnowledgeCommand}" />
+                            <Button Content="公式Docsのみ更新" Command="{Binding UpdateOfficialKnowledgeCommand}" />
+                            <Button Content="マニュアルのみ更新" Command="{Binding UpdateManualKnowledgeCommand}" />
+                            <Button Content="過去案件のみ更新" Command="{Binding UpdatePastCaseKnowledgeCommand}" />
                         </StackPanel>
 
                         <GroupBox Header="{DynamicResource OllamaConnectionResultHeader}">
@@ -391,6 +621,16 @@
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="100" />
                         </GroupBox>
+                        <GroupBox Header="モデル互換性テスト">
+                            <TextBox Text="{Binding ModelCompatibilityTestResultText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="100" />
+                        </GroupBox>
+                            </StackPanel>
+                        </Expander>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -636,6 +876,22 @@
                             </DockPanel>
                         </GroupBox>
 
+                        <GroupBox Header="過去回答候補">
+                            <StackPanel>
+                                <TextBox Text="{Binding PastAnswerCandidateText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="110" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="この回答を使用" Command="{Binding UsePastAnswerCommand}" />
+                                    <Button Content="回答案へ反映" Command="{Binding ApplyPastAnswerCommand}" />
+                                    <Button Content="LLMで文章を整える" Command="{Binding PolishPastAnswerCommand}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </GroupBox>
+
                         <GroupBox Header="{DynamicResource SelectedEvidencePreviewHeader}">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -715,8 +971,419 @@
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{DynamicResource GenerateDraftButton}" Command="{Binding GenerateDraftCommand}" />
+                            <Button Content="{DynamicResource CancelGenerationButton}" Command="{Binding CancelGenerationCommand}" />
                             <Button Content="{DynamicResource ClearInputButton}" Command="{Binding ClearInquiryCommand}" />
                         </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="Codex調査">
+                <ScrollViewer VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Margin="8">
+                        <GroupBox Header="案件と接続状態">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="130" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBlock Text="サポートID" />
+                                <TextBlock Grid.Column="1" Text="{Binding SupportNumber}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Column="2" Text="会社名" />
+                                <TextBlock Grid.Column="3" Text="{Binding CompanyName}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="1" Text="製品名" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ProductName}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Grid.Column="2" Text="問い合わせファイル" />
+                                <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding SelectedNote.FileName}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="2" Text="案件フォルダ" />
+                                <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
+                                           Text="{Binding CaseFolderPath}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="3" Text="接続状態" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding Codex.ConnectionStateText, Mode=OneWay}" />
+                                <TextBlock Grid.Row="3" Grid.Column="2" Text="Codex Thread ID" />
+                                <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding Codex.ThreadId, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="4" Text="Codex / モデル" />
+                                <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3">
+                                    <Run Text="{Binding Codex.Version, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Codex.Model, Mode=OneWay}" />
+                                </TextBlock>
+
+                                <TextBlock Grid.Row="5" Text="処理状態" />
+                                <Grid Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ProgressBar Height="10" Minimum="0" Maximum="100"
+                                                 Value="{Binding Codex.ProgressPercent, Mode=OneWay}" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" Text="{Binding Codex.ProgressText, Mode=OneWay}" />
+                                </Grid>
+                            </Grid>
+                        </GroupBox>
+
+                        <WrapPanel Margin="0,0,0,8">
+                            <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}" />
+                            <Button Content="新しい調査" Command="{Binding Codex.StartNewCommand}" />
+                            <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}" />
+                            <Button Content="再接続" Command="{Binding Codex.ReconnectCommand}" />
+                            <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}" />
+                        </WrapPanel>
+
+                        <TextBlock Text="{Binding Codex.PreviousSessionStatus, Mode=OneWay}" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource AppMutedForegroundBrush}" />
+
+                        <GroupBox Header="案件ファイル">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top">
+                                    <TextBlock Text="{Binding Codex.FileScanStatus, Mode=OneWay}"
+                                               TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding Codex.CaseFolderSendStatus, Mode=OneWay}"
+                                               Foreground="{DynamicResource AppWarningBrush}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding Codex.Files}"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          IsReadOnly="False"
+                                          MaxHeight="240"
+                                          SelectionMode="Single">
+                                    <DataGrid.Columns>
+                                        <DataGridCheckBoxColumn Header="使用" Binding="{Binding IsSelected, UpdateSourceTrigger=PropertyChanged}" Width="55" />
+                                        <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="180" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="相対パス" Binding="{Binding RelativePath}" Width="*" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="種類" Binding="{Binding KindText}" Width="100" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="サイズ" Binding="{Binding SizeText}" Width="90" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="更新日時" Binding="{Binding LastModifiedText}" Width="145" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Codex確認" Binding="{Binding ConfirmationStatus}" Width="190" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="除外理由・警告" Binding="{Binding ExclusionReason}" Width="260" IsReadOnly="True" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                            </DockPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="チャット">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="260" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="120" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <ListBox ItemsSource="{Binding Codex.Messages}"
+                                         HorizontalContentAlignment="Stretch"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border BorderBrush="{DynamicResource AppBorderBrush}"
+                                                    BorderThickness="0,0,0,1"
+                                                    Padding="8">
+                                                <StackPanel>
+                                                    <TextBlock Foreground="{DynamicResource AppMutedForegroundBrush}">
+                                                        <Run Text="{Binding RoleDisplay, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding CreatedAtText, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBox Text="{Binding Text, Mode=OneWay}"
+                                                             IsReadOnly="True"
+                                                             BorderThickness="0"
+                                                             TextWrapping="Wrap"
+                                                             AcceptsReturn="True" />
+                                                    <TextBlock Text="処理中..." Visibility="{Binding IsStreaming, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                                               Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <Grid Grid.Row="1" Margin="0,8,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="130" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="定型プロンプト" VerticalAlignment="Center" />
+                                    <ComboBox Grid.Column="1"
+                                              ItemsSource="{Binding Codex.PromptPresets}"
+                                              SelectedItem="{Binding Codex.SelectedPreset}"
+                                              DisplayMemberPath="Name" />
+                                </Grid>
+
+                                <TextBox Grid.Row="2"
+                                         Text="{Binding Codex.PromptInput, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto">
+                                    <TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding Codex.SendCommand}" />
+                                    </TextBox.InputBindings>
+                                </TextBox>
+
+                                <TextBlock Grid.Row="3"
+                                           Margin="0,6,0,0"
+                                           Text="{Binding Codex.ErrorText, Mode=OneWay}"
+                                           Foreground="{DynamicResource AppWarningBrush}"
+                                           TextWrapping="Wrap" />
+
+                                <WrapPanel Grid.Row="4" Margin="0,8,0,0">
+                                    <Button Content="送信" Command="{Binding Codex.SendCommand}" />
+                                    <Button Content="中止" Command="{Binding Codex.StopCommand}" />
+                                    <Button Content="回答をコピー" Command="{Binding Codex.CopyAnswerCommand}" />
+                                    <Button Content="この回答を返信案へ反映" Command="{Binding Codex.ApplyReplyCommand}" />
+                                    <Button Content="この回答を調査メモへ反映" Command="{Binding Codex.ApplyMemoCommand}" />
+                                    <Button Content="返信案反映を元に戻す" Command="{Binding Codex.UndoReplyCommand}" />
+                                    <Button Content="メモ反映を元に戻す" Command="{Binding Codex.UndoMemoCommand}" />
+                                    <Button Content="Codexで最終レビュー" Command="{Binding Codex.FinalReviewCommand}" />
+                                </WrapPanel>
+                            </Grid>
+                        </GroupBox>
+
+                        <Expander Header="成果物（ユーザー確認後に作成）"
+                                  IsExpanded="True"
+                                  Margin="0,0,0,8">
+                            <StackPanel>
+                                <GroupBox Header="成果物作成計画">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="150" />
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+
+                                        <TextBlock Text="処理状態" />
+                                        <Grid Grid.Column="1" Grid.ColumnSpan="2">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="Auto" />
+                                            </Grid.ColumnDefinitions>
+                                            <ProgressBar Height="10"
+                                                         Minimum="0"
+                                                         Maximum="100"
+                                                         Value="{Binding Codex.ArtifactProgressPercent, Mode=OneWay}"
+                                                         VerticalAlignment="Center" />
+                                            <TextBlock Grid.Column="1"
+                                                       Margin="12,0,0,0"
+                                                       Text="{Binding Codex.ArtifactStateText, Mode=OneWay}" />
+                                        </Grid>
+
+                                        <TextBlock Grid.Row="1" Text="元ファイル" />
+                                        <TextBox Grid.Row="1"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactSourceFullPath, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 TextWrapping="Wrap" />
+                                        <Button Grid.Row="1"
+                                                Grid.Column="2"
+                                                Content="元ファイルを開く"
+                                                Command="{Binding Codex.OpenArtifactSourceCommand}" />
+
+                                        <TextBlock Grid.Row="2" Text="成果物の種類" />
+                                        <TextBlock Grid.Row="2"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactKindText, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="3" Text="処理内容" />
+                                        <TextBlock Grid.Row="3"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactProcessDescription, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+
+                                        <TextBlock Grid.Row="4" Text="保存先フォルダ" />
+                                        <TextBox Grid.Row="4"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactDestinationFolder, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 IsReadOnly="False"
+                                                 TextWrapping="Wrap" />
+                                        <WrapPanel Grid.Row="4" Grid.Column="2">
+                                            <Button Content="保存先を変更"
+                                                    Command="{Binding Codex.ChooseArtifactDestinationCommand}" />
+                                            <Button Content="保存先を開く"
+                                                    Command="{Binding Codex.OpenArtifactDestinationCommand}" />
+                                        </WrapPanel>
+
+                                        <TextBlock Grid.Row="5" Text="出力ファイル名" />
+                                        <TextBox Grid.Row="5"
+                                                 Grid.Column="1"
+                                                 Text="{Binding Codex.ArtifactOutputFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 IsReadOnly="False" />
+                                        <WrapPanel Grid.Row="5" Grid.Column="2">
+                                            <Button Content="既定名"
+                                                    Command="{Binding Codex.ResetArtifactOutputNameCommand}" />
+                                            <Button Content="連番で保存"
+                                                    Command="{Binding Codex.UseNumberedArtifactNameCommand}" />
+                                        </WrapPanel>
+
+                                        <TextBlock Grid.Row="6" Text="上書き／原本" />
+                                        <StackPanel Grid.Row="6"
+                                                    Grid.Column="1"
+                                                    Grid.ColumnSpan="2"
+                                                    Orientation="Horizontal">
+                                            <TextBlock Text="{Binding Codex.ArtifactOverwriteText, Mode=OneWay}" />
+                                            <TextBlock Text=" ／ " />
+                                            <TextBlock Text="{Binding Codex.ArtifactSourceProtectionText, Mode=OneWay}" />
+                                            <TextBlock Text=" ／ 保存先: " />
+                                            <TextBlock Text="{Binding Codex.ArtifactDestinationCreationText, Mode=OneWay}" />
+                                        </StackPanel>
+
+                                        <TextBlock Grid.Row="7" Text="対象要素" />
+                                        <TextBlock Grid.Row="7"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactTranslationSummary, Mode=OneWay}" />
+                                    </Grid>
+                                </GroupBox>
+
+                                <WrapPanel Margin="0,0,0,8">
+                                    <Button Content="実行内容を確認"
+                                            Command="{Binding Codex.PrepareArtifactPlanCommand}" />
+                                    <Button Content="英訳Excelを作成"
+                                            Command="{Binding Codex.CreateExcelArtifactCommand}" />
+                                    <Button Content="キャンセル"
+                                            Command="{Binding Codex.CancelArtifactCommand}" />
+                                    <Button Content="作成ファイルを開く"
+                                            Command="{Binding Codex.OpenCreatedArtifactCommand}" />
+                                </WrapPanel>
+
+                                <GroupBox Header="翻訳プレビュー（原文と英訳）">
+                                    <DataGrid ItemsSource="{Binding Codex.ArtifactTranslationPreview}"
+                                              AutoGenerateColumns="False"
+                                              CanUserAddRows="False"
+                                              IsReadOnly="True"
+                                              MaxHeight="280"
+                                              SelectionMode="Single">
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="種類" Binding="{Binding TargetKindText}" Width="110" />
+                                            <DataGridTextColumn Header="シート" Binding="{Binding Sheet}" Width="130" />
+                                            <DataGridTextColumn Header="対象" Binding="{Binding Cell}" Width="110" />
+                                            <DataGridTextColumn Header="原文" Binding="{Binding SourceText}" Width="*" />
+                                            <DataGridTextColumn Header="英訳" Binding="{Binding TranslatedText}" Width="*" />
+                                            <DataGridTextColumn Header="判定" Binding="{Binding TargetText}" Width="150" />
+                                            <DataGridTextColumn Header="表示形式" Binding="{Binding NumberFormat}" Width="120" />
+                                            <DataGridTextColumn Header="数式" Binding="{Binding FormulaText}" Width="65" />
+                                            <DataGridTextColumn Header="コメント" Binding="{Binding CommentText}" Width="75" />
+                                            <DataGridTextColumn Header="結合セル" Binding="{Binding MergedRange}" Width="100" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </GroupBox>
+
+                                <GroupBox Header="警告・処理結果">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding Codex.ArtifactWarnings, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="55" />
+                                        <TextBox Text="{Binding Codex.ArtifactResultText, Mode=OneWay}"
+                                                 IsReadOnly="True"
+                                                 AcceptsReturn="True"
+                                                 TextWrapping="Wrap"
+                                                 MinHeight="80" />
+                                        <TextBlock Text="{Binding Codex.CreatedArtifactPath, Mode=OneWay}"
+                                                   TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </GroupBox>
+
+                                <GroupBox Header="メーカー向け確認案（編集可能・自動送信しません）">
+                                    <StackPanel>
+                                        <TextBox Text="{Binding Codex.ManufacturerMailDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 AcceptsReturn="True"
+                                                 IsReadOnly="False"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 MinHeight="180" />
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Content="メーカー確認メール案を作成"
+                                                    Command="{Binding Codex.GenerateManufacturerMailCommand}" />
+                                            <Button Content="メール案をコピー"
+                                                    Command="{Binding Codex.CopyManufacturerMailCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </GroupBox>
+                            </StackPanel>
+                        </Expander>
+
+                        <GroupBox Header="Codex技術回答案">
+                            <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=OneWay}"
+                                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />
+                        </GroupBox>
+                        <GroupBox Header="レビュー後の回答案">
+                            <TextBox Text="{Binding Codex.ReviewAnswer, Mode=OneWay}"
+                                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />
+                        </GroupBox>
+                        <GroupBox Header="レビュー変更点・要確認事項・警告">
+                            <StackPanel>
+                                <TextBox Text="{Binding Codex.ReviewChanges, Mode=OneWay}"
+                                         IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="80" />
+                                <TextBlock Text="{Binding Codex.ReviewWarnings, Mode=OneWay}" TextWrapping="Wrap" Margin="0,6,0,0" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="RAG Lab Evidence A/B比較">
+                            <StackPanel>
+                                <WrapPanel Margin="0,0,0,8">
+                                    <Button Content="A（Evidenceなし）として記録"
+                                            Command="{Binding Codex.CaptureAbBaselineCommand}" />
+                                    <Button Content="B（Evidenceあり）として記録"
+                                            Command="{Binding Codex.CaptureAbEvidenceCommand}" />
+                                    <Button Content="A/Bを比較"
+                                            Command="{Binding Codex.CompareAbCommand}" />
+                                </WrapPanel>
+                                <Grid Margin="0,0,0,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Text="A: " />
+                                    <TextBlock Grid.Column="1" Text="{Binding Codex.BaselineAbStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                    <TextBlock Grid.Row="1" Text="B: " />
+                                    <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding Codex.EvidenceAbStatus, Mode=OneWay}" TextWrapping="Wrap" />
+                                </Grid>
+                                <TextBox Text="{Binding Codex.AbComparisonText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="180" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="警告・エラー">
+                            <StackPanel>
+                                <TextBlock Text="{Binding Codex.WarningText, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Text="{Binding Codex.ErrorText, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Foreground="{DynamicResource AppMutedForegroundBrush}">
+                                    <Run Text="診断ログ: " /><Run Text="{Binding Codex.DiagnosticsPath, Mode=OneWay}" />
+                                </TextBlock>
+                            </StackPanel>
+                        </GroupBox>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>
@@ -724,31 +1391,28 @@
             <TabItem Header="{DynamicResource DraftResultTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
-                        <GroupBox Header="生成情報">
+                        <Expander Header="生成情報" IsExpanded="False">
                             <TextBox Text="{Binding DraftProviderStatusText, Mode=OneWay}"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="80" />
-                        </GroupBox>
+                        </Expander>
 
                         <GroupBox Header="{DynamicResource CustomerReplyDraftHeader}">
-                            <TextBox Text="{Binding CustomerReplyDraft, Mode=OneWay}"
+                            <TextBox Text="{Binding CustomerReplyDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
-                                     IsReadOnly="True"
+                                     IsReadOnly="False"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="150" />
                         </GroupBox>
 
-                        <GroupBox Header="{DynamicResource InternalMemoHeader}">
-                            <TextBox Text="{Binding InternalMemo, Mode=OneWay}"
-                                     AcceptsReturn="True"
+                        <GroupBox Header="回答可能判定">
+                            <TextBox Text="{Binding AnswerReadinessText, Mode=OneWay}"
                                      IsReadOnly="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     MinHeight="90" />
+                                     TextWrapping="Wrap" />
                         </GroupBox>
 
                         <GroupBox Header="{DynamicResource NeedConfirmationsHeader}">
@@ -760,8 +1424,34 @@
                                      MinHeight="80" />
                         </GroupBox>
 
+                        <GroupBox Header="確定済みFact">
+                            <TextBox Text="{Binding ResolvedFactsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="70" />
+                        </GroupBox>
+
                         <GroupBox Header="{DynamicResource EvidenceHeader}">
+                            <TextBox Text="{Binding EvidenceText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="80" />
+                        </GroupBox>
+
+                        <Expander Header="詳細診断" IsExpanded="False">
                             <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="160" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="{DynamicResource ConfidenceLabel}" />
+                                    <TextBlock Grid.Column="1" Text="{Binding ConfidenceText}" />
+                                </Grid>
                                 <GroupBox Header="{DynamicResource UsedEvidenceHeader}">
                                     <TextBox Text="{Binding UsedSourcesText, Mode=OneWay}"
                                              AcceptsReturn="True"
@@ -770,48 +1460,39 @@
                                              VerticalScrollBarVisibility="Auto"
                                              MinHeight="100" />
                                 </GroupBox>
-                                <GroupBox Header="{DynamicResource ReturnedEvidenceHeader}">
-                                    <TextBox Text="{Binding EvidenceText, Mode=OneWay}"
-                                             AcceptsReturn="True"
-                                             IsReadOnly="True"
-                                             TextWrapping="Wrap"
-                                             VerticalScrollBarVisibility="Auto"
-                                             MinHeight="80" />
-                                </GroupBox>
+                                <TextBox Text="{Binding GenerationDiagnosticsText, Mode=OneWay}"
+                                         AcceptsReturn="True"
+                                         IsReadOnly="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="90" />
                             </StackPanel>
-                        </GroupBox>
+                        </Expander>
 
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="160" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="{DynamicResource ConfidenceLabel}" />
-                            <TextBlock Grid.Column="1" Text="{Binding ConfidenceText}" />
-                        </Grid>
-
-                        <GroupBox Header="回答生成診断">
-                            <TextBox Text="{Binding GenerationDiagnosticsText, Mode=OneWay}"
+                        <Expander Header="{DynamicResource InternalMemoHeader}" IsExpanded="False">
+                            <TextBox Text="{Binding InternalMemo, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
-                                     IsReadOnly="True"
+                                     IsReadOnly="False"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="90" />
-                        </GroupBox>
+                        </Expander>
 
-                        <GroupBox Header="{DynamicResource WarningsHeader}">
+                        <Expander Header="{DynamicResource WarningsHeader}" IsExpanded="False">
                             <TextBox Text="{Binding WarningsText, Mode=OneWay}"
                                      AcceptsReturn="True"
                                      IsReadOnly="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="70" />
-                        </GroupBox>
+                        </Expander>
 
                         <TextBlock Text="{Binding SavedDraftPath}" Foreground="{DynamicResource AppMutedForegroundBrush}" TextWrapping="Wrap" />
 
                         <StackPanel Orientation="Horizontal">
                             <Button Content="{DynamicResource CopyCustomerReplyButton}" Command="{Binding CopyCustomerReplyCommand}" />
+                            <Button Content="再生成" Command="{Binding GenerateDraftCommand}" />
+                            <Button Content="高品質モデルで再生成" Command="{Binding GenerateHighQualityDraftCommand}" />
                             <Button Content="{DynamicResource CopyInternalMemoButton}" Command="{Binding CopyInternalMemoCommand}" />
                             <Button Content="{DynamicResource CopyAllButton}" Command="{Binding CopyAllCommand}" />
                             <Button Content="{DynamicResource SaveDraftButton}" Command="{Binding SaveDraftCommand}" />
@@ -848,6 +1529,15 @@
                                 <TextBlock Grid.Row="3" Text="{DynamicResource ErrorLabel}" />
                                 <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ErrorText}" Foreground="{DynamicResource AppWarningBrush}" TextWrapping="Wrap" />
                             </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="RAG / 生成診断">
+                            <TextBox Text="{Binding RagDiagnosticsText, Mode=OneWay}"
+                                     AcceptsReturn="True"
+                                     IsReadOnly="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="180" />
                         </GroupBox>
 
                         <StackPanel Orientation="Horizontal">

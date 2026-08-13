@@ -1,0 +1,1306 @@
+{
+  "schema_version": 3,
+  "generated_at_utc": "2026-08-13T16:07:10.704203+00:00",
+  "data_classification": "synthetic",
+  "report_name": "test-comparison",
+  "configuration": {
+    "documents_file": "documents.json",
+    "evaluation_cases_file": "cases.json",
+    "chunk_strategies": [
+      "fixed",
+      "structured"
+    ],
+    "search_methods": [
+      "keyword",
+      "bm25"
+    ],
+    "rerankers": [
+      "none"
+    ],
+    "filter_modes": [
+      "none",
+      "product_and_version"
+    ],
+    "top_k": [
+      1,
+      3
+    ]
+  },
+  "input_fingerprints": [
+    {
+      "file_name": "documents.json",
+      "size_bytes": 618,
+      "sha256": "312d308fd1b01de8dd5678fc6e34e19f667cf6e5270adeb2762c0aae541e8cc0"
+    },
+    {
+      "file_name": "cases.json",
+      "size_bytes": 274,
+      "sha256": "eeb1b6ba974d76ba13fac0e0d20f371f8858c45036630e78ac67d4ee01e4cbdb"
+    }
+  ],
+  "quality_gate": {
+    "status": "passed",
+    "preferred_top_k": 3,
+    "thresholds": {
+      "min_recall_at_k": 0.8,
+      "min_mrr": 0.8,
+      "min_ndcg_at_k": 0.8,
+      "min_required_term_coverage_at_k": 0.8,
+      "max_excluded_term_hit_count": 0,
+      "max_product_confusion_count": 0,
+      "max_version_mismatch_count": 0,
+      "max_mean_search_time_ms": null
+    },
+    "candidate_count": 8,
+    "passing_candidate_count": 8,
+    "recommended_configuration": {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 3,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_search_time_ms": 0.02219993621110916,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    }
+  },
+  "summary": [
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.08299993351101875,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.11090002954006195,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.08299993351101875,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.11090002954006195,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.08299993351101875,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.0315000070258975,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.08299993351101875,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.0315000070258975,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.0700000673532486,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.020600040443241596,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.0700000673532486,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.020600040443241596,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.0700000673532486,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.02219993621110916,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 2,
+      "chunk_generation_time_ms": 0.11030002497136593,
+      "index_build_time_ms": 0.0700000673532486,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.02219993621110916,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.06180000491440296,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.030700000934302807,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.06180000491440296,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.030700000934302807,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.06180000491440296,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.029099988751113415,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.06180000491440296,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.029099988751113415,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.089599983766675,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.020799925550818443,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.089599983766675,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.020799925550818443,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 1,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.089599983766675,
+      "query_count": 1,
+      "mean_precision_at_k": 1.0,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.028699985705316067,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "top_k": 3,
+      "document_count": 2,
+      "chunk_count": 3,
+      "chunk_generation_time_ms": 0.5945999873802066,
+      "index_build_time_ms": 0.089599983766675,
+      "query_count": 1,
+      "mean_precision_at_k": 0.3333333333333333,
+      "mean_recall_at_k": 1.0,
+      "mrr": 1.0,
+      "mean_ndcg_at_k": 1.0,
+      "mean_search_time_ms": 0.028699985705316067,
+      "product_confusion_count": 0,
+      "version_mismatch_count": 0,
+      "mean_required_term_coverage_at_k": 1.0,
+      "excluded_term_hit_count": 0,
+      "required_terms_pass_query_count": 1,
+      "quality_gate_passed": true,
+      "quality_gate_violations": []
+    }
+  ],
+  "details": [
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.11090002954006195,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.11090002954006195
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.11090002954006195
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 1.04141511,
+              "matched_terms": [
+                "canonical",
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:fixed:c89bb5a7827620fbc809",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "fixed",
+                "section_title": null,
+                "text": "質問: Path Traversalの判定\n対処: Canonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.0315000070258975,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.0315000070258975
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.0315000070258975
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 1.04141511,
+              "matched_terms": [
+                "canonical",
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:fixed:c89bb5a7827620fbc809",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "fixed",
+                "section_title": null,
+                "text": "質問: Path Traversalの判定\n対処: Canonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.020600040443241596,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.020600040443241596
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.020600040443241596
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 3.03039392,
+              "matched_terms": [
+                "canonical",
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:fixed:c89bb5a7827620fbc809",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "fixed",
+                "section_title": null,
+                "text": "質問: Path Traversalの判定\n対処: Canonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "fixed",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.02219993621110916,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.02219993621110916
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.02219993621110916
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 3.03039392,
+              "matched_terms": [
+                "canonical",
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:fixed:c89bb5a7827620fbc809",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "fixed",
+                "section_title": null,
+                "text": "質問: Path Traversalの判定\n対処: Canonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "none",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.030700000934302807,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.030700000934302807
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.030700000934302807
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 0.68977157,
+              "matched_terms": [
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:0e045700baafda42a307",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "structured",
+                "section_title": "質問",
+                "text": "質問\nPath Traversalの判定",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            },
+            {
+              "rank": 2,
+              "score": 0.68977157,
+              "matched_terms": [
+                "canonical",
+                "path"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:8429043ee46e9d68eef8",
+                "document_id": "doc-1",
+                "chunk_index": 1,
+                "strategy": "structured",
+                "section_title": "対処",
+                "text": "対処\nCanonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "keyword",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.029099988751113415,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.029099988751113415
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.029099988751113415
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 0.68977157,
+              "matched_terms": [
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:0e045700baafda42a307",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "structured",
+                "section_title": "質問",
+                "text": "質問\nPath Traversalの判定",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            },
+            {
+              "rank": 2,
+              "score": 0.68977157,
+              "matched_terms": [
+                "canonical",
+                "path"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:8429043ee46e9d68eef8",
+                "document_id": "doc-1",
+                "chunk_index": 1,
+                "strategy": "structured",
+                "section_title": "対処",
+                "text": "対処\nCanonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "none",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.020799925550818443,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.020799925550818443
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.020799925550818443
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 2.03236895,
+              "matched_terms": [
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:0e045700baafda42a307",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "structured",
+                "section_title": "質問",
+                "text": "質問\nPath Traversalの判定",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            },
+            {
+              "rank": 2,
+              "score": 1.78378929,
+              "matched_terms": [
+                "canonical",
+                "path"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:8429043ee46e9d68eef8",
+                "document_id": "doc-1",
+                "chunk_index": 1,
+                "strategy": "structured",
+                "section_title": "対処",
+                "text": "対処\nCanonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "chunk_strategy": "structured",
+      "search_method": "bm25",
+      "reranker": "none",
+      "filter_mode": "product_and_version",
+      "queries": [
+        {
+          "query_id": "q1",
+          "product": "Checkmarx",
+          "target_version": "1.0",
+          "query": "Path Traversal Canonical Path",
+          "search_time_ms": 0.028699985705316067,
+          "metrics": {
+            "1": {
+              "query_id": "q1",
+              "top_k": 1,
+              "precision_at_k": 1.0,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.028699985705316067
+            },
+            "3": {
+              "query_id": "q1",
+              "top_k": 3,
+              "precision_at_k": 0.3333333333333333,
+              "recall_at_k": 1.0,
+              "reciprocal_rank": 1.0,
+              "ndcg_at_k": 1.0,
+              "first_relevant_rank": 1,
+              "product_confusion_count": 0,
+              "version_mismatch_count": 0,
+              "required_term_coverage_at_k": 1.0,
+              "required_terms_missing": [],
+              "excluded_terms_found": [],
+              "returned_document_count": 1,
+              "search_time_ms": 0.028699985705316067
+            }
+          },
+          "results": [
+            {
+              "rank": 1,
+              "score": 2.03236895,
+              "matched_terms": [
+                "path",
+                "traversal"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:0e045700baafda42a307",
+                "document_id": "doc-1",
+                "chunk_index": 0,
+                "strategy": "structured",
+                "section_title": "質問",
+                "text": "質問\nPath Traversalの判定",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            },
+            {
+              "rank": 2,
+              "score": 1.78378929,
+              "matched_terms": [
+                "canonical",
+                "path"
+              ],
+              "chunk": {
+                "chunk_id": "doc-1:structured:8429043ee46e9d68eef8",
+                "document_id": "doc-1",
+                "chunk_index": 1,
+                "strategy": "structured",
+                "section_title": "対処",
+                "text": "対処\nCanonical Pathを確認する。",
+                "metadata": {
+                  "product_id": null,
+                  "product_name": "Checkmarx",
+                  "support_id": "SYN-1",
+                  "information_type": null,
+                  "document_name": "synthetic.txt",
+                  "target_version": "1.0",
+                  "os": null,
+                  "error_code": null,
+                  "command": null,
+                  "created_or_updated_at": null,
+                  "source_type": null,
+                  "confidence": null,
+                  "question": "Path Traversalの判定",
+                  "cause": null,
+                  "resolution": "Canonical Pathを確認する。",
+                  "manufacturer_reply": null,
+                  "customer_final_reply": null,
+                  "source_name": "synthetic.txt"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

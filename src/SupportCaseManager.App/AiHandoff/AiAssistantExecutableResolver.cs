@@ -56,53 +56,56 @@ public sealed class AiAssistantExecutableResolver : IAiAssistantExecutableResolv
 
     public IReadOnlyList<string> GetCandidatePaths()
     {
+        var configurations = PreferredBuildConfigurations();
         var candidates = new List<string>
         {
             ToFullPath(Path.Combine(appBaseDirectory, ExecutableName)),
-            ToFullPath(Path.Combine(
-                appBaseDirectory,
-                "..",
-                "..",
-                "..",
-                "..",
-                "SupportCaseManager.AiAssistant.App",
-                "bin",
-                "Debug",
-                "net10.0-windows",
-                ExecutableName)),
-            ToFullPath(Path.Combine(
-                appBaseDirectory,
-                "..",
-                "..",
-                "..",
-                "..",
-                "SupportCaseManager.AiAssistant.App",
-                "bin",
-                "Release",
-                "net10.0-windows",
-                ExecutableName)),
-            ToFullPath(Path.Combine(
-                currentDirectory,
-                "src",
-                "SupportCaseManager.AiAssistant.App",
-                "bin",
-                "Debug",
-                "net10.0-windows",
-                ExecutableName)),
-            ToFullPath(Path.Combine(
-                currentDirectory,
-                "src",
-                "SupportCaseManager.AiAssistant.App",
-                "bin",
-                "Release",
-                "net10.0-windows",
-                ExecutableName)),
         };
+
+        foreach (var configuration in configurations)
+        {
+            candidates.Add(ToFullPath(Path.Combine(
+                appBaseDirectory,
+                "..",
+                "..",
+                "..",
+                "..",
+                "SupportCaseManager.AiAssistant.App",
+                "bin",
+                configuration,
+                "net10.0-windows",
+                ExecutableName)));
+        }
+
+        foreach (var configuration in configurations)
+        {
+            candidates.Add(ToFullPath(Path.Combine(
+                currentDirectory,
+                "src",
+                "SupportCaseManager.AiAssistant.App",
+                "bin",
+                configuration,
+                "net10.0-windows",
+                ExecutableName)));
+        }
 
         return candidates
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private IReadOnlyList<string> PreferredBuildConfigurations()
+    {
+        var segments = appBaseDirectory.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Contains("Debug", StringComparer.OrdinalIgnoreCase))
+        {
+            return ["Debug", "Release"];
+        }
+
+        return ["Release", "Debug"];
     }
 
     private static string NormalizePath(string? path)

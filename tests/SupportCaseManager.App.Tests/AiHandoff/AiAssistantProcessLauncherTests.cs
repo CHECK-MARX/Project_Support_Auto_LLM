@@ -38,6 +38,21 @@ public class AiAssistantProcessLauncherTests
     }
 
     [Fact]
+    public async Task LaunchAsync_ProcessExitsImmediatelyReportsFailure()
+    {
+        using var temp = new TempDirectory();
+        var contextPath = System.IO.Path.Combine(temp.Path, "context.json");
+        await File.WriteAllTextAsync(contextPath, "{}");
+        var starter = new CapturingProcessStarter(hasExited: true, exitCode: 17);
+        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver("assistant.exe"), starter);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => launcher.LaunchAsync(contextPath));
+
+        Assert.Contains("起動直後に終了", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("17", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ExecutableResolver_UsesEnvironmentVariableFirst()
     {
         using var temp = new TempDirectory();
@@ -88,18 +103,60 @@ public class AiAssistantProcessLauncherTests
         Assert.Contains(AiAssistantExecutableResolver.EnvironmentVariableName, exception.Message);
     }
 
+    [Theory]
+    [InlineData("Release")]
+    [InlineData("Debug")]
+    public void ExecutableResolver_PrefersAssistantMatchingMainBuildConfiguration(string configuration)
+    {
+        using var temp = new TempDirectory();
+        var mainOutput = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.App", "bin", configuration, "net10.0-windows");
+        var releaseAssistant = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.AiAssistant.App", "bin", "Release", "net10.0-windows",
+            AiAssistantExecutableResolver.ExecutableName);
+        var debugAssistant = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.AiAssistant.App", "bin", "Debug", "net10.0-windows",
+            AiAssistantExecutableResolver.ExecutableName);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(releaseAssistant)!);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(debugAssistant)!);
+        File.WriteAllText(releaseAssistant, string.Empty);
+        File.WriteAllText(debugAssistant, string.Empty);
+        var resolver = new AiAssistantExecutableResolver(
+            _ => null,
+            File.Exists,
+            appBaseDirectory: mainOutput,
+            currentDirectory: temp.Path);
+
+        var resolved = resolver.Resolve();
+
+        var expected = string.Equals(configuration, "Release", StringComparison.Ordinal)
+            ? releaseAssistant
+            : debugAssistant;
+        Assert.Equal(System.IO.Path.GetFullPath(expected), resolved);
+    }
+
     private sealed class FixedExecutableResolver(string executablePath) : IAiAssistantExecutableResolver
     {
         public string Resolve() => executablePath;
     }
 
-    private sealed class CapturingProcessStarter : IProcessStarter
+    private sealed class CapturingProcessStarter(bool hasExited = false, int exitCode = 0) : IProcessStarter
     {
         public ProcessStartInfo? StartInfo { get; private set; }
 
-        public void Start(ProcessStartInfo startInfo)
+        public IStartedProcess Start(ProcessStartInfo startInfo)
         {
             StartInfo = startInfo;
+            return new FakeStartedProcess(hasExited, exitCode);
+        }
+    }
+
+    private sealed class FakeStartedProcess(bool hasExited, int exitCode) : IStartedProcess
+    {
+        public bool HasExited => hasExited;
+        public int ExitCode => exitCode;
+        public void Dispose()
+        {
         }
     }
 }

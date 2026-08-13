@@ -119,6 +119,101 @@ public sealed class ProductScopedIndexTests
         Assert.Equal(expectedLastWriteTime, File.GetLastWriteTime(manualPath));
     }
 
+    [Fact]
+    public async Task InspectKnowledgeAsync_DetectsExistingIndexWithoutRebuilding()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var product = new ProductKnowledgeSettings { ProductName = "Checkmarx" };
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        Directory.CreateDirectory(productFolder);
+        await using (var stream = File.Create(Path.Combine(productFolder, AiManualIndexBuilder.IndexFileName)))
+        {
+            await JsonSerializer.SerializeAsync(stream, new AiManualIndexDocument
+            {
+                BuiltAt = DateTimeOffset.Now,
+                Manuals = [new AiIndexedManual { Id = "manual-1", FilePath = "manual.txt", FileName = "manual.txt", Text = "content" }],
+            });
+        }
+        await using (var stream = File.Create(Path.Combine(productFolder, KnowledgeManifest.FileName)))
+        {
+            await JsonSerializer.SerializeAsync(stream, new KnowledgeManifest
+            {
+                ProductName = product.ProductName,
+                IndexedAt = DateTimeOffset.Now,
+                LastSuccessfulUpdate = DateTimeOffset.Now,
+                Sources =
+                [
+                    new KnowledgeManifestSource
+                    {
+                        SourcePathOrUrl = "manuals",
+                        SourceType = "Manual",
+                        IndexedAt = DateTimeOffset.Now,
+                        DocumentCount = 1,
+                        ChunkCount = 1,
+                    },
+                ],
+            });
+        }
+
+        var status = await CreateService().InspectKnowledgeAsync(product, aiIndexFolder);
+
+        Assert.True(status.UsedExistingIndex);
+        Assert.Equal(KnowledgeStatuses.Ready, status.Status);
+        Assert.Equal(1, status.ManualDocumentCount);
+    }
+
+    [Fact]
+    public async Task UpdateKnowledgeAsync_RecentUnchangedOfficialUrlsAreNotFetchedAgain()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        const string url = "https://docs.example.test/release";
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "Checkmarx",
+            DocumentUrls = [url],
+        };
+        var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        Directory.CreateDirectory(productFolder);
+        var now = DateTimeOffset.Now;
+        await using (var stream = File.Create(Path.Combine(productFolder, AiOfficialDocumentIndexBuilder.IndexFileName)))
+        {
+            await JsonSerializer.SerializeAsync(stream, new AiOfficialDocumentIndexDocument
+            {
+                ProductName = product.ProductName,
+                BuiltAt = now,
+                SourceUrls = [url],
+                Documents = [],
+            });
+        }
+
+        await using (var stream = File.Create(Path.Combine(productFolder, KnowledgeManifest.FileName)))
+        {
+            await JsonSerializer.SerializeAsync(stream, new KnowledgeManifest
+            {
+                ProductName = product.ProductName,
+                IndexedAt = now,
+                LastSuccessfulUpdate = now,
+                Sources =
+                [
+                    new KnowledgeManifestSource
+                    {
+                        SourcePathOrUrl = url,
+                        SourceType = "OfficialDoc",
+                        IndexedAt = now,
+                    },
+                ],
+            });
+        }
+
+        var officialBuilder = new CountingOfficialDocumentIndexBuilder();
+        var service = new ProductScopedIndexService(new WritingCaseIndexBuilder(), new AiManualIndexBuilder(), officialBuilder);
+        _ = await service.UpdateKnowledgeAsync(product, aiIndexFolder);
+
+        Assert.Equal(0, officialBuilder.BuildCount);
+    }
+
     private static ProductScopedIndexService CreateService()
     {
         return new ProductScopedIndexService(new WritingCaseIndexBuilder(), new AiManualIndexBuilder());
@@ -160,6 +255,20 @@ public sealed class ProductScopedIndexTests
                 IndexedNoteCount = 0,
                 IndexFilePath = indexFilePath,
             };
+        }
+    }
+
+    private sealed class CountingOfficialDocumentIndexBuilder : IAiOfficialDocumentIndexBuilder
+    {
+        public int BuildCount { get; private set; }
+
+        public Task<AiOfficialDocumentIndexBuildResult> BuildAsync(
+            ProductKnowledgeSettings product,
+            string indexFolder,
+            CancellationToken cancellationToken = default)
+        {
+            BuildCount++;
+            return Task.FromResult(new AiOfficialDocumentIndexBuildResult { ProductName = product.ProductName });
         }
     }
 }

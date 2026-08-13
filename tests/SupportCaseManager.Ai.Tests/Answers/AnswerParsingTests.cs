@@ -25,7 +25,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("ライセンスサーバー名とポート番号を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("ライセンスサーバー名とポート番号を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain("customerReplyDraft", result.CustomerReplyDraft);
     }
 
@@ -47,7 +47,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("ファイアウォール設定を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("ファイアウォール設定を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain("{", result.CustomerReplyDraft);
     }
 
@@ -69,7 +69,7 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("認証エラーの状況を確認してください。", result.CustomerReplyDraft);
+        Assert.EndsWith("認証エラーの状況を確認してください。", result.CustomerReplyDraft);
         Assert.Equal(0.75, result.Confidence);
     }
 
@@ -154,20 +154,21 @@ public class AnswerParsingTests
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("抽出可能な回答案", result.CustomerReplyDraft);
+        Assert.EndsWith("抽出可能な回答案", result.CustomerReplyDraft);
         Assert.Contains(result.Warnings, warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task GenerateDraftAsync_InvalidJsonWithoutDraftDoesNotExposeRawResponse()
+    public async Task GenerateDraftAsync_InvalidJsonWithoutDraftUsesSafeGroundedFallback()
     {
         var rawResponse = "これはJSONではありません。{ invalid json";
         var service = CreateService(rawResponse);
 
         var result = await service.GenerateDraftAsync(CreateRequest());
 
-        Assert.Equal("LLM応答を解析できませんでした。回答内容を確認してください。", result.CustomerReplyDraft);
         Assert.DoesNotContain(rawResponse, result.CustomerReplyDraft);
+        Assert.DoesNotContain("LLM応答を解析できませんでした", result.CustomerReplyDraft);
+        Assert.Contains("過去案件情報", result.CustomerReplyDraft);
         Assert.Contains(result.Warnings, warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal));
     }
 

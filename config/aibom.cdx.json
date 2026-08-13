@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:fc97c871-5f21-4323-8bd1-0e6aa66a7478",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-06-24T00:00:00+09:00",
+    "timestamp": "2026-07-19T00:00:00+09:00",
     "component": {
       "type": "application",
       "bom-ref": "application:support-case-manager-ai-assistant",
@@ -39,7 +39,7 @@
       "type": "platform",
       "bom-ref": "ai-runtime:ollama-local",
       "name": "Ollama",
-      "description": "Local LLM runtime used through the Ollama /api/chat HTTP API.",
+      "description": "Local LLM and embedding runtime used through the Ollama /api/chat and /api/embed HTTP APIs.",
       "scope": "required",
       "properties": [
         {
@@ -62,9 +62,9 @@
     },
     {
       "type": "machine-learning-model",
-      "bom-ref": "ai-model:qwen3-14b",
-      "name": "qwen3:14b",
-      "description": "Default local chat model used for support answer draft generation.",
+      "bom-ref": "ai-model:qwen3-8b",
+      "name": "qwen3:8b",
+      "description": "Fast quality preset for local support answer draft generation.",
       "scope": "required",
       "properties": [
         {
@@ -81,19 +81,19 @@
         },
         {
           "name": "ai.defaultModel",
-          "value": "true"
+          "value": "false"
         },
         {
           "name": "ai.usage",
-          "value": "support answer generation"
+          "value": "fast support answer generation preset"
         }
       ]
     },
     {
       "type": "machine-learning-model",
-      "bom-ref": "ai-model:gpt-oss-20b",
-      "name": "gpt-oss:20b",
-      "description": "Optional local Ollama chat model selectable by the user. The client retries once with stronger no-think instructions if the first response contains only message.thinking.",
+      "bom-ref": "ai-model:gemma4-26b",
+      "name": "gemma4:26b",
+      "description": "Standard quality preset using plain-text output without a thinking parameter.",
       "scope": "optional",
       "properties": [
         {
@@ -114,11 +114,106 @@
         },
         {
           "name": "ai.usage",
-          "value": "support answer generation"
+          "value": "standard support answer generation preset"
         },
         {
-          "name": "ai.thinkingOnlyRetry",
-          "value": "true"
+          "name": "ai.structuredOutputMode",
+          "value": "PlainText"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "bom-ref": "ai-model:qwen3-14b",
+      "name": "qwen3:14b",
+      "description": "Backward-compatible custom/default local chat model retained for existing settings.",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Model"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "local"
+        },
+        {
+          "name": "ai.defaultModel",
+          "value": "legacy"
+        },
+        {
+          "name": "ai.usage",
+          "value": "backward-compatible support answer generation"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "bom-ref": "ai-model:gemma4-31b",
+      "name": "gemma4:31b",
+      "description": "High quality preset using plain-text output without a thinking parameter.",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Model"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "local"
+        },
+        {
+          "name": "ai.defaultModel",
+          "value": "false"
+        },
+        {
+          "name": "ai.usage",
+          "value": "quality support answer generation preset"
+        },
+        {
+          "name": "ai.structuredOutputMode",
+          "value": "PlainText"
+        }
+      ]
+    },
+    {
+      "type": "machine-learning-model",
+      "bom-ref": "ai-model:gpt-oss-120b-cloud",
+      "name": "gpt-oss:120b-cloud",
+      "description": "Optional cloud-quality profile using plain-text output without an unconditional thinking parameter.",
+      "scope": "optional",
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Model"
+        },
+        {
+          "name": "ai.provider",
+          "value": "Ollama"
+        },
+        {
+          "name": "ai.deployment",
+          "value": "configured runtime"
+        },
+        {
+          "name": "ai.defaultModel",
+          "value": "false"
+        },
+        {
+          "name": "ai.usage",
+          "value": "cloud-quality support answer generation profile"
+        },
+        {
+          "name": "ai.structuredOutputMode",
+          "value": "PlainText"
         }
       ]
     },
@@ -168,7 +263,7 @@
       "type": "data",
       "bom-ref": "ai-index:product-scoped-rag",
       "name": "Product-scoped AI index",
-      "description": "Local keyword/RAG evidence index for product-scoped support cases, manuals, official documents, and curated facts.",
+      "description": "Local differential keyword and optional embedding RAG index for product-scoped support cases, manuals, official documents, and curated facts.",
       "scope": "required",
       "properties": [
         {
@@ -182,6 +277,14 @@
         {
           "name": "vectorDatabase",
           "value": "false"
+        },
+        {
+          "name": "embeddingIndexPath",
+          "value": "ai-index/products/<productName>/embeddings-index.json"
+        },
+        {
+          "name": "embeddingFallback",
+          "value": "keyword"
         }
       ]
     },
@@ -330,6 +433,32 @@
           "value": "false"
         }
       ]
+    },
+    {
+      "bom-ref": "ai-service:ollama-embed-api",
+      "name": "Ollama /api/embed",
+      "provider": {
+        "name": "Ollama"
+      },
+      "endpoints": [
+        "http://localhost:11434/api/embed"
+      ],
+      "authenticated": false,
+      "x-trust-boundary": false,
+      "properties": [
+        {
+          "name": "ai.assetType",
+          "value": "AI Embedding API Endpoint"
+        },
+        {
+          "name": "ai.localOnlyDefault",
+          "value": "true"
+        },
+        {
+          "name": "ai.automaticPull",
+          "value": "false"
+        }
+      ]
     }
   ],
   "dependencies": [
@@ -338,8 +467,12 @@
       "dependsOn": [
         "ai-runtime:ollama-local",
         "ai-service:ollama-chat-api",
+        "ai-service:ollama-embed-api",
+        "ai-model:qwen3-8b",
         "ai-model:qwen3-14b",
-        "ai-model:gpt-oss-20b",
+        "ai-model:gemma4-26b",
+        "ai-model:gemma4-31b",
+        "ai-model:gpt-oss-120b-cloud",
         "ai-prompt:support-answer-system",
         "ai-prompt:support-answer-output",
         "ai-index:product-scoped-rag",

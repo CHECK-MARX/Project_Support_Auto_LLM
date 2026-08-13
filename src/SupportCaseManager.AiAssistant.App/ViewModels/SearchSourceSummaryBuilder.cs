@@ -11,7 +11,8 @@ public static class SearchSourceSummaryBuilder
         double autoSelectMinimumScore = DefaultAutoSelectMinimumScore,
         double minimumDisplayScore = 0,
         bool isFreshnessSensitive = false,
-        bool enableTopNFallback = false)
+        bool enableTopNFallback = false,
+        QuestionAwareEvidenceSelectionContext? questionAwareContext = null)
     {
         if (searchResults is null)
         {
@@ -19,7 +20,7 @@ public static class SearchSourceSummaryBuilder
         }
 
         var allItems = searchResults.ToList();
-        var summary = Build(allItems, sourceTypeFilter, maxEvidenceItems, autoSelectMinimumScore, minimumDisplayScore, isFreshnessSensitive, enableTopNFallback);
+        var summary = Build(allItems, sourceTypeFilter, maxEvidenceItems, autoSelectMinimumScore, minimumDisplayScore, isFreshnessSensitive, enableTopNFallback, questionAwareContext);
         ApplyPlannedState(allItems, summary.Selection);
         return summary;
     }
@@ -31,7 +32,8 @@ public static class SearchSourceSummaryBuilder
         double autoSelectMinimumScore = DefaultAutoSelectMinimumScore,
         double minimumDisplayScore = 0,
         bool isFreshnessSensitive = false,
-        bool enableTopNFallback = false)
+        bool enableTopNFallback = false,
+        QuestionAwareEvidenceSelectionContext? questionAwareContext = null)
     {
         if (searchResults is null)
         {
@@ -43,7 +45,7 @@ public static class SearchSourceSummaryBuilder
         var autoScore = Math.Clamp(autoSelectMinimumScore, 0.0, 1.0);
         var filteredItems = SearchSourceFiltering.Apply(allItems, sourceTypeFilter, displayScore);
         var sourceTypeFilteredItems = SearchSourceFiltering.Apply(allItems, sourceTypeFilter);
-        var selection = SearchSourceSelectionBuilder.Build(allItems, maxEvidenceItems, autoScore, isFreshnessSensitive, enableTopNFallback);
+        var selection = SearchSourceSelectionBuilder.Build(allItems, maxEvidenceItems, autoScore, isFreshnessSensitive, enableTopNFallback, questionAwareContext);
 
         return new SearchSourceSummary
         {
