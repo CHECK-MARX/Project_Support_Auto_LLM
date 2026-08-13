@@ -1,2 +1,0 @@
-chunk_strategy,search_method,reranker,filter_mode,top_k,document_count,chunk_count,index_build_time_ms,query_count,mean_precision_at_k,mean_recall_at_k,mrr,mean_ndcg_at_k,mean_search_time_ms,mean_required_term_coverage_at_k,excluded_term_hit_count,product_confusion_count,version_mismatch_count,quality_gate_passed
-structured,hybrid,lexical,product,3,5,5,1.56899998546578,1,0.3333333333333333,0.3333333333333333,0.3333333333333333,0.23463936301137822,1.7000999941956252,1.0,2,0,0,True

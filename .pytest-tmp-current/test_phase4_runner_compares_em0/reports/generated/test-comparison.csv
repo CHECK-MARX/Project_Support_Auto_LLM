@@ -1,5 +1,0 @@
-chunk_strategy,search_method,reranker,filter_mode,top_k,document_count,chunk_count,index_build_time_ms,query_count,mean_precision_at_k,mean_recall_at_k,mrr,mean_ndcg_at_k,mean_search_time_ms,mean_required_term_coverage_at_k,excluded_term_hit_count,product_confusion_count,version_mismatch_count,quality_gate_passed
-heading,hash_embedding,none,product_and_version,1,2,2,0.4650999326258898,1,1.0,1.0,1.0,1.0,0.36429997999221087,1.0,0,0,0,True
-heading,hash_embedding,lexical,product_and_version,1,2,2,0.4650999326258898,1,1.0,1.0,1.0,1.0,0.29230001382529736,1.0,0,0,0,True
-heading,hybrid,none,product_and_version,1,2,2,0.48940000124275684,1,1.0,1.0,1.0,1.0,0.2183000324293971,1.0,0,0,0,True
-heading,hybrid,lexical,product_and_version,1,2,2,0.48940000124275684,1,1.0,1.0,1.0,1.0,0.3747999435290694,1.0,0,0,0,True
