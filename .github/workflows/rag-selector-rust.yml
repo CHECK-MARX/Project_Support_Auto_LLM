@@ -27,6 +27,9 @@ on:
       - ".github/workflows/rag-selector-rust.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   rust-selector:
     runs-on: windows-latest

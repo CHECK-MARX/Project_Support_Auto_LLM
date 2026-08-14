@@ -3300,9 +3300,11 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        if (!TryNormalizeCaseFolder(folderPath, [baseRoot, closedRoot], out folderPath))
         {
-            MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
 
@@ -3315,8 +3317,6 @@ public partial class MainWindow : Window
 
         EnsureStatusOption(newStatus);
 
-        var baseRoot = NormalizePath(product.BasePath);
-        var closedRoot = NormalizePath(product.ClosedPath);
         var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
         var targetRoot = ResolveTargetRoot(baseRoot, closedRoot, newStatus);
         if (string.IsNullOrWhiteSpace(targetRoot))
@@ -3328,7 +3328,6 @@ public partial class MainWindow : Window
         var targetDir = string.Equals(targetRoot, closedRoot, StringComparison.OrdinalIgnoreCase)
             ? BuildClosedTargetDir(targetRoot, record.CreatedOn, category)
             : (string.IsNullOrWhiteSpace(category) ? targetRoot : Path.Combine(targetRoot, category));
-        Directory.CreateDirectory(targetDir);
 
         var newName = CaseNaming.BuildFolderName(
             record.CreatedOn,
@@ -3338,6 +3337,14 @@ public partial class MainWindow : Window
             DateTime.Now.ToString("yyyyMMdd"));
         var newPath = Path.Combine(targetDir, newName);
 
+        if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+        {
+            MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+
         if (Directory.Exists(newPath))
         {
             MessageBox.Show(this, "同名のフォルダが既に存在します。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -3346,6 +3353,18 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!TryNormalizeCaseFolder(folderPath, [baseRoot, closedRoot], out folderPath))
+            {
+                MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
+            if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+            {
+                MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
             Directory.Move(folderPath, newPath);
 
             var updated = new CaseRecord(
@@ -3404,9 +3423,11 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        var sourceBase = NormalizePath(sourceProduct.BasePath);
+        var sourceClosed = NormalizePath(sourceProduct.ClosedPath);
+        if (!TryNormalizeCaseFolder(folderPath, [sourceBase, sourceClosed], out folderPath))
         {
-            MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
 
@@ -3417,8 +3438,6 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var sourceBase = NormalizePath(sourceProduct.BasePath);
-        var sourceClosed = NormalizePath(sourceProduct.ClosedPath);
         var targetBase = NormalizePath(targetProduct.BasePath);
         var targetClosed = NormalizePath(targetProduct.ClosedPath);
         if (string.IsNullOrWhiteSpace(targetBase))
@@ -3436,7 +3455,6 @@ public partial class MainWindow : Window
         var targetDir = string.Equals(targetRoot, targetClosed, StringComparison.OrdinalIgnoreCase)
             ? BuildClosedTargetDir(targetRoot, record.CreatedOn, string.Empty)
             : targetRoot;
-        Directory.CreateDirectory(targetDir);
 
         var newName = CaseNaming.BuildFolderName(
             record.CreatedOn,
@@ -3445,6 +3463,14 @@ public partial class MainWindow : Window
             newStatus,
             DateTime.Now.ToString("yyyyMMdd"));
         var newPath = Path.Combine(targetDir, newName);
+
+        if (!TryNormalizeCaseDestination(newPath, [targetBase, targetClosed], out newPath))
+        {
+            MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return false;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
         if (Directory.Exists(newPath))
         {
             MessageBox.Show(this, "移動先に同名のフォルダが既に存在します。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -3453,6 +3479,18 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!TryNormalizeCaseFolder(folderPath, [sourceBase, sourceClosed], out folderPath))
+            {
+                MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
+            if (!TryNormalizeCaseDestination(newPath, [targetBase, targetClosed], out newPath))
+            {
+                MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return false;
+            }
+
             Directory.Move(folderPath, newPath);
 
             var updated = new CaseRecord(
@@ -3735,9 +3773,11 @@ public partial class MainWindow : Window
     private bool TryMoveClosedCaseInternal(ProductProfile product, string folderPath, string targetRoot, bool useYearFolder, bool refreshView, out string? error)
     {
         error = null;
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        var baseRoot = NormalizePath(product.BasePath);
+        var closedRoot = NormalizePath(product.ClosedPath);
+        if (!TryNormalizeCaseFolder(folderPath, [baseRoot, closedRoot], out folderPath))
         {
-            error = "案件フォルダが見つかりません。";
+            error = "案件フォルダが設定された保存先の範囲外です。";
             return false;
         }
 
@@ -3754,16 +3794,21 @@ public partial class MainWindow : Window
             return false;
         }
 
-        var baseRoot = NormalizePath(product.BasePath);
-        var closedRoot = NormalizePath(product.ClosedPath);
         var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
         var targetDir = useYearFolder
             ? BuildClosedTargetDir(targetRoot, record.CreatedOn, category)
             : (string.IsNullOrWhiteSpace(category) ? targetRoot : Path.Combine(targetRoot, category));
-        Directory.CreateDirectory(targetDir);
 
         var newName = Path.GetFileName(folderPath);
         var newPath = Path.Combine(targetDir, newName);
+
+        if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+        {
+            error = "移動先フォルダが設定された保存先の範囲外です。";
+            return false;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
 
         if (Directory.Exists(newPath))
         {
@@ -3773,6 +3818,18 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!TryNormalizeCaseFolder(folderPath, [baseRoot, closedRoot], out folderPath))
+            {
+                error = "案件フォルダが設定された保存先の範囲外です。";
+                return false;
+            }
+
+            if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+            {
+                error = "移動先フォルダが設定された保存先の範囲外です。";
+                return false;
+            }
+
             Directory.Move(folderPath, newPath);
 
             var updated = new CaseRecord(
@@ -3901,6 +3958,21 @@ public partial class MainWindow : Window
         {
             return trimmed;
         }
+    }
+
+    private IEnumerable<string?> GetConfiguredCaseRoots()
+    {
+        return _settings.Products.SelectMany(product => new[] { product.BasePath, product.ClosedPath });
+    }
+
+    private static bool TryNormalizeCaseFolder(string? folderPath, IEnumerable<string?> roots, out string normalizedPath)
+    {
+        return CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(folderPath, roots, out normalizedPath);
+    }
+
+    private static bool TryNormalizeCaseDestination(string? destinationPath, IEnumerable<string?> roots, out string normalizedPath)
+    {
+        return CaseFolderPathPolicy.TryNormalizeDestinationWithinRoots(destinationPath, roots, out normalizedPath);
     }
 
     private static bool IsPathUnderBase(string basePath, string? targetPath)
@@ -4079,24 +4151,29 @@ public partial class MainWindow : Window
 
         foreach (var path in _settings.RecentCases)
         {
-            var record = _caseCache.TryGetValue(path, out var cached) ? cached : null;
-            if (record == null && Directory.Exists(path))
+            if (!TryNormalizeCaseFolder(path, GetConfiguredCaseRoots(), out var normalizedPath))
             {
-                var parsed = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(path));
+                continue;
+            }
+
+            var record = _caseCache.TryGetValue(normalizedPath, out var cached) ? cached : null;
+            if (record == null)
+            {
+                var parsed = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(normalizedPath));
                 if (parsed != null)
                 {
                     record = parsed;
-                    _caseCache[path] = parsed;
+                    _caseCache[normalizedPath] = parsed;
                 }
             }
 
-            var label = record?.DisplayText() ?? System.IO.Path.GetFileName(path);
+            var label = record?.DisplayText() ?? System.IO.Path.GetFileName(normalizedPath);
             if (label.Contains("クローズ", StringComparison.Ordinal) || record?.Status == "クローズ")
             {
                 continue;
             }
 
-            HistoryComboBox.Items.Add(new ComboBoxItem { Content = label, Tag = path });
+            HistoryComboBox.Items.Add(new ComboBoxItem { Content = label, Tag = normalizedPath });
         }
 
         HistoryComboBox.SelectedIndex = -1;
@@ -4442,6 +4519,12 @@ public partial class MainWindow : Window
         var folder = _currentCase.FolderPath;
         var baseRoot = NormalizePath(_activeProduct?.BasePath ?? _repository.BasePath ?? string.Empty);
         var closedRoot = NormalizePath(_activeProduct?.ClosedPath ?? string.Empty);
+        if (!TryNormalizeCaseFolder(folder, [baseRoot, closedRoot], out folder))
+        {
+            MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
         var fallbackCategory = GetSelectedCategoryName();
         if (string.IsNullOrWhiteSpace(fallbackCategory))
         {
@@ -4460,7 +4543,6 @@ public partial class MainWindow : Window
         var targetDir = string.Equals(targetRoot, closedRoot, StringComparison.OrdinalIgnoreCase)
             ? BuildClosedTargetDir(targetRoot, createdOn, category)
             : (string.IsNullOrWhiteSpace(category) ? targetRoot : System.IO.Path.Combine(targetRoot, category));
-        Directory.CreateDirectory(targetDir);
 
         var newName = CaseNaming.BuildFolderName(
             createdOn,
@@ -4470,6 +4552,14 @@ public partial class MainWindow : Window
             DateTime.Now.ToString("yyyyMMdd"));
         var newPath = System.IO.Path.Combine(targetDir, newName);
 
+        if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+        {
+            MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
+
         if (Directory.Exists(newPath))
         {
             MessageBox.Show(this, "同名のフォルダが既に存在します。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -4478,6 +4568,18 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!TryNormalizeCaseFolder(folder, [baseRoot, closedRoot], out folder))
+            {
+                MessageBox.Show(this, "案件フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            if (!TryNormalizeCaseDestination(newPath, [baseRoot, closedRoot], out newPath))
+            {
+                MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
             Directory.Move(folder, newPath);
             var updated = new CaseRecord(
                 CompanyTextBox.Text,
