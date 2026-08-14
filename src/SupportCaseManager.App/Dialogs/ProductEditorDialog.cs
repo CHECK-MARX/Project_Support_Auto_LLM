@@ -163,7 +163,7 @@ public sealed class ProductEditorDialog : Window
             {
                 Description = description,
                 UseDescriptionForTitle = true,
-                SelectedPath = Directory.Exists(target.Text) ? target.Text : string.Empty,
+                SelectedPath = NormalizeExistingFolderForDialog(target.Text),
             };
 
             if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
@@ -274,6 +274,33 @@ public sealed class ProductEditorDialog : Window
             .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static string NormalizeExistingFolderForDialog(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Trim()));
+            var root = Path.GetPathRoot(normalized) ?? string.Empty;
+            if (normalized.AsSpan(root.Length).Contains(':'))
+            {
+                return string.Empty;
+            }
+
+            var directory = new DirectoryInfo(normalized);
+            return directory.Exists && directory.LinkTarget is null
+                ? directory.FullName
+                : string.Empty;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
     }
 
     private static string BuildPromptFileName(string productName)

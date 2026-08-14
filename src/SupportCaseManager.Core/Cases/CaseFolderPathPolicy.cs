@@ -2,6 +2,41 @@ namespace SupportCaseManager.Core.Cases;
 
 public static class CaseFolderPathPolicy
 {
+    public static bool TryNormalizeConfiguredRoot(
+        string? rootPath,
+        bool createIfMissing,
+        out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        if (!TryNormalizePath(rootPath, requireExisting: false, out var candidate) ||
+            HasAlternateDataStream(candidate))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (createIfMissing)
+            {
+                Directory.CreateDirectory(candidate);
+            }
+
+            var directory = new DirectoryInfo(candidate);
+            if (!directory.Exists || directory.LinkTarget is not null)
+            {
+                return false;
+            }
+
+            normalizedPath = Path.TrimEndingDirectorySeparator(directory.FullName);
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
+        {
+            normalizedPath = string.Empty;
+            return false;
+        }
+    }
+
     public static bool TryNormalizeExistingFolderWithinRoots(
         string? folderPath,
         IEnumerable<string?> allowedRoots,

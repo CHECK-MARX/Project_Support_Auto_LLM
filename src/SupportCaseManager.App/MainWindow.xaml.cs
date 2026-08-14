@@ -218,6 +218,8 @@ public partial class MainWindow : Window
         try
         {
             _repository.SetBasePath(basePath);
+            basePath = _repository.BasePath!;
+            BasePathTextBox.Text = basePath;
             _settings.BasePath = basePath;
             _config.Save(_settings);
         }
@@ -4239,7 +4241,7 @@ public partial class MainWindow : Window
 
     private void OpenCaseFolder(string folderPath)
     {
-        if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
+        if (!TryNormalizeCaseFolder(folderPath, GetConfiguredCaseRoots(), out var normalizedFolderPath))
         {
             MessageBox.Show(this, "案件フォルダが見つかりません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
@@ -4249,7 +4251,7 @@ public partial class MainWindow : Window
         {
             Process.Start(new ProcessStartInfo
             {
-                FileName = folderPath,
+                FileName = normalizedFolderPath,
                 UseShellExecute = true,
             });
         }
@@ -4752,7 +4754,14 @@ public partial class MainWindow : Window
             return string.Empty;
         }
 
-        var folder = _currentCase.FolderPath;
+        if (!TryNormalizeCaseFolder(
+                _currentCase.FolderPath,
+                GetConfiguredCaseRoots(),
+                out var folder))
+        {
+            return string.Empty;
+        }
+
         foreach (var candidate in _currentNote.CandidateFileNames(_currentCase.SupportNumber))
         {
             var path = System.IO.Path.Combine(folder, candidate);
@@ -4767,9 +4776,14 @@ public partial class MainWindow : Window
 
     private void EnsureCaseNotes(CaseRecord record)
     {
+        if (!TryNormalizeCaseFolder(record.FolderPath, GetConfiguredCaseRoots(), out var folder))
+        {
+            throw new InvalidOperationException("案件フォルダが設定済みの製品フォルダ配下にありません。");
+        }
+
         foreach (var definition in NoteDefinitions.All)
         {
-            NoteService.EnsureNoteFile(record.FolderPath, definition, record.SupportNumber);
+            NoteService.EnsureNoteFile(folder, definition, record.SupportNumber);
         }
     }
 
@@ -4790,7 +4804,16 @@ public partial class MainWindow : Window
 
         if (!File.Exists(path))
         {
-            NoteService.EnsureNoteFile(_currentCase.FolderPath, _currentNote, _currentCase.SupportNumber);
+            if (!TryNormalizeCaseFolder(
+                    _currentCase.FolderPath,
+                    GetConfiguredCaseRoots(),
+                    out var folder))
+            {
+                MessageBox.Show(this, "案件フォルダを安全に使用できません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            NoteService.EnsureNoteFile(folder, _currentNote, _currentCase.SupportNumber);
         }
 
         try
@@ -4878,8 +4901,16 @@ public partial class MainWindow : Window
 
         try
         {
+            if (!TryNormalizeCaseFolder(
+                    _currentCase.FolderPath,
+                    GetConfiguredCaseRoots(),
+                    out var folder))
+            {
+                throw new InvalidOperationException("案件フォルダを安全に使用できません。");
+            }
+
             NoteService.AppendNote(
-                _currentCase.FolderPath,
+                folder,
                 _currentNote,
                 _currentCase.SupportNumber,
                 StatusComboBox.Text,
@@ -4916,7 +4947,16 @@ public partial class MainWindow : Window
 
         if (!File.Exists(path))
         {
-            NoteService.EnsureNoteFile(_currentCase.FolderPath, _currentNote, _currentCase.SupportNumber);
+            if (!TryNormalizeCaseFolder(
+                    _currentCase.FolderPath,
+                    GetConfiguredCaseRoots(),
+                    out var folder))
+            {
+                MessageBox.Show(this, "案件フォルダを安全に使用できません。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+                return null;
+            }
+
+            NoteService.EnsureNoteFile(folder, _currentNote, _currentCase.SupportNumber);
         }
 
         try
@@ -5201,8 +5241,16 @@ public partial class MainWindow : Window
 
         try
         {
-            var folder = NoteService.CreateSubfolder(_currentCase.FolderPath, _currentNote, _currentCase.SupportNumber);
-            MessageBox.Show(this, $"サブフォルダを作成しました:\n{folder}", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
+            if (!TryNormalizeCaseFolder(
+                    _currentCase.FolderPath,
+                    GetConfiguredCaseRoots(),
+                    out var caseFolder))
+            {
+                throw new InvalidOperationException("案件フォルダを安全に使用できません。");
+            }
+
+            var createdFolder = NoteService.CreateSubfolder(caseFolder, _currentNote, _currentCase.SupportNumber);
+            MessageBox.Show(this, $"サブフォルダを作成しました:\n{createdFolder}", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {

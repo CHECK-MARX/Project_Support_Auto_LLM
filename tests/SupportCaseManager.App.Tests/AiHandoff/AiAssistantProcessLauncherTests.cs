@@ -10,12 +10,12 @@ public class AiAssistantProcessLauncherTests
     public async Task LaunchAsync_StartsAiAssistantWithContextFileArgument()
     {
         using var temp = new TempDirectory();
-        var contextPath = System.IO.Path.Combine(temp.Path, "context.json");
+        var contextPath = System.IO.Path.Combine(temp.Path, "ai-context-test.json");
         await File.WriteAllTextAsync(contextPath, "{}");
         var executablePath = System.IO.Path.Combine(temp.Path, AiAssistantExecutableResolver.ExecutableName);
         await File.WriteAllTextAsync(executablePath, string.Empty);
         var starter = new CapturingProcessStarter();
-        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver(executablePath), starter);
+        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver(executablePath), starter, temp.Path);
 
         await launcher.LaunchAsync(contextPath);
 
@@ -29,10 +29,12 @@ public class AiAssistantProcessLauncherTests
     [Fact]
     public async Task LaunchAsync_MissingContextFileDoesNotStartProcess()
     {
+        using var temp = new TempDirectory();
         var starter = new CapturingProcessStarter();
-        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver("assistant.exe"), starter);
+        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver("assistant.exe"), starter, temp.Path);
 
-        await Assert.ThrowsAsync<FileNotFoundException>(() => launcher.LaunchAsync(@"C:\missing\context.json"));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => launcher.LaunchAsync(
+            System.IO.Path.Combine(temp.Path, "ai-context-missing.json")));
 
         Assert.Null(starter.StartInfo);
     }
@@ -41,15 +43,33 @@ public class AiAssistantProcessLauncherTests
     public async Task LaunchAsync_ProcessExitsImmediatelyReportsFailure()
     {
         using var temp = new TempDirectory();
-        var contextPath = System.IO.Path.Combine(temp.Path, "context.json");
+        var contextPath = System.IO.Path.Combine(temp.Path, "ai-context-test.json");
         await File.WriteAllTextAsync(contextPath, "{}");
         var starter = new CapturingProcessStarter(hasExited: true, exitCode: 17);
-        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver("assistant.exe"), starter);
+        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver("assistant.exe"), starter, temp.Path);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => launcher.LaunchAsync(contextPath));
 
         Assert.Contains("起動直後に終了", exception.Message, StringComparison.Ordinal);
         Assert.Contains("17", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task LaunchAsync_RejectsContextOutsideDedicatedHandoffFolder()
+    {
+        using var temp = new TempDirectory();
+        var handoffFolder = Directory.CreateDirectory(System.IO.Path.Combine(temp.Path, "handoff")).FullName;
+        var outsidePath = System.IO.Path.Combine(temp.Path, "ai-context-outside.json");
+        await File.WriteAllTextAsync(outsidePath, "{}");
+        var starter = new CapturingProcessStarter();
+        var launcher = new AiAssistantProcessLauncher(
+            new FixedExecutableResolver("assistant.exe"),
+            starter,
+            handoffFolder);
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => launcher.LaunchAsync(outsidePath));
+
+        Assert.Null(starter.StartInfo);
     }
 
     [Fact]

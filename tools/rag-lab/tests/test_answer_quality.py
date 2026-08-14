@@ -18,6 +18,7 @@ from rag_lab.answer_quality_runner import run_answer_quality_comparison
 
 
 CASES_FILE = Path(__file__).resolve().parents[1] / "samples" / "phase17_answer_quality_cases.json"
+MAX_SYNTHETIC_CASES = 256
 
 
 def test_all_synthetic_cases_match_expected_safe_decisions() -> None:
@@ -121,7 +122,19 @@ def test_claim_extraction_avoids_general_words_and_supports_json_serialization()
 
 
 def _cases() -> list[dict[str, object]]:
-    return json.loads(CASES_FILE.read_text(encoding="utf-8"))["cases"]
+    payload = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("cases"), list):
+        raise ValueError("Synthetic answer-quality fixture must contain a cases array.")
+
+    cases = payload["cases"]
+    if len(cases) > MAX_SYNTHETIC_CASES:
+        raise ValueError(
+            f"Synthetic answer-quality fixture exceeds {MAX_SYNTHETIC_CASES} cases."
+        )
+    if not all(isinstance(item, dict) for item in cases):
+        raise ValueError("Synthetic answer-quality cases must be JSON objects.")
+
+    return cases
 
 
 def test_phase17_comparison_writes_redacted_report_and_passes_gate(

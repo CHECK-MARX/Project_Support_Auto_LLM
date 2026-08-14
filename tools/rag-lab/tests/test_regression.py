@@ -74,18 +74,18 @@ def _tracked_baseline() -> dict[str, object]:
     }
 
 
-def _generated_report(*, gate_status: str = "passed") -> dict[str, object]:
+def _generated_report(*, gate_passed: bool = True) -> dict[str, object]:
     report = _tracked_baseline()
     row = report["summary"][0]  # type: ignore[index]
     row.update(  # type: ignore[union-attr]
         chunk_generation_time_ms=1.0,
         index_build_time_ms=2.0,
         mean_search_time_ms=3.0,
-        quality_gate_passed=gate_status == "passed",
+        quality_gate_passed=gate_passed,
         quality_gate_violations=[],
     )
     report["quality_gate"] = {
-        "status": gate_status,
+        "status": "passed" if gate_passed else "failed",
         "recommended_configuration": {
             "chunk_strategy": row["chunk_strategy"],  # type: ignore[index]
             "search_method": row["search_method"],  # type: ignore[index]
@@ -378,7 +378,7 @@ def test_baseline_candidate_copies_only_safe_recommended_summary() -> None:
 def test_baseline_candidate_requires_passing_gate_and_matching_row() -> None:
     with pytest.raises(DataValidationError, match="passing quality gate"):
         build_baseline_candidate(
-            _generated_report(gate_status="failed"),
+            _generated_report(gate_passed=False),
             report_name="review-candidate",
         )
 

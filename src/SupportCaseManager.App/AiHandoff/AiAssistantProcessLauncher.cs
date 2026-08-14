@@ -10,13 +10,18 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
 {
     private readonly IAiAssistantExecutableResolver executableResolver;
     private readonly IProcessStarter processStarter;
+    private readonly string handoffFolder;
 
     public AiAssistantProcessLauncher(
         IAiAssistantExecutableResolver? executableResolver = null,
-        IProcessStarter? processStarter = null)
+        IProcessStarter? processStarter = null,
+        string? handoffFolder = null)
     {
         this.executableResolver = executableResolver ?? new AiAssistantExecutableResolver();
         this.processStarter = processStarter ?? new ProcessStarter();
+        this.handoffFolder = string.IsNullOrWhiteSpace(handoffFolder)
+            ? AiAssistantHandoffPathPolicy.DefaultFolder
+            : handoffFolder;
     }
 
     public async Task LaunchAsync(string contextFilePath, CancellationToken cancellationToken = default)
@@ -28,7 +33,11 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
             throw new ArgumentException("コンテキストファイルパスが指定されていません。", nameof(contextFilePath));
         }
 
-        if (!File.Exists(contextFilePath))
+        if (!AiAssistantHandoffPathPolicy.TryNormalizeContextFile(
+                contextFilePath,
+                handoffFolder,
+                requireExisting: true,
+                out var normalizedContextFilePath))
         {
             throw new FileNotFoundException("AI回答支援アプリへ渡すコンテキストファイルが見つかりません。", contextFilePath);
         }
@@ -41,7 +50,7 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
             WorkingDirectory = Path.GetDirectoryName(executablePath) ?? string.Empty,
         };
         startInfo.ArgumentList.Add("--context-file");
-        startInfo.ArgumentList.Add(contextFilePath);
+        startInfo.ArgumentList.Add(normalizedContextFilePath);
 
         using var process = processStarter.Start(startInfo);
         await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);

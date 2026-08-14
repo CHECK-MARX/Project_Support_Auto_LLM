@@ -10,7 +10,6 @@ namespace SupportCaseManager.App.AiHandoff;
 
 public sealed class AiAssistantHandoffFileWriter : IAiAssistantHandoffFileWriter
 {
-    private const string HandoffFolderName = "ai-handoff";
     private readonly string handoffFolder;
     private readonly Func<DateTimeOffset> nowProvider;
 
@@ -24,11 +23,7 @@ public sealed class AiAssistantHandoffFileWriter : IAiAssistantHandoffFileWriter
         Func<DateTimeOffset>? nowProvider = null)
     {
         this.handoffFolder = string.IsNullOrWhiteSpace(handoffFolder)
-            ? Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "itoke",
-                "SupportCaseManager",
-                HandoffFolderName)
+            ? AiAssistantHandoffPathPolicy.DefaultFolder
             : handoffFolder;
         this.nowProvider = nowProvider ?? (() => DateTimeOffset.Now);
     }
@@ -39,9 +34,24 @@ public sealed class AiAssistantHandoffFileWriter : IAiAssistantHandoffFileWriter
     {
         ArgumentNullException.ThrowIfNull(context);
 
-        Directory.CreateDirectory(handoffFolder);
+        if (!AiAssistantHandoffPathPolicy.TryNormalizeRoot(
+                handoffFolder,
+                createIfMissing: true,
+                out var normalizedRoot))
+        {
+            throw new InvalidOperationException("AI回答支援の引き渡しフォルダを安全に使用できません。");
+        }
+
         var fileName = CreateFileName(context.SupportNumber, nowProvider());
-        var path = Path.Combine(handoffFolder, fileName);
+        var candidate = Path.Combine(normalizedRoot, fileName);
+        if (!AiAssistantHandoffPathPolicy.TryNormalizeContextFile(
+                candidate,
+                normalizedRoot,
+                requireExisting: false,
+                out var path))
+        {
+            throw new InvalidOperationException("AI回答支援の引き渡しファイルパスが不正です。");
+        }
 
         await using var stream = File.Create(path);
         await JsonSerializer.SerializeAsync(stream, context, JsonOptions, cancellationToken);

@@ -6,6 +6,54 @@ namespace SupportCaseManager.Tests.Cases;
 public sealed class CaseFolderPathPolicyTests
 {
     [Fact]
+    public void ConfiguredRootIsCanonicalizedAndCreatedWhenRequested()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "configured", "..", "configured");
+
+        var accepted = CaseFolderPathPolicy.TryNormalizeConfiguredRoot(
+            root,
+            createIfMissing: true,
+            out var normalized);
+
+        Assert.True(accepted);
+        Assert.Equal(Path.GetFullPath(root), normalized);
+        Assert.True(Directory.Exists(normalized));
+    }
+
+    [Fact]
+    public void ConfiguredRootRejectsMissingRootAlternateDataStreamAndLink()
+    {
+        using var temp = new TempDirectory();
+        var missing = Path.Combine(temp.Path, "missing");
+
+        Assert.False(CaseFolderPathPolicy.TryNormalizeConfiguredRoot(
+            missing,
+            createIfMissing: false,
+            out _));
+        Assert.False(CaseFolderPathPolicy.TryNormalizeConfiguredRoot(
+            temp.Path + ":metadata",
+            createIfMissing: false,
+            out _));
+
+        var target = Directory.CreateDirectory(Path.Combine(temp.Path, "target")).FullName;
+        var link = Path.Combine(temp.Path, "root-link");
+        try
+        {
+            Directory.CreateSymbolicLink(link, target);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        Assert.False(CaseFolderPathPolicy.TryNormalizeConfiguredRoot(
+            link,
+            createIfMissing: false,
+            out _));
+    }
+
+    [Fact]
     public void AcceptsExistingChildAndNormalizesPath()
     {
         using var temp = new TempDirectory();

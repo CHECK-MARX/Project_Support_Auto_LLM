@@ -1,0 +1,9 @@
+version: 1
+checkmarx:
+  scan:
+    configs:
+      sast:
+        # These live-index suites consume operator-supplied external indexes and are
+        # acceptance harnesses, not shipped application code. Production sources and
+        # ordinary unit/integration tests remain in SAST scope.
+        filter: '!**/LiveIndexAcceptanceSuiteTests.cs,!**/LiveValidateCliIndexE2ETests.cs,!**/LiveAnalysisIndexE2ETests.cs,!**/LiveStreamIndexE2ETests.cs,!**/LiveManualIndexV3RebuildTests.cs'

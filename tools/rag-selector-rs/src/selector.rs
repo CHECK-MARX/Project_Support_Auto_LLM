@@ -7,6 +7,7 @@ use crate::models::{
 };
 
 const NEAR_DUPLICATE_THRESHOLD: f64 = 0.88;
+const MAX_CANDIDATE_INPUTS: usize = 1_024;
 
 #[derive(Debug)]
 struct Assessment {
@@ -18,10 +19,12 @@ struct Assessment {
 
 pub fn select(request: &CoverageEvidenceSelectionRequest) -> CoverageEvidenceSelectionResult {
     let required = normalize(&request.required_coverage);
+    let candidates_truncated = request.candidates.len() > MAX_CANDIDATE_INPUTS;
     let mut candidates: Vec<_> = request
         .candidates
         .iter()
         .filter(|item| !item.candidate_id.trim().is_empty())
+        .take(MAX_CANDIDATE_INPUTS)
         .cloned()
         .collect();
     candidates.sort_by(|left, right| {
@@ -38,6 +41,9 @@ pub fn select(request: &CoverageEvidenceSelectionRequest) -> CoverageEvidenceSel
     let mut selected_ids = BTreeSet::new();
     let mut selected_coverage = BTreeSet::new();
     let mut warnings = Vec::new();
+    if candidates_truncated {
+        warnings.push("CandidateInputTruncated".to_owned());
+    }
     let mut used_chars = 0_i64;
     let mut redundant_ids = BTreeSet::new();
     let mut budget_limited = false;
@@ -450,7 +456,7 @@ fn descending_f64(left: f64, right: f64) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::select;
+    use super::{MAX_CANDIDATE_INPUTS, select};
     use crate::models::{CoverageEvidenceCandidate, CoverageEvidenceSelectionRequest};
 
     #[test]
@@ -673,6 +679,28 @@ mod tests {
         let result = select(&request(&["A", "B"], vec![a, b], 2, 5, 200));
         assert_eq!(ids(&result), ["a"]);
         assert!(result.budget_limited);
+    }
+
+    #[test]
+    fn candidate_input_is_bounded_before_selection_loops() {
+        let mut candidates = (0..MAX_CANDIDATE_INPUTS)
+            .map(|index| {
+                let mut item = candidate(&format!("excluded-{index}"), index as i32, &[], 0.8);
+                item.explicitly_excluded = true;
+                item
+            })
+            .collect::<Vec<_>>();
+        candidates.push(candidate("outside-limit", i32::MAX, &["A"], 0.9));
+
+        let result = select(&request(&["A"], candidates, 3, 5, 1000));
+
+        assert!(result.selected.is_empty());
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning == "CandidateInputTruncated")
+        );
     }
 
     #[test]

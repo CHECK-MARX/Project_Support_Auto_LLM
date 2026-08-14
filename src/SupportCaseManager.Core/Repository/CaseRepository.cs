@@ -35,8 +35,12 @@ public sealed class CaseRepository
             return;
         }
 
-        var resolved = Path.GetFullPath(Environment.ExpandEnvironmentVariables(basePath));
-        Directory.CreateDirectory(resolved);
+        var expanded = Environment.ExpandEnvironmentVariables(basePath);
+        if (!CaseFolderPathPolicy.TryNormalizeConfiguredRoot(expanded, createIfMissing: true, out var resolved))
+        {
+            throw new ArgumentException("ベースフォルダのパスが不正、または安全に使用できません。", nameof(basePath));
+        }
+
         _basePath = resolved;
         _indexPath = Path.Combine(resolved, "cases-index.json");
         _caseIndex = LoadIndex();
@@ -335,22 +339,13 @@ public sealed class CaseRepository
             return new List<CaseRecord>();
         }
 
-        var normalizedBase = NormalizePath(_basePath);
         var filtered = new List<CaseRecord>();
         foreach (var record in records)
         {
-            var folderPath = NormalizePath(record.FolderPath);
-            if (string.IsNullOrWhiteSpace(folderPath))
-            {
-                continue;
-            }
-
-            if (!IsPathUnderBase(normalizedBase, folderPath))
-            {
-                continue;
-            }
-
-            if (!Directory.Exists(folderPath))
+            if (!CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(
+                    record.FolderPath,
+                    [_basePath],
+                    out var folderPath))
             {
                 continue;
             }
@@ -359,40 +354,5 @@ public sealed class CaseRepository
         }
 
         return filtered;
-    }
-
-    private static string NormalizePath(string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            return Path.GetFullPath(path.Trim());
-        }
-        catch
-        {
-            return path.Trim();
-        }
-    }
-
-    private static bool IsPathUnderBase(string basePath, string targetPath)
-    {
-        if (string.IsNullOrWhiteSpace(basePath) || string.IsNullOrWhiteSpace(targetPath))
-        {
-            return false;
-        }
-
-        if (string.Equals(basePath, targetPath, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        var root = basePath.EndsWith(Path.DirectorySeparatorChar)
-            ? basePath
-            : basePath + Path.DirectorySeparatorChar;
-        return targetPath.StartsWith(root, StringComparison.OrdinalIgnoreCase);
     }
 }

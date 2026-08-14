@@ -9,6 +9,16 @@ namespace SupportCaseManager.Tests.Repository;
 public class RepositoryTests
 {
     [Fact]
+    public void SetBasePathRejectsAlternateDataStream()
+    {
+        using var temp = new TempDirectory();
+        var repository = new CaseRepository(NullLogger.Instance);
+
+        Assert.Throws<ArgumentException>(() => repository.SetBasePath(temp.Path + ":metadata"));
+        Assert.Null(repository.BasePath);
+    }
+
+    [Fact]
     public void CreateCase_CreatesFolderAndNotes()
     {
         using var temp = new TempDirectory();
