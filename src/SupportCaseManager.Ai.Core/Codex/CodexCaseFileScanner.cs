@@ -1,3 +1,5 @@
+using SupportCaseManager.Ai.Core.IO;
+
 namespace SupportCaseManager.Ai.Core.Codex;
 
 public enum CodexCaseFileKind
@@ -97,9 +99,9 @@ public sealed class CodexCaseFileScanner : ICodexCaseFileScanner
                         continue;
                     }
 
-                    if (!CodexPathPolicy.TryNormalizeFileWithinRoot(root, file, out var normalized, out var error))
+                    if (!SafePathPolicy.TryNormalizeDescendant(root, file, out var normalized))
                     {
-                        warnings.Add($"{Path.GetFileName(file)}: {error}");
+                        warnings.Add($"{Path.GetFileName(file)}: path is outside the case folder.");
                         continue;
                     }
 

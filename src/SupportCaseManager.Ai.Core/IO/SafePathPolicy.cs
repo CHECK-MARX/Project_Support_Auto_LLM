@@ -20,6 +20,36 @@ internal static class SafePathPolicy
         }
     }
 
+    public static bool TryNormalizeDescendant(string rootPath, string candidatePath, out string normalizedPath)
+    {
+        normalizedPath = string.Empty;
+        try
+        {
+            var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+            var candidate = Path.GetFullPath(candidatePath);
+            if (HasAlternateDataStream(candidate))
+            {
+                return false;
+            }
+
+            var relative = Path.GetRelativePath(root, candidate);
+            if (Path.IsPathRooted(relative)
+                || relative.Equals("..", StringComparison.Ordinal)
+                || relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                || relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            normalizedPath = candidate;
+            return true;
+        }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
     public static bool ContainsLinkedDirectory(string rootPath, string directoryPath)
     {
         try

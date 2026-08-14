@@ -109,6 +109,28 @@ public sealed class CodexPathAndFileTests
     }
 
     [Fact]
+    public async Task Scanner_DoesNotFollowFileLinks()
+    {
+        using var root = new TempDirectory();
+        using var outside = new TempDirectory();
+        var target = Path.Combine(outside.Path, "secret.txt");
+        var link = Path.Combine(root.Path, "linked.txt");
+        File.WriteAllText(target, "secret");
+        try
+        {
+            File.CreateSymbolicLink(link, target);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var result = await new CodexCaseFileScanner().ScanAsync(root.Path);
+
+        Assert.DoesNotContain(result.Files, file => file.FileName == "linked.txt");
+    }
+
+    [Fact]
     public void TryNormalizeFileWithinRoot_RejectsLinkedDirectory()
     {
         if (!OperatingSystem.IsWindows())

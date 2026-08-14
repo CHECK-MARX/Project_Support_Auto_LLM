@@ -7,6 +7,14 @@ namespace SupportCaseManager.Ai.Core.Notes;
 
 public sealed class NoteSnapshotReader : INoteSnapshotReader
 {
+    private static readonly EnumerationOptions NoteEnumerationOptions = new()
+    {
+        AttributesToSkip = FileAttributes.ReparsePoint,
+        IgnoreInaccessible = false,
+        RecurseSubdirectories = false,
+        ReturnSpecialDirectories = false,
+    };
+
     public async Task<IReadOnlyList<NoteSnapshot>> ReadAllAsync(
         string caseFolderPath,
         CancellationToken cancellationToken = default)
@@ -32,10 +40,11 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
         }
 
         var notes = new List<NoteSnapshot>();
-        foreach (var path in Directory.EnumerateFiles(normalizedCaseFolder, "*.txt").OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
+        foreach (var path in Directory.EnumerateFiles(normalizedCaseFolder, "*.txt", NoteEnumerationOptions)
+                     .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (!TryResolveReadableFile(normalizedCaseFolder, path, out var normalizedPath))
+            if (!SafePathPolicy.TryNormalizeDescendant(normalizedCaseFolder, path, out var normalizedPath))
             {
                 continue;
             }
