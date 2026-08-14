@@ -115,4 +115,56 @@ public class NoteSnapshotReaderTests
         Assert.Empty(notes);
         Assert.Null(direct);
     }
+
+    [Fact]
+    public async Task ReadAllAsync_RejectsLinkedCaseFolder()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var parent = new TempDirectory();
+        using var outside = new TempDirectory();
+        await File.WriteAllTextAsync(System.IO.Path.Combine(outside.Path, "note.txt"), "outside", Encoding.UTF8);
+        var linkedFolder = System.IO.Path.Combine(parent.Path, "linked-case");
+        try
+        {
+            Directory.CreateSymbolicLink(linkedFolder, outside.Path);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var notes = await new NoteSnapshotReader().ReadAllAsync(linkedFolder);
+
+        Assert.Empty(notes);
+    }
+
+    [Fact]
+    public async Task ReadAsync_RejectsAlternateDataStream()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var temp = new TempDirectory();
+        var carrier = System.IO.Path.Combine(temp.Path, "carrier.txt");
+        await File.WriteAllTextAsync(carrier, "carrier", Encoding.UTF8);
+        var streamPath = $"{carrier}:hidden";
+        try
+        {
+            await File.WriteAllTextAsync(streamPath, "hidden", Encoding.UTF8);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return;
+        }
+
+        var note = await new NoteSnapshotReader().ReadAsync(streamPath);
+
+        Assert.Null(note);
+    }
 }

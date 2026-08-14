@@ -107,4 +107,57 @@ public sealed class CodexPathAndFileTests
         Assert.DoesNotContain(result.Files, file => file.FileName == "secret.txt");
         Assert.Contains(result.Warnings, warning => warning.Contains("リンク先フォルダ"));
     }
+
+    [Fact]
+    public void TryNormalizeFileWithinRoot_RejectsLinkedDirectory()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var root = new TempDirectory();
+        using var outside = new TempDirectory();
+        File.WriteAllText(Path.Combine(outside.Path, "secret.txt"), "secret");
+        var link = Path.Combine(root.Path, "outside-link");
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside.Path);
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        Assert.False(CodexPathPolicy.TryNormalizeFileWithinRoot(
+            root.Path,
+            Path.Combine(link, "secret.txt"),
+            out _,
+            out var error));
+        Assert.Contains("リンクフォルダ", error);
+    }
+
+    [Fact]
+    public void TryNormalizeFileWithinRoot_RejectsAlternateDataStream()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        using var root = new TempDirectory();
+        var carrier = Path.Combine(root.Path, "carrier.txt");
+        File.WriteAllText(carrier, "carrier");
+        var streamPath = $"{carrier}:hidden";
+        try
+        {
+            File.WriteAllText(streamPath, "hidden");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            return;
+        }
+
+        Assert.False(CodexPathPolicy.TryNormalizeFileWithinRoot(root.Path, streamPath, out _, out _));
+    }
 }

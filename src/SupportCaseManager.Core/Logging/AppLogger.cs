@@ -81,10 +81,10 @@ public sealed class FileLogger : IAppLogger
         }
 
         var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        var line = $"{timestamp} [{level.ToString().ToUpperInvariant()}] {_category} :: {message}";
+        var line = $"{timestamp} [{level.ToString().ToUpperInvariant()}] {SanitizeLogValue(_category)} :: {SanitizeLogValue(message)}";
         if (exception != null)
         {
-            line = $"{line} | {exception}";
+            line = $"{line} | {SanitizeLogValue(exception.ToString())}";
         }
 
         lock (_gate)
@@ -96,5 +96,40 @@ public sealed class FileLogger : IAppLogger
         {
             Console.WriteLine(line);
         }
+    }
+
+    private static string SanitizeLogValue(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(value.Length);
+        foreach (var character in value)
+        {
+            switch (character)
+            {
+                case '\r':
+                    builder.Append("\\r");
+                    break;
+                case '\n':
+                    builder.Append("\\n");
+                    break;
+                default:
+                    if (char.IsControl(character))
+                    {
+                        builder.Append($"\\u{(int)character:X4}");
+                    }
+                    else
+                    {
+                        builder.Append(character);
+                    }
+
+                    break;
+            }
+        }
+
+        return builder.ToString();
     }
 }

@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.IO;
 using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Notes;
 
@@ -19,6 +20,11 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
         try
         {
             normalizedCaseFolder = Path.GetFullPath(caseFolderPath);
+            if (SafePathPolicy.HasAlternateDataStream(normalizedCaseFolder)
+                || SafePathPolicy.ContainsLinkedDirectory(normalizedCaseFolder, normalizedCaseFolder))
+            {
+                return [];
+            }
         }
         catch (Exception) when (!string.IsNullOrWhiteSpace(caseFolderPath))
         {
@@ -97,7 +103,9 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
         try
         {
             normalizedPath = Path.GetFullPath(filePath);
-            if (!File.Exists(normalizedPath) || new FileInfo(normalizedPath).LinkTarget is not null)
+            if (SafePathPolicy.HasAlternateDataStream(normalizedPath)
+                || !File.Exists(normalizedPath)
+                || SafePathPolicy.IsLinkedFile(normalizedPath))
             {
                 return false;
             }
@@ -109,10 +117,13 @@ public sealed class NoteSnapshotReader : INoteSnapshotReader
 
             var normalizedRoot = Path.GetFullPath(rootPath);
             var relative = Path.GetRelativePath(normalizedRoot, normalizedPath);
-            return !Path.IsPathRooted(relative)
+            var isInsideRoot = !Path.IsPathRooted(relative)
                 && !string.Equals(relative, "..", StringComparison.Ordinal)
                 && !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
                 && !relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal);
+            return isInsideRoot
+                && Path.GetDirectoryName(normalizedPath) is { } parent
+                && !SafePathPolicy.ContainsLinkedDirectory(normalizedRoot, parent);
         }
         catch (Exception) when (!string.IsNullOrWhiteSpace(filePath))
         {

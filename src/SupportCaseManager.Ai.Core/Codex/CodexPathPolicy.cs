@@ -1,3 +1,5 @@
+using SupportCaseManager.Ai.Core.IO;
+
 namespace SupportCaseManager.Ai.Core.Codex;
 
 public static class CodexPathPolicy
@@ -20,7 +22,9 @@ public static class CodexPathPolicy
         try
         {
             normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-            if (!Directory.Exists(normalized))
+            if (SafePathPolicy.HasAlternateDataStream(normalized)
+                || !Directory.Exists(normalized)
+                || SafePathPolicy.ContainsLinkedDirectory(normalized, normalized))
             {
                 error = "案件フォルダが存在しません。";
                 normalized = string.Empty;
@@ -29,7 +33,7 @@ public static class CodexPathPolicy
 
             return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
             error = "案件フォルダのパスが正しくありません。";
             return false;
@@ -58,7 +62,9 @@ public static class CodexPathPolicy
         try
         {
             var candidate = Path.GetFullPath(filePath);
-            if (!File.Exists(candidate))
+            if (SafePathPolicy.HasAlternateDataStream(candidate)
+                || !File.Exists(candidate)
+                || SafePathPolicy.IsLinkedFile(candidate))
             {
                 error = "選択したファイルが存在しません。";
                 return false;
@@ -74,10 +80,17 @@ public static class CodexPathPolicy
                 return false;
             }
 
+            var parent = Path.GetDirectoryName(candidate);
+            if (string.IsNullOrWhiteSpace(parent) || SafePathPolicy.ContainsLinkedDirectory(root, parent))
+            {
+                error = "選択したファイルのパスにリンクフォルダが含まれているため、Codexへ送信できません。";
+                return false;
+            }
+
             normalized = candidate;
             return true;
         }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
         {
             error = "ファイルのパスが正しくありません。";
             return false;
