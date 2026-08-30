@@ -143,6 +143,7 @@ fn request(fixture: &FixtureCase) -> CoverageEvidenceSelectionRequest {
                 product_mismatch: item.product_mismatch,
                 is_manually_selected: item.manually_selected,
                 estimated_chars: item.estimated_chars,
+                ..Default::default()
             })
             .collect(),
         base_max_items: fixture.base_max_items,

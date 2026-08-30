@@ -112,6 +112,14 @@ public static partial class TopicEntityAnalyzer
         var components = Intersect(query.Components, evidence.Components);
         var features = Intersect(query.Features, evidence.Features);
         var operations = Intersect(query.Operations, evidence.Operations);
+        if (query.Features.Contains("Project Analysis", StringComparer.OrdinalIgnoreCase) &&
+            evidence.Operations.Contains("Analysis", StringComparer.OrdinalIgnoreCase) &&
+            !features.Contains("Project Analysis", StringComparer.OrdinalIgnoreCase))
+        {
+            // "qacli analyze" is the operation form of the Project Analysis feature.
+            // Treat both forms as equivalent for focused evidence eligibility.
+            features = features.Concat(["Project Analysis"]).ToArray();
+        }
         var entities = IntersectEntities(query.Entities, evidence.Entities);
         var conflicts = new List<string>();
 

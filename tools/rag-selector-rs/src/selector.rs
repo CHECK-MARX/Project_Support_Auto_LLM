@@ -5,6 +5,7 @@ use crate::models::{
     CoverageEvidenceCandidate, CoverageEvidenceSelectionDecision, CoverageEvidenceSelectionRequest,
     CoverageEvidenceSelectionResult,
 };
+use crate::reranker;
 
 const NEAR_DUPLICATE_THRESHOLD: f64 = 0.88;
 const MAX_CANDIDATE_INPUTS: usize = 1_024;
@@ -277,15 +278,7 @@ fn assess(
 }
 
 fn quality_score(item: &CoverageEvidenceCandidate) -> f64 {
-    clamp(
-        (0.45 * clamp(item.ranking_score))
-            + (0.20 * clamp(item.topic_score))
-            + (0.10 * clamp(item.entity_score))
-            + (0.10 * clamp(item.technical_token_score))
-            + (0.10 * clamp(item.source_trust))
-            + (0.05 * clamp(item.version_score))
-            + item.conflict_penalty,
-    )
+    reranker::score(item).final_score
 }
 
 fn is_redundant(
@@ -783,6 +776,7 @@ mod tests {
             product_mismatch: false,
             is_manually_selected: false,
             estimated_chars: 0,
+            ..Default::default()
         }
     }
 

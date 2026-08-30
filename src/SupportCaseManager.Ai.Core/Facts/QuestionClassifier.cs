@@ -16,6 +16,7 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
 
         var currentInstalledVersion = ExtractCurrentInstalledVersion(text);
         var asksLatest = ContainsAny(normalized, "最新", "currentversion", "latestversion", "latest", "最新版");
+        var operationalAccessOrDelivery = FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(text);
         var mentionsSast = ContainsAny(normalized, "sast", "cxsast");
         var mentionsEnginePack = ContainsAny(normalized, "enginepack", "ep", "エンジンパック");
         var mentionsHotfix = ContainsAny(normalized, "hotfix", "hf", "ホットフィックス");
@@ -39,6 +40,13 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
             "原因",
             "解消",
             "トラブル",
+            "ダウンロードできない",
+            "アクセスできない",
+            "入手できない",
+            "ブロック",
+            "webフィルタ",
+            "プロキシ",
+            "ssl検査",
             "exception",
             "timeout");
         asksHowTo = asksHowTo || ContainsAny(normalized, "手順", "方法", "一連", "完了まで", "使い方");
@@ -49,7 +57,9 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
         var asksPermission = ContainsAny(normalized, "権限", "permission", "accessdenied", "unauthorized", "forbidden");
         var asksErrorMessage = ContainsAny(normalized, "エラーメッセージ", "エラーコード", "errormessage", "errorcode");
 
-        if (asksLatest && (mentionsSast || mentionsEnginePack || mentionsHotfix || ContainsAny(normalized, "バージョン", "version")))
+        if (!operationalAccessOrDelivery &&
+            asksLatest &&
+            (mentionsSast || mentionsEnginePack || mentionsHotfix || ContainsAny(normalized, "バージョン", "version")))
         {
             questionTypes.Add(QuestionTypes.LatestVersionQuestion);
             requestedFacts.Add(FactKeys.LatestSastVersion);

@@ -26,6 +26,19 @@ public sealed record class AnswerDraftResult
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public AnswerQualityEvaluationResult? AnswerQuality { get; init; }
 
+    [JsonPropertyName("readiness")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Readiness { get; init; }
+
+    [JsonPropertyName("deterministicAnswerCreated")]
+    public bool DeterministicAnswerCreated { get; init; }
+
+    [JsonPropertyName("answerGenerationMode")]
+    public string AnswerGenerationMode { get; init; } = string.Empty;
+
+    [JsonPropertyName("claims")]
+    public IReadOnlyList<Claim> Claims { get; init; } = [];
+
     [JsonPropertyName("generatedAt")]
     public DateTimeOffset GeneratedAt { get; init; }
 }

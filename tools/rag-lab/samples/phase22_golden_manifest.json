@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "dataClassification": "synthetic",
+  "splitRule": "p22-01 through p22-30 are development; p22-31 through p22-50 are holdout.",
+  "developmentCount": 30,
+  "holdoutCount": 20,
+  "stableEvidenceLocatorFields": [
+    "product",
+    "document_title",
+    "page",
+    "section",
+    "content_hash",
+    "source_type"
+  ],
+  "holdoutPolicy": "After holdout evaluation begins, do not tune aliases, weights, or fixture expectations from holdout results."
+}

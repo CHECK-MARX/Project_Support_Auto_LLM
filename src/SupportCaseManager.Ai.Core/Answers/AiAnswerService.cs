@@ -9,6 +9,8 @@ namespace SupportCaseManager.Ai.Core.Answers;
 
 public sealed class AiAnswerService : IAiAnswerService
 {
+    private const int StandardPolishingTimeoutSeconds = 30;
+    private const int QualityPolishingTimeoutSeconds = 60;
     private readonly IPromptBuilder promptBuilder;
     private readonly IEvidenceBuilder evidenceBuilder;
     private readonly ISafetyRedactionService safetyRedactionService;
@@ -33,12 +35,67 @@ public sealed class AiAnswerService : IAiAnswerService
         ArgumentNullException.ThrowIfNull(request);
 
         var fallbackEvidence = evidenceBuilder.BuildEvidence(request);
-        var promptMessages = promptBuilder.Build(request);
-        var generation = await llmClient.GenerateAsync(
-            promptMessages,
-            request.Settings.LlmProvider,
-            request.Settings.DisableThinking,
-            cancellationToken);
+        var deterministic = AnswerPostProcessor.Process(
+            request,
+            new AnswerDraftResult
+            {
+                InternalMemo = "LLM実行前にEvidenceから決定論的回答を生成しました。",
+                GeneratedAt = DateTimeOffset.Now,
+            },
+            fallbackEvidence,
+            evidenceBuilder.CalculateConfidence(request, fallbackEvidence),
+            request.InstructionWarnings);
+
+        if (fallbackEvidence.Count == 0)
+        {
+            return deterministic with { AnswerGenerationMode = AnswerGenerationModes.DeterministicOnly };
+        }
+
+        PromptMessages promptMessages = PolisherPromptBuilder.Build(deterministic.CustomerReplyDraft, request.Settings.MaxPromptChars);
+        LlmGenerationResult generation;
+        using var polishingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var polishingTimeoutSeconds = EffectivePolishingTimeoutSeconds(request.Settings);
+        polishingCancellation.CancelAfter(TimeSpan.FromSeconds(polishingTimeoutSeconds));
+        try
+        {
+            generation = await llmClient.GenerateAsync(
+                promptMessages,
+                request.Settings.LlmProvider,
+                request.Settings.DisableThinking,
+                polishingCancellation.Token);
+        }
+        catch (OperationCanceledException) when (polishingCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.PolishingTimedOut,
+                Warnings = deterministic.Warnings.Concat([$"Polishingが{polishingTimeoutSeconds}秒でタイムアウトしたため、Deterministic Answerを採用しました。"]).Distinct().ToList(),
+            };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.PolishingCancelled,
+                Warnings = deterministic.Warnings.Concat(["Polishingをキャンセルしたため、Deterministic Answerを採用しました。"]).Distinct().ToList(),
+            };
+        }
+        catch (TimeoutException exception)
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.PolishingTimedOut,
+                Warnings = deterministic.Warnings.Concat([$"Polishingがタイムアウトしたため、Deterministic Answerを採用しました。エラー={exception.GetType().Name}"]).Distinct().ToList(),
+            };
+        }
+        catch (Exception exception)
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.PolishingFailed,
+                Warnings = deterministic.Warnings.Concat([$"Polishingを利用できないため、Deterministic Answerを採用しました。エラー={exception.GetType().Name}"]).Distinct().ToList(),
+            };
+        }
 
         var response = generation.Content;
         var parsed = AnswerDraftResultParser.Parse(response, request.Sources);
@@ -70,6 +127,19 @@ public sealed class AiAnswerService : IAiAnswerService
             GeneratedAt = result.GeneratedAt == default ? DateTimeOffset.Now : result.GeneratedAt,
         };
 
+        var protectedContext = deterministic.CustomerReplyDraft + Environment.NewLine +
+            string.Join(Environment.NewLine, request.Sources.Select(static source => source.Text));
+        if (!PolishedAnswerValidator.PreservesProtectedValues(
+                protectedContext,
+                processed.CustomerReplyDraft))
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.PolishingFailed,
+                Warnings = deterministic.Warnings.Concat(["Polished Answerの保護値検証に失敗したため、Deterministic Answerを採用しました。"]).Distinct().ToList(),
+            };
+        }
+
         var postProcessed = AnswerPostProcessor.Process(
             request,
             processed,
@@ -77,11 +147,16 @@ public sealed class AiAnswerService : IAiAnswerService
             confidence,
             processed.Warnings);
 
+        postProcessed = postProcessed with
+        {
+            AnswerGenerationMode = AnswerGenerationModes.DeterministicWithPolishing,
+            DeterministicAnswerCreated = true,
+        };
+
         if (!request.Settings.UseAnswerQualityGate)
         {
             return postProcessed;
         }
-
         var quality = AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
         {
             Question = request.InquiryText,
@@ -107,6 +182,17 @@ public sealed class AiAnswerService : IAiAnswerService
             AnswerQuality = quality,
             Warnings = qualityWarnings,
         };
+    }
+
+    private static int EffectivePolishingTimeoutSeconds(AiAssistantSettings settings)
+    {
+        var configured = settings.LlmProvider.TimeoutSeconds > 0
+            ? settings.LlmProvider.TimeoutSeconds
+            : StandardPolishingTimeoutSeconds;
+        var maximum = string.Equals(settings.AnswerQualityMode, AnswerQualityModes.Quality, StringComparison.OrdinalIgnoreCase)
+            ? QualityPolishingTimeoutSeconds
+            : StandardPolishingTimeoutSeconds;
+        return Math.Min(configured, maximum);
     }
 
     private static IReadOnlyList<AnswerQualityEvidence> BuildQualityEvidence(

@@ -3,6 +3,7 @@ import pytest
 from rag_lab.evaluation import aggregate_evaluations, evaluate_results
 from rag_lab.models import Chunk, DocumentMetadata, EvaluationCase
 from rag_lab.search import SearchResult
+from rag_lab.topic_evaluation import load_topic_metadata
 
 
 def _result(
@@ -155,3 +156,59 @@ def test_required_and_excluded_terms_are_checked_in_top_k_text() -> None:
     assert metrics.required_term_coverage_at_k == 0.5
     assert metrics.required_terms_missing == ("allow list",)
     assert metrics.excluded_terms_found == ("HelixQAC",)
+    assert metrics.excluded_query_terms_found == ()
+
+
+def test_query_privacy_gate_counts_redacted_categories_not_evidence_terms() -> None:
+    case = EvaluationCase(
+        query_id="q-private",
+        product="Product",
+        query="株式会社匿名顧客 担当者: 山田 03-1234-5678 test@example.invalid Validate Stream設定",
+        expected_document_ids=("doc",),
+        excluded_terms=("permission",),
+    )
+    result = _result(
+        "doc", 1, product="Product", version="1", support_id="SYN"
+    )
+    result = SearchResult(
+        chunk=Chunk(
+            chunk_id=result.chunk.chunk_id,
+            document_id=result.chunk.document_id,
+            chunk_index=0,
+            strategy="test",
+            text="Validate Stream設定。permission は別トピックです。",
+            metadata=result.chunk.metadata,
+        ),
+        score=1.0,
+        rank=1,
+    )
+
+    metrics = evaluate_results(case, [result], top_k=1)
+    aggregate = aggregate_evaluations([metrics])
+
+    assert metrics.excluded_terms_found == ("permission",)
+    assert set(metrics.excluded_query_terms_found) == {
+        "company_name",
+        "recipient_label",
+        "phone_or_extension",
+        "email",
+    }
+    assert aggregate["excluded_term_hit_count"] == 4
+    assert aggregate["forbidden_evidence_term_hit_count"] == 1
+
+
+def test_phase22_generic_supported_languages_policy_allows_engine_pack() -> None:
+    metadata = load_topic_metadata(
+        "samples/phase22_topic_metadata.json"
+    )
+    case = EvaluationCase(
+        query_id="p22-46",
+        product="Checkmarx",
+        feature="Supported Languages",
+        query="対応言語",
+    )
+
+    policy = metadata.policy_for(case)
+
+    assert "Engine Pack" in policy.allowed_related_topics
+    assert "Supported Languages" in policy.required_topics

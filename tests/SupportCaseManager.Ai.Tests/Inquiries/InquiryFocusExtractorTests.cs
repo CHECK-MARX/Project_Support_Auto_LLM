@@ -52,6 +52,20 @@ public sealed class InquiryFocusExtractorTests
     }
 
     [Fact]
+    public void Extract_DownloadAccessFailureMentioningLatest_IsNotFreshnessSensitive()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            QAC 2026.2の最新版をダウンロードできません。
+            一つ前の2026.1を入手したいため、別の提供方法を教えてください。
+            """);
+
+        Assert.False(focus.IsFreshnessSensitive);
+        Assert.Contains("ダウンロード", focus.ImportantTerms);
+        Assert.Contains("2026.2", focus.TargetVersions);
+        Assert.Contains("2026.1", focus.TargetVersions);
+    }
+
+    [Fact]
     public void Extract_DetectsTargetVersions()
     {
         var focus = new InquiryFocusExtractor().Extract("CxSAST 9.6 と 9.7 のRelease NotesとHotfixを確認したいです。");
@@ -89,6 +103,20 @@ public sealed class InquiryFocusExtractorTests
     }
 
     [Fact]
+    public void Extract_RemovesUnboundCompanyIntroductionAndNameSignatureFromTechnicalQuery()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            Astemo株式会社の吉原です。
+            Dashboard利用手順書を提供していただけないかお願いしたく、ご連絡いたしました。
+            吉原 裕人 | Yuto Yoshihara
+            """);
+
+        Assert.DoesNotContain("Astemo", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("吉原", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.Contains("Dashboard", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Extract_SimpleInstallQuestionKeepsReadableTermsWithoutFragmentNoise()
     {
         var focus = new InquiryFocusExtractor().Extract("QACのインストール方法を教えてください。");
@@ -123,5 +151,69 @@ public sealed class InquiryFocusExtractorTests
         Assert.DoesNotContain("2.2", focus.TargetVersions);
         Assert.DoesNotContain(focus.ImportantTerms, term =>
             term.Contains('@') || term.Contains("070-6963-1508", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Extract_SeparatesRecipientDataFromTechnicalQuery()
+    {
+        var focus = new InquiryFocusExtractor().Extract(
+            "株式会社サンプル、担当者A、内線368506、MS SQL Serverのストアドは対象ですか。test@example.invalid",
+            new CaseContext { ProductName = "Checkmarx SAST", CompanyName = "株式会社サンプル", CustomerName = "担当者A" },
+            usePhase175QualityControls: true);
+
+        Assert.DoesNotContain("株式会社サンプル", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("368506", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("test@example.invalid", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.Contains("MS SQL Server", focus.TechnicalQuery.Technology);
+        Assert.Contains("Stored Procedure", focus.TechnicalQuery.Object);
+        Assert.Equal("株式会社サンプル", focus.RecipientContext.CompanyName);
+        Assert.Equal("担当者A", focus.RecipientContext.CustomerName);
+    }
+
+    [Fact]
+    public void Extract_RemovesAnonymousRecipientDataButKeepsSqlServerStoredProcedureQuestion()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            株式会社匿名顧客 担当者: 山田 太郎 電話番号: 03-1234-5678
+            Microsoft SQL ServerのストアドプロシージャはCheckmarx SASTの解析対象でしょうか。
+            """);
+
+        Assert.DoesNotContain("匿名顧客", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("山田", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("03-1234-5678", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.Contains("Microsoft SQL Server", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ストアドプロシージャ", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.Contains("Microsoft SQL Server", focus.TechnicalQuery.Technology);
+        Assert.Contains("Stored Procedure", focus.TechnicalQuery.Object);
+    }
+
+    [Fact]
+    public void Extract_RemovesSignatureAndQuotedMailButKeepsValidateStreamConfiguration()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            Validate Streamの設定方法を教えてください。
+            --
+            担当者: 佐藤 花子
+            sato@example.invalid
+            -----Original Message-----
+            From: prior@example.invalid
+            Subject: unrelated
+            """);
+
+        Assert.Contains("Validate", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Stream", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("設定", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("佐藤", focus.TechnicalQuery.CoreQuestion, StringComparison.Ordinal);
+        Assert.DoesNotContain("example.invalid", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("unrelated", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Extract_PreservesEnginePackVersionAndBugId()
+    {
+        var focus = new InquiryFocusExtractor().Extract("Engine Pack 9.7.7でBug ID 256456について確認したいです。");
+
+        Assert.Contains("Engine Pack 9.7.7", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Bug ID 256456", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
     }
 }

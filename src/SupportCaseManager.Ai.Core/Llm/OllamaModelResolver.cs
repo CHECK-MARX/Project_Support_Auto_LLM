@@ -9,6 +9,7 @@ public static class OllamaModelResolver
         string? qualityMode,
         IReadOnlyList<string> availableModels)
     {
+        var requestedModel = savedModel?.Trim() ?? string.Empty;
         var available = availableModels
             .Where(static model => !string.IsNullOrWhiteSpace(model))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -19,7 +20,8 @@ public static class OllamaModelResolver
             {
                 return new ModelResolutionResult
                 {
-                    Model = savedModel.Trim(),
+                    Model = requestedModel,
+                    RequestedModel = requestedModel,
                     Source = ModelResolutionSources.Saved,
                     AvailableModels = available,
                     Message = "モデル一覧を取得できないため、保存済みモデルを保持します。",
@@ -28,8 +30,10 @@ public static class OllamaModelResolver
 
             return new ModelResolutionResult
             {
+                RequestedModel = requestedModel,
                 Source = ModelResolutionSources.Unresolved,
                 AvailableModels = available,
+                FallbackReason = ModelFallbackReasons.NoAvailableModels,
                 Message = "利用可能なOllamaモデルがありません。",
             };
         }
@@ -37,14 +41,22 @@ public static class OllamaModelResolver
         var restored = Find(available, savedModel);
         if (!string.IsNullOrWhiteSpace(restored))
         {
-            return Success(restored, ModelResolutionSources.Saved, available);
+            return Success(restored, ModelResolutionSources.Saved, available, requestedModel);
         }
 
         var preset = ModelCapabilityProfiles.ModelForQualityMode(qualityMode ?? string.Empty);
         var resolvedPreset = Find(available, preset);
         if (!string.IsNullOrWhiteSpace(resolvedPreset))
         {
-            return Success(resolvedPreset, ModelResolutionSources.Preset, available);
+            return string.IsNullOrWhiteSpace(requestedModel)
+                ? Success(resolvedPreset, ModelResolutionSources.Preset, available, requestedModel)
+                : Success(
+                    resolvedPreset,
+                    ModelResolutionSources.Fallback,
+                    available,
+                    requestedModel,
+                    resolvedPreset,
+                    ModelFallbackReasons.RequestedModelUnavailable);
         }
 
         foreach (var candidate in FallbackOrder(qualityMode))
@@ -52,21 +64,43 @@ public static class OllamaModelResolver
             var fallback = Find(available, candidate);
             if (!string.IsNullOrWhiteSpace(fallback))
             {
-                return Success(fallback, ModelResolutionSources.Fallback, available);
+                return Success(
+                    fallback,
+                    ModelResolutionSources.Fallback,
+                    available,
+                    requestedModel,
+                    fallback,
+                    string.IsNullOrWhiteSpace(requestedModel)
+                        ? ModelFallbackReasons.QualityPresetUnavailable
+                        : ModelFallbackReasons.RequestedModelUnavailable);
             }
         }
 
-        return Success(available[0], ModelResolutionSources.Fallback, available);
+        return Success(
+            available[0],
+            ModelResolutionSources.Fallback,
+            available,
+            requestedModel,
+            available[0],
+            string.IsNullOrWhiteSpace(requestedModel)
+                ? ModelFallbackReasons.QualityPresetUnavailable
+                : ModelFallbackReasons.RequestedModelUnavailable);
     }
 
     private static ModelResolutionResult Success(
         string model,
         string source,
-        IReadOnlyList<string> available)
+        IReadOnlyList<string> available,
+        string requestedModel,
+        string fallbackModel = "",
+        string fallbackReason = "")
     {
         return new ModelResolutionResult
         {
             Model = model,
+            RequestedModel = requestedModel,
+            FallbackModel = fallbackModel,
+            FallbackReason = fallbackReason,
             Source = source,
             AvailableModels = available,
             Message = $"回答モデルを解決しました。Model={model}; Source={source}",
@@ -110,6 +144,14 @@ public sealed record class ModelResolutionResult
 {
     public string Model { get; init; } = string.Empty;
 
+    public string RequestedModel { get; init; } = string.Empty;
+
+    public string EffectiveModel => Model;
+
+    public string FallbackModel { get; init; } = string.Empty;
+
+    public string FallbackReason { get; init; } = string.Empty;
+
     public string Source { get; init; } = ModelResolutionSources.Unresolved;
 
     public IReadOnlyList<string> AvailableModels { get; init; } = [];
@@ -125,4 +167,11 @@ public static class ModelResolutionSources
     public const string Preset = "Preset";
     public const string Fallback = "Fallback";
     public const string Unresolved = "Unresolved";
+}
+
+public static class ModelFallbackReasons
+{
+    public const string NoAvailableModels = "NoAvailableModels";
+    public const string RequestedModelUnavailable = "RequestedModelUnavailable";
+    public const string QualityPresetUnavailable = "QualityPresetUnavailable";
 }

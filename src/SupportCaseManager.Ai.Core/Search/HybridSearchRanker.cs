@@ -17,7 +17,8 @@ internal static partial class HybridSearchRanker
         LlmProviderSettings providerSettings,
         IOllamaEmbeddingClient embeddingClient,
         int maxResults,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool useHybridV2 = false)
     {
         try
         {
@@ -25,9 +26,14 @@ internal static partial class HybridSearchRanker
                 Path.Combine(productIndexFolder, EmbeddingIndexDocument.FileName),
                 cancellationToken);
             if (index is null ||
+                index.SchemaVersion != EmbeddingIndexDocument.CurrentSchemaVersion ||
+                !index.EmbeddingNormalized ||
+                index.EmbeddingDimension <= 0 ||
                 !string.Equals(index.EmbeddingModel, providerSettings.EmbeddingModel, StringComparison.OrdinalIgnoreCase))
             {
-                return Rank(sources, query, productName, maxResults);
+                return useHybridV2
+                    ? RankKeywordOnly(sources, "EmbeddingIndexUnavailable", maxResults)
+                    : Rank(sources, query, productName, maxResults);
             }
 
             var queryVectors = await embeddingClient.EmbedAsync(
@@ -46,15 +52,19 @@ internal static partial class HybridSearchRanker
                     ? CosineSimilarity(queryVector, vector)
                     : 0,
                 StringComparer.Ordinal);
-            return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "embedding");
+            return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "embedding", useHybridV2);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            return Rank(sources, query, productName, maxResults);
+            return useHybridV2
+                ? RankKeywordOnly(sources, "EmbeddingTimeout", maxResults)
+                : Rank(sources, query, productName, maxResults);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return Rank(sources, query, productName, maxResults);
+            return useHybridV2
+                ? RankKeywordOnly(sources, "EmbeddingFailure", maxResults)
+                : Rank(sources, query, productName, maxResults);
         }
     }
 
@@ -73,7 +83,27 @@ internal static partial class HybridSearchRanker
             SourceKey,
             source => Similarity(query, $"{source.Title} {source.Text}"),
             StringComparer.Ordinal);
-        return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "local");
+        return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "local", false);
+    }
+
+    private static IReadOnlyList<SearchSource> RankKeywordOnly(
+        IReadOnlyList<SearchSource> sources,
+        string reason,
+        int maxResults)
+    {
+        return sources
+            .OrderByDescending(static source => source.Score ?? 0)
+            .ThenBy(static source => source.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(maxResults)
+            .Select(source => source with
+            {
+                LexicalScore = source.Score ?? 0,
+                SemanticScore = 0,
+                RrfScore = 0,
+                FinalRerankScore = source.Score ?? 0,
+                ScoreBreakdown = AppendKeywordOnlyBreakdown(source.ScoreBreakdown, reason),
+            })
+            .ToList();
     }
 
     private static IReadOnlyList<SearchSource> RankWithSemanticScores(
@@ -81,7 +111,8 @@ internal static partial class HybridSearchRanker
         IReadOnlyDictionary<string, double> semanticScores,
         string productName,
         int maxResults,
-        string semanticMode)
+        string semanticMode,
+        bool useHybridV2)
     {
         if (sources.Count == 0)
         {
@@ -109,10 +140,18 @@ internal static partial class HybridSearchRanker
                     string.Equals(source.ProductName, productName, StringComparison.OrdinalIgnoreCase)
                     ? 0.02
                     : -0.20;
+                var lexicalScore = source.Score ?? 0;
+                var finalScore = useHybridV2
+                    ? Math.Clamp((lexicalScore * 0.50) + (semantic.Score * 0.30) + (rrf * 6) + productBoost, 0, 1)
+                    : Math.Clamp(lexicalScore * 0.65 + semantic.Score * 0.25 + rrf * 3 + productBoost, 0, 1);
                 return source with
                 {
-                    Score = Math.Clamp((source.Score ?? 0) * 0.65 + semantic.Score * 0.25 + rrf * 3 + productBoost, 0, 1),
-                    ScoreBreakdown = AppendBreakdown(source.ScoreBreakdown, semantic.Score, rrf, semanticMode),
+                    Score = finalScore,
+                    LexicalScore = lexicalScore,
+                    SemanticScore = semantic.Score,
+                    RrfScore = rrf,
+                    FinalRerankScore = finalScore,
+                    ScoreBreakdown = AppendBreakdown(source.ScoreBreakdown, semantic.Score, rrf, semanticMode, useHybridV2),
                 };
             })
             .Where(source => string.IsNullOrWhiteSpace(source.ProductName) ||
@@ -168,10 +207,17 @@ internal static partial class HybridSearchRanker
             .ToHashSet(StringComparer.Ordinal);
     }
 
-    private static string AppendBreakdown(string? existing, double semantic, double rrf, string semanticMode)
+    private static string AppendBreakdown(string? existing, double semantic, double rrf, string semanticMode, bool useHybridV2)
     {
-        var hybrid = $"Hybrid {semanticMode}={semantic:0.000}, rrf={rrf:0.000}";
+        var hybrid = $"Hybrid {semanticMode}={semantic:0.000}, rrf={rrf:0.000}, RetrievalMode={(useHybridV2 ? "Hybrid" : "LegacyHybrid")}";
         return string.IsNullOrWhiteSpace(existing) ? hybrid : $"{existing}; {hybrid}";
+    }
+
+    private static string AppendKeywordOnlyBreakdown(string? existing, string reason)
+    {
+        const string status = "RetrievalMode=KeywordOnly";
+        var detail = $"{status}, EmbeddingStatus=Unavailable, FallbackReason={reason}";
+        return string.IsNullOrWhiteSpace(existing) ? detail : $"{existing}; {detail}";
     }
 
     [GeneratedRegex(@"[\p{L}\p{N}_\-.]+", RegexOptions.CultureInvariant)]

@@ -187,6 +187,28 @@ def test_phase4_runner_compares_embedding_hybrid_and_reranking(tmp_path: Path) -
     }
 
 
+def test_phase22_partition_is_deterministic_and_reports_stable_locator(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_synthetic_lab(tmp_path)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    cases_path = tmp_path / "samples" / "cases.json"
+    cases = json.loads(cases_path.read_text(encoding="utf-8"))
+    cases["evaluation_cases"][0]["query_id"] = "p22-31"
+    cases_path.write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
+    config["evaluation"]["casePartition"] = "holdout"
+    config_path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+
+    output = run_evaluation(tmp_path, config_path=config_path)
+
+    assert output.report["configuration"]["case_partition"] == "holdout"
+    assert output.report["configuration"]["case_count"] == 1
+    locator = output.report["details"][0]["queries"][0]["expected_evidence_locators"][0]
+    assert locator["document_title"] == "synthetic.txt"
+    assert locator["source_type"] is None
+    assert len(locator["content_hash"]) == 64
+
+
 def test_evidence_runner_writes_future_codex_shape_without_paths(tmp_path: Path) -> None:
     config_path = _write_synthetic_lab(tmp_path)
 

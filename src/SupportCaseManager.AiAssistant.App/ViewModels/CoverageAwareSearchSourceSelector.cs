@@ -166,6 +166,17 @@ public static class CoverageAwareSearchSourceSelector
                 SourceTrust = assessment.SourceTrustScore,
                 VersionScore = assessment.VersionScore,
                 ConflictPenalty = assessment.ConflictPenalty + Math.Min(0, analysisAdjustment),
+                // A populated lexical score identifies a Hybrid V2 retrieval result.
+                // Do not synthesize one for legacy/shadow requests: those must keep
+                // the pre-existing C#/Rust shared score until V2 is explicitly used.
+                LexicalScore = item.Source.LexicalScore ?? 0,
+                SemanticScore = item.Source.SemanticScore ?? 0,
+                ExactMatchScore = assessment.ExactTechnicalTokens.Count == 0 ? 0 : Math.Min(1, assessment.ExactTechnicalTokens.Count / 3d),
+                AliasMatchScore = assessment.FeatureScore,
+                ProductMatchScore = assessment.ProductMatch == false ? 0 : 1,
+                FeatureMatchScore = assessment.FeatureScore,
+                OperationMatchScore = assessment.OperationScore,
+                IntentMatchScore = assessment.IntentScore,
                 ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded ||
                     (analysisHowTo && !item.IsManuallySelected && !HasDirectAnalysisEvidence(item)),
                 TopicConflict = assessment.TopicConflict ||

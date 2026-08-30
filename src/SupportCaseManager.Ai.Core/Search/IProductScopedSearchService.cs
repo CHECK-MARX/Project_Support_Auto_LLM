@@ -68,7 +68,9 @@ public interface IProductScopedSearchService
         InquiryFocus inquiryFocus,
         LlmProviderSettings providerSettings,
         int maxResults = 8,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string ragPipelineMode = RagPipelineModes.Legacy,
+        string? embeddingIndexFolderOverride = null)
     {
         return SearchAllAsync(product, aiIndexFolder, inquiryFocus, maxResults, cancellationToken);
     }

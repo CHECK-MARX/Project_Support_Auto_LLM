@@ -233,7 +233,7 @@ public sealed class MainViewModelManualSearchTests
     }
 
     [Fact]
-    public async Task BuildDraftRequest_ManualQuestionUsesFastModelAndOmitsStaleCaseNotes()
+    public async Task BuildDraftRequest_ManualQuestionPreservesSelectedModelAndOmitsStaleCaseNotes()
     {
         var services = CreateViewModel([CreateManualSource()]);
         services.ViewModel.LlmProvider = "Ollama";
@@ -256,7 +256,7 @@ public sealed class MainViewModelManualSearchTests
         await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
         var request = InvokePrivate<AnswerDraftRequest>(services.ViewModel, "BuildDraftRequest");
 
-        Assert.Equal("qwen3:4b", request.Settings.LlmProvider.ChatModel);
+        Assert.Equal("gemma4:31b", request.Settings.LlmProvider.ChatModel);
         Assert.Equal(90, request.Settings.LlmProvider.TimeoutSeconds);
         Assert.Equal(6000, request.Settings.MaxPromptChars);
         Assert.Equal(2, request.Settings.MaxEvidenceItems);
@@ -264,6 +264,56 @@ public sealed class MainViewModelManualSearchTests
         Assert.Empty(request.Case.Notes);
         Assert.True(services.ViewModel.PromptApproxChars < 2000);
         Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+    }
+
+    [Theory]
+    [InlineData("qwen3.8:27b")]
+    [InlineData("gemma4:31b")]
+    public async Task GenerateDraftAsync_ExplicitModelIsUsedByAnswerService(string selectedModel)
+    {
+        var answerService = new CapturingAnswerService();
+        var services = CreateViewModel([CreateManualSource()], answerService: answerService);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = selectedModel;
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        var request = Assert.IsType<AnswerDraftRequest>(answerService.LastRequest);
+        Assert.Equal(selectedModel, request.Settings.LlmProvider.ChatModel);
+        Assert.Equal(selectedModel, services.ViewModel.ChatModel);
+        Assert.Equal(selectedModel, services.ViewModel.RequestedModel);
+        Assert.Equal(selectedModel, services.ViewModel.EffectiveModel);
+        Assert.Empty(services.ViewModel.FallbackModel);
+        Assert.Empty(services.ViewModel.ModelFallbackReason);
+        Assert.Equal(ModelResolutionSources.Saved, services.ViewModel.ModelResolutionSource);
+        Assert.Contains($"RequestedModel: {selectedModel}", services.ViewModel.GenerationDiagnosticsText);
+        Assert.Contains($"EffectiveModel: {selectedModel}", services.ViewModel.GenerationDiagnosticsText);
+        Assert.Contains("ModelSource: Saved", services.ViewModel.GenerationDiagnosticsText);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_QualityModePreservesExplicitModel()
+    {
+        var answerService = new CapturingAnswerService();
+        var services = CreateViewModel([CreateManualSource()], answerService: answerService);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "qwen3.8:27b";
+        services.ViewModel.AnswerQualityMode = AnswerQualityModes.Quality;
+        services.ViewModel.InquiryText = $"QACの解析手順を詳しく説明してください。{new string('補', 520)}";
+        ConfigureProduct(services.ViewModel, "HelixQAC");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        var request = Assert.IsType<AnswerDraftRequest>(answerService.LastRequest);
+        Assert.Equal("qwen3.8:27b", request.Settings.LlmProvider.ChatModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.ChatModel);
+        Assert.Equal(1000, services.ViewModel.MaxOutputTokens);
+        Assert.Equal(900, services.ViewModel.TimeoutSeconds);
+        Assert.Equal(10000, services.ViewModel.MaxPromptChars);
+        Assert.Equal(3, services.ViewModel.MaxEvidenceItems);
     }
 
     [Fact]
@@ -345,6 +395,13 @@ public sealed class MainViewModelManualSearchTests
         Assert.Contains("選択済み根拠", services.ViewModel.StatusMessage);
         Assert.Equal("LlmTimeoutEvidenceFallback", services.ViewModel.GenerationSkippedReason);
         Assert.DoesNotContain("Provider=Fake", services.ViewModel.LastOperationResult);
+        Assert.Equal("qwen2.5:3b", services.ViewModel.ChatModel);
+        Assert.Equal("qwen2.5:3b", services.ViewModel.RequestedModel);
+        Assert.Equal("qwen2.5:3b", services.ViewModel.EffectiveModel);
+        Assert.Empty(services.ViewModel.FallbackModel);
+        Assert.Empty(services.ViewModel.ModelFallbackReason);
+        Assert.Equal(ModelResolutionSources.Saved, services.ViewModel.ModelResolutionSource);
+        Assert.Contains("FallbackReason: (未設定)", services.ViewModel.GenerationDiagnosticsText);
     }
 
     [Fact]
@@ -862,6 +919,24 @@ public sealed class MainViewModelManualSearchTests
             AnswerDraftRequest request,
             CancellationToken cancellationToken = default)
         {
+            return Task.FromResult(new AnswerDraftResult
+            {
+                CustomerReplyDraft = "回答案",
+                InternalMemo = "社内メモ",
+                Confidence = 0.5,
+            });
+        }
+    }
+
+    private sealed class CapturingAnswerService : IAiAnswerService
+    {
+        public AnswerDraftRequest? LastRequest { get; private set; }
+
+        public Task<AnswerDraftResult> GenerateDraftAsync(
+            AnswerDraftRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
             return Task.FromResult(new AnswerDraftResult
             {
                 CustomerReplyDraft = "回答案",

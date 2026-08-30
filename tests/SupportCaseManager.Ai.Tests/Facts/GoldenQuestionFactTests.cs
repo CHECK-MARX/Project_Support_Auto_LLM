@@ -47,6 +47,18 @@ public sealed class GoldenQuestionFactTests
     }
 
     [Fact]
+    public void QuestionClassifier_DownloadAccessFailureDoesNotExcludePastCasesAsLatestVersionQuestion()
+    {
+        var classification = new QuestionClassifier().Classify("""
+            QAC 2026.2の最新版をダウンロードできません。
+            一つ前の2026.1を入手したいため、別の提供方法を教えてください。
+            """);
+
+        Assert.DoesNotContain(QuestionTypes.LatestVersionQuestion, classification.QuestionTypes);
+        Assert.Contains(QuestionTypes.HowToQuestion, classification.QuestionTypes);
+    }
+
+    [Fact]
     public void QuestionClassifier_SeparatesCurrentInstalledVersionFromLatestRequestedFacts()
     {
         var classification = new QuestionClassifier().Classify("現在SAST 9.7.4 HF2を利用中です。最新SAST、EP、HFを教えてください。");

@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import Any, Mapping
 
 from .chunking import ChunkingOptions, ChunkingStrategy, chunk_document
+from .embedding import EmbeddingProvider
 from .evidence import EvidenceSelectionOptions, build_codex_evidence, write_codex_evidence
 from .evaluation import aggregate_evaluations, evaluate_results
 from .io import LabPaths, load_documents, load_evaluation_cases, read_json, write_json_report
@@ -26,6 +27,12 @@ from .search import SearchFilters, SearchMethod, build_search_index
 from .topic_entity_ranking import (
     build_topic_entity_comparison_section,
     rank_topic_entity_candidates,
+)
+from .topic_evaluation import (
+    TopicMetadata,
+    aggregate_topic_evaluations,
+    evaluate_topic_results,
+    load_topic_metadata,
 )
 
 
@@ -61,12 +68,15 @@ class LoadedLabConfiguration:
     rerankers: list[RerankerMethod]
     filter_modes: list[str]
     top_ks: list[int]
+    case_partition: str
     quality_thresholds: QualityGateThresholds
     preferred_top_k: int
     report_name: str
     documents_file_name: str
     cases_file_name: str
     input_fingerprints: list[dict[str, Any]]
+    topic_metadata: TopicMetadata | None
+    topic_metadata_file_name: str | None
 
 
 def _object(value: Any, name: str) -> Mapping[str, Any]:
@@ -90,6 +100,47 @@ def _positive_int_list(value: Any, name: str) -> list[int]:
     ):
         raise ValueError(f"{name} must be a non-empty array of positive integers")
     return sorted(set(value))
+
+
+def _phase22_partition(case: EvaluationCase) -> str:
+    """Use the manifest's deterministic p22-01..30 / p22-31..50 split."""
+    match = re.fullmatch(r"p22-(\d{2})", case.query_id)
+    if match is None:
+        return "all"
+    return "development" if int(match.group(1)) <= 30 else "holdout"
+
+
+def _select_cases(cases: list[EvaluationCase], partition: str) -> list[EvaluationCase]:
+    if partition == "all":
+        return cases
+    selected = [case for case in cases if _phase22_partition(case) == partition]
+    if not selected:
+        raise ValueError(f"evaluation.casePartition={partition} selected no cases")
+    return selected
+
+
+def _expected_evidence_locators(
+    case: EvaluationCase, documents_by_id: Mapping[str, Document]
+) -> list[dict[str, str | None]]:
+    """Expose stable fixture locators without relying solely on temporary ids."""
+    locators: list[dict[str, str | None]] = []
+    for document_id in case.expected_document_ids:
+        document = documents_by_id.get(document_id)
+        if document is None:
+            continue
+        normalized = document.text.replace("\r\n", "\n").replace("\r", "\n")
+        locators.append(
+            {
+                "document_id": document_id,
+                "product": document.metadata.product_name,
+                "document_title": document.metadata.document_name,
+                "page": None,
+                "section": None,
+                "content_hash": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+                "source_type": document.metadata.source_type,
+            }
+        )
+    return locators
 
 
 def _normalization_options(config: Mapping[str, Any]) -> NormalizationOptions:
@@ -150,13 +201,26 @@ def load_lab_configuration(
     cases = load_evaluation_cases(paths, cases_file)
     documents_path = paths.resolve_input(documents_file)
     cases_path = paths.resolve_input(cases_file)
+    evaluation_config = _object(config.get("evaluation", {}), "evaluation")
+    topic_metadata_file = evaluation_config.get("topicMetadataFile")
+    if topic_metadata_file is not None and not isinstance(topic_metadata_file, str):
+        raise ValueError("evaluation.topicMetadataFile must be a string")
+    topic_metadata_path = (
+        paths.resolve_input(topic_metadata_file) if topic_metadata_file else None
+    )
+    topic_metadata = (
+        load_topic_metadata(topic_metadata_path) if topic_metadata_path else None
+    )
     normalization = _normalization_options(
         _object(config.get("normalization", {}), "normalization")
     )
     chunking_config = _object(config.get("chunking", {}), "chunking")
     maximum = int(chunking_config.get("maxCharacters", 1200))
     overlap = int(chunking_config.get("overlapCharacters", 120))
-    evaluation_config = _object(config.get("evaluation", {}), "evaluation")
+    case_partition = str(evaluation_config.get("casePartition", "all"))
+    if case_partition not in {"all", "development", "holdout"}:
+        raise ValueError("evaluation.casePartition must be all, development, or holdout")
+    cases = _select_cases(cases, case_partition)
     strategies = [
         ChunkingStrategy(value)
         for value in _string_list(
@@ -214,6 +278,7 @@ def load_lab_configuration(
         rerankers=rerankers,
         filter_modes=filter_modes,
         top_ks=top_ks,
+        case_partition=case_partition,
         quality_thresholds=quality_thresholds,
         preferred_top_k=preferred_top_k,
         report_name=selected_report_name,
@@ -222,7 +287,11 @@ def load_lab_configuration(
         input_fingerprints=[
             _fingerprint(documents_path),
             _fingerprint(cases_path),
-        ],
+        ] + ([_fingerprint(topic_metadata_path)] if topic_metadata_path else []),
+        topic_metadata=topic_metadata,
+        topic_metadata_file_name=(
+            topic_metadata_path.name if topic_metadata_path else None
+        ),
     )
 
 
@@ -231,6 +300,7 @@ def run_evaluation(
     *,
     config_path: str | Path = "config.example.json",
     report_name: str | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> EvaluationRunOutput:
     loaded = load_lab_configuration(
         lab_root, config_path=config_path, report_name=report_name
@@ -246,6 +316,7 @@ def run_evaluation(
     filter_modes = loaded.filter_modes
     top_ks = loaded.top_ks
     selected_report_name = loaded.report_name
+    documents_by_id = {document.document_id: document for document in documents}
 
     summary: list[dict[str, Any]] = []
     details: list[dict[str, Any]] = []
@@ -267,7 +338,9 @@ def run_evaluation(
         chunk_time_ms = (perf_counter() - chunk_started) * 1000.0
         for method in methods:
             index_started = perf_counter()
-            base_index = build_search_index(chunks, method)
+            base_index = build_search_index(
+                chunks, method, embedding_provider=embedding_provider
+            )
             index_time_ms = (perf_counter() - index_started) * 1000.0
             for reranker in rerankers:
                 index = apply_reranker(base_index, reranker)
@@ -276,6 +349,7 @@ def run_evaluation(
                     evaluations_by_k: dict[int, list[Any]] = {
                         value: [] for value in top_ks
                     }
+                    topic_evaluations: list[dict[str, float | int]] = []
                     for case in cases:
                         search_started = perf_counter()
                         results = index.search(
@@ -296,14 +370,25 @@ def run_evaluation(
                             )
                             evaluations_by_k[top_k].append(evaluated)
                             query_metrics[str(top_k)] = evaluated.to_dict()
+                        topic_metrics = (
+                            evaluate_topic_results(case, results, loaded.topic_metadata)
+                            if loaded.topic_metadata is not None
+                            else None
+                        )
+                        if topic_metrics is not None:
+                            topic_evaluations.append(topic_metrics)
                         query_runs.append(
                             {
                                 "query_id": case.query_id,
                                 "product": case.product,
                                 "target_version": case.target_version,
                                 "query": case.query,
+                                "expected_evidence_locators": _expected_evidence_locators(
+                                    case, documents_by_id
+                                ),
                                 "search_time_ms": search_time_ms,
                                 "metrics": query_metrics,
+                                "topic_metrics": topic_metrics,
                                 "results": [
                                     result.to_public_dict()
                                     for result in results[: max(top_ks)]
@@ -325,6 +410,7 @@ def run_evaluation(
                                 "chunk_generation_time_ms": chunk_time_ms,
                                 "index_build_time_ms": index_time_ms,
                                 **aggregate,
+                                **aggregate_topic_evaluations(topic_evaluations),
                             }
                         )
                     details.append(
@@ -343,7 +429,7 @@ def run_evaluation(
         preferred_top_k=loaded.preferred_top_k,
     )
     report = {
-        "schema_version": 3,
+        "schema_version": 4,
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "data_classification": "synthetic",
         "report_name": selected_report_name,
@@ -355,6 +441,19 @@ def run_evaluation(
             "rerankers": [item.value for item in rerankers],
             "filter_modes": filter_modes,
             "top_k": top_ks,
+            "case_partition": loaded.case_partition,
+            "case_count": len(cases),
+            "topic_metadata_file": loaded.topic_metadata_file_name,
+            "embedding_provider": (
+                embedding_provider.provider_id
+                if embedding_provider is not None
+                else "offline-token-hash-v1"
+            ),
+            "embedding_model": (
+                getattr(embedding_provider, "model", None)
+                if embedding_provider is not None
+                else None
+            ),
         },
         "input_fingerprints": loaded.input_fingerprints,
         "quality_gate": quality_gate,

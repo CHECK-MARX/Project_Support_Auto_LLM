@@ -44,4 +44,9 @@ public static class AnswerReadiness
     public const string AutoAnswerable = "AutoAnswerable";
     public const string NeedsConfirmation = "NeedsConfirmation";
     public const string InsufficientEvidence = "InsufficientEvidence";
+    public const string CustomerReady = "CustomerReady";
+    public const string NeedsReview = "NeedsReview";
+    public const string NeedsCustomerConfirmation = "NeedsCustomerConfirmation";
+    public const string NeedsManufacturerConfirmation = "NeedsManufacturerConfirmation";
+    public const string Blocked = "Blocked";
 }

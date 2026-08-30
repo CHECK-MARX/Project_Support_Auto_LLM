@@ -6,9 +6,12 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Iterable, Protocol
+from typing import TYPE_CHECKING, Iterable, Protocol
 
 from .models import Chunk
+
+if TYPE_CHECKING:
+    from .embedding import EmbeddingProvider
 
 
 class SearchMethod(StrEnum):
@@ -252,7 +255,10 @@ class BM25SearchIndex(_BaseSearchIndex):
 
 
 def build_search_index(
-    chunks: Iterable[Chunk], method: SearchMethod | str
+    chunks: Iterable[Chunk],
+    method: SearchMethod | str,
+    *,
+    embedding_provider: "EmbeddingProvider | None" = None,
 ) -> SearchIndex:
     selected = SearchMethod(method)
     materialized = tuple(chunks)
@@ -263,9 +269,11 @@ def build_search_index(
     if selected is SearchMethod.HASH_EMBEDDING:
         from .embedding import EmbeddingSearchIndex, HashingEmbeddingProvider
 
-        return EmbeddingSearchIndex(materialized, HashingEmbeddingProvider())
+        return EmbeddingSearchIndex(
+            materialized, embedding_provider or HashingEmbeddingProvider()
+        )
     if selected is SearchMethod.HYBRID:
         from .embedding import HybridSearchIndex
 
-        return HybridSearchIndex(materialized)
+        return HybridSearchIndex(materialized, provider=embedding_provider)
     raise ValueError(f"unsupported search method: {selected}")

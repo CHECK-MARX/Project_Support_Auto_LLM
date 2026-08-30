@@ -136,6 +136,41 @@ public sealed class ProductScopedSearchTests
     }
 
     [Fact]
+    public async Task SearchAllHybridAsync_HybridV2IncludesVectorOnlyCandidates()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "compiler compatibility template configuration"),
+        ]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC");
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(),
+            new AiManualKeywordSearcher(),
+            embeddingClient: new StaticEmbeddingClient());
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            new InquiryFocus { FocusText = "license completely unknown" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            },
+            maxResults: 2,
+            ragPipelineMode: RagPipelineModes.HybridV2);
+
+        Assert.Contains(results, source => source.SourceId == "manual-b");
+        var vectorCandidate = Assert.Single(results, source => source.SourceId == "manual-b");
+        Assert.Equal(0, vectorCandidate.LexicalScore);
+        Assert.Equal(1, vectorCandidate.SemanticScore);
+        Assert.Contains("RetrievalMode=Hybrid", vectorCandidate.ScoreBreakdown, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SearchAllAsync_ValidateStream_PreservesRelevantSourceTypesAndSuppressesGenericManuals()
     {
         using var temp = new TempDirectory();
@@ -347,6 +382,53 @@ public sealed class ProductScopedSearchTests
         Assert.Contains(results, source => source.SourceType == "PastCaseNote" && source.SourceId == "shared-id");
     }
 
+    [Fact]
+    public async Task SearchAllAsync_DownloadAccessFailureMentioningLatest_KeepsRelevantPastCase()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateManual("version-manual", "QAC 2026.2の機能とリリース情報です。")]);
+        await WriteCaseIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [
+                CreateNote(
+                    "generic-file-past-case",
+                    "CCT設定と解析を説明します。プロジェクトのファイル提供や代替提供を確認し、QAC 2026.2のインストーラ入手方法も検討しました。"),
+                CreateNote(
+                    "fiebie-past-case",
+                    "FiebieでOTP認証後、/api/file/download/contentからQACインストーラをダウンロードできない事象です。Webフィルタ、プロキシ、SSL検査、ブラウザ、ドメイン許可を確認し、別ネットワークまたはお客様のアップロードサイトを案内しました。"),
+            ]);
+        await WriteOfficialIndexAsync(
+            aiIndexFolder,
+            "HelixQAC",
+            [CreateOfficial(
+                "latest-official",
+                "QAC 2026.2",
+                "Release information",
+                "QAC 2026.2は現在のリリースです。")]);
+        var service = CreateService();
+        var focus = new InquiryFocusExtractor().Extract("""
+            QAC 2026.2の最新版をFibeからダウンロードできません。
+            一つ前の2026.1を入手したいため、別の提供方法を教えてください。
+            """);
+
+        var results = await service.SearchAllAsync(
+            CreateProduct("HelixQAC"),
+            aiIndexFolder,
+            focus,
+            maxResults: 8);
+
+        Assert.False(focus.IsFreshnessSensitive);
+        var pastCase = Assert.Single(results, source => source.SourceId == "fiebie-past-case");
+        Assert.Equal("PastCaseNote", pastCase.SourceType);
+        Assert.Contains(results.Take(3), source => source.SourceId == "fiebie-past-case");
+        Assert.DoesNotContain(results, source => source.SourceId == "generic-file-past-case");
+    }
+
     private static ProductScopedSearchService CreateService()
     {
         return new ProductScopedSearchService(new AiCaseKeywordSearcher(), new AiManualKeywordSearcher());
@@ -466,6 +548,10 @@ public sealed class ProductScopedSearchTests
         {
             ProductName = productName,
             EmbeddingModel = "nomic-embed-text",
+            EmbeddingProvider = "Ollama",
+            EmbeddingModelIdentifier = "nomic-embed-text",
+            EmbeddingDimension = 2,
+            EmbeddingNormalized = true,
             BuiltAt = DateTimeOffset.Now,
             Entries =
             [

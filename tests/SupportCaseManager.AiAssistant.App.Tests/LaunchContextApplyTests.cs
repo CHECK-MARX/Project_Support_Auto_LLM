@@ -316,15 +316,18 @@ public sealed class LaunchContextApplyTests
     }
 
     [Fact]
-    public async Task StandardQualityMode_AppliesGemmaProfileBeforeOllamaModelListLoads()
+    public async Task StandardQualityMode_PreservesExplicitModelAndAppliesGenerationProfile()
     {
         var services = CreateViewModel(context: null, settings: CreateSettings());
         await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+        services.ViewModel.ChatModel = "qwen3.8:27b";
 
         services.ViewModel.AnswerQualityMode = AnswerQualityModes.Standard;
 
-        Assert.Equal("gemma4:26b", services.ViewModel.ChatModel);
-        Assert.Contains("gemma4:26b", services.ViewModel.AvailableModels);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.ChatModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.RequestedModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.EffectiveModel);
+        Assert.Equal(ModelResolutionSources.Saved, services.ViewModel.ModelResolutionSource);
         Assert.Equal(800, services.ViewModel.MaxOutputTokens);
         Assert.Equal(600, services.ViewModel.TimeoutSeconds);
         Assert.Equal(8000, services.ViewModel.MaxPromptChars);
@@ -346,6 +349,53 @@ public sealed class LaunchContextApplyTests
         Assert.Equal(AnswerQualityModes.Quality, services.ViewModel.AnswerQualityMode);
         Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
         Assert.Contains("gemma4:31b", services.ViewModel.AvailableModels);
+    }
+
+    [Fact]
+    public async Task InitializeFromCommandLineAsync_RestoresSavedQwenModelWithoutPresetOverride()
+    {
+        var settings = CreateSettings() with
+        {
+            AnswerQualityMode = AnswerQualityModes.Quality,
+            LlmProvider = new LlmProviderSettings { ChatModel = "qwen3.8:27b" },
+        };
+        var services = CreateViewModel(context: null, settings: settings);
+
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        Assert.Equal(AnswerQualityModes.Quality, services.ViewModel.AnswerQualityMode);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.ChatModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.RequestedModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.EffectiveModel);
+        Assert.Equal(ModelResolutionSources.Saved, services.ViewModel.ModelResolutionSource);
+        Assert.Contains("qwen3.8:27b", services.ViewModel.AvailableModels);
+    }
+
+    [Fact]
+    public async Task ResolveAvailableModels_FallsBackOnlyWhenRequestedModelIsUnavailable()
+    {
+        var settings = CreateSettings() with
+        {
+            AnswerQualityMode = AnswerQualityModes.Quality,
+            LlmProvider = new LlmProviderSettings { ChatModel = "qwen3.8:27b" },
+        };
+        var services = CreateViewModel(context: null, settings: settings);
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        var resolved = await InvokePrivateTaskResultAsync<bool>(
+            services.ViewModel,
+            "ResolveAndApplyAvailableModelAsync",
+            new[] { "gemma4:31b" },
+            false);
+
+        Assert.True(resolved);
+        Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.RequestedModel);
+        Assert.Equal("gemma4:31b", services.ViewModel.EffectiveModel);
+        Assert.Equal("gemma4:31b", services.ViewModel.FallbackModel);
+        Assert.Equal(ModelFallbackReasons.RequestedModelUnavailable, services.ViewModel.ModelFallbackReason);
+        Assert.Equal(ModelResolutionSources.Fallback, services.ViewModel.ModelResolutionSource);
+        Assert.Contains("選択: gemma4:31b / Source: Fallback", services.ViewModel.OllamaConnectionResultText);
     }
 
     private static TestServices CreateViewModel(
@@ -431,6 +481,17 @@ public sealed class LaunchContextApplyTests
         Assert.NotNull(method);
         var task = Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, []));
         await task;
+    }
+
+    private static async Task<T> InvokePrivateTaskResultAsync<T>(
+        MainViewModel viewModel,
+        string methodName,
+        params object[] arguments)
+    {
+        var method = typeof(MainViewModel).GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        var task = Assert.IsAssignableFrom<Task<T>>(method.Invoke(viewModel, arguments));
+        return await task;
     }
 
     private sealed record TestServices(

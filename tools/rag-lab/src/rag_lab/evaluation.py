@@ -3,10 +3,11 @@ from __future__ import annotations
 import math
 import unicodedata
 from dataclasses import asdict, dataclass
-from statistics import fmean
+from statistics import fmean, median
 from typing import Iterable
 
 from .models import EvaluationCase
+from .query_privacy import sensitive_query_categories
 from .search import SearchResult
 
 
@@ -23,7 +24,10 @@ class QueryEvaluation:
     version_mismatch_count: int
     required_term_coverage_at_k: float
     required_terms_missing: tuple[str, ...]
+    # Retained as a diagnostic for explicit technical alternatives in evidence.
+    # It is deliberately not the privacy/query-contamination gate.
     excluded_terms_found: tuple[str, ...]
+    excluded_query_terms_found: tuple[str, ...]
     returned_document_count: int
     search_time_ms: float
 
@@ -137,6 +141,7 @@ def evaluate_results(
         required_term_coverage_at_k=required_coverage,
         required_terms_missing=missing_required_terms,
         excluded_terms_found=found_excluded_terms,
+        excluded_query_terms_found=sensitive_query_categories(case.query),
         returned_document_count=len(top_results),
         search_time_ms=search_time_ms,
     )
@@ -154,12 +159,17 @@ def aggregate_evaluations(
             "mrr": 0.0,
             "mean_ndcg_at_k": 0.0,
             "mean_search_time_ms": 0.0,
+            "median_search_time_ms": 0.0,
+            "p95_search_time_ms": 0.0,
             "product_confusion_count": 0,
             "version_mismatch_count": 0,
             "mean_required_term_coverage_at_k": 0.0,
             "excluded_term_hit_count": 0,
+            "forbidden_evidence_term_hit_count": 0,
             "required_terms_pass_query_count": 0,
         }
+    timings = sorted(item.search_time_ms for item in items)
+    p95_index = max(0, math.ceil(len(timings) * 0.95) - 1)
     return {
         "query_count": len(items),
         "mean_precision_at_k": fmean(item.precision_at_k for item in items),
@@ -167,6 +177,8 @@ def aggregate_evaluations(
         "mrr": fmean(item.reciprocal_rank for item in items),
         "mean_ndcg_at_k": fmean(item.ndcg_at_k for item in items),
         "mean_search_time_ms": fmean(item.search_time_ms for item in items),
+        "median_search_time_ms": median(timings),
+        "p95_search_time_ms": timings[p95_index],
         "product_confusion_count": sum(
             item.product_confusion_count for item in items
         ),
@@ -177,6 +189,9 @@ def aggregate_evaluations(
             item.required_term_coverage_at_k for item in items
         ),
         "excluded_term_hit_count": sum(
+            len(item.excluded_query_terms_found) for item in items
+        ),
+        "forbidden_evidence_term_hit_count": sum(
             len(item.excluded_terms_found) for item in items
         ),
         "required_terms_pass_query_count": sum(

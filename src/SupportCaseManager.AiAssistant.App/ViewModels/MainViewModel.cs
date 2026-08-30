@@ -40,7 +40,7 @@ public sealed class MainViewModel : ObservableObject
         nameof(ChatModel), nameof(EmbeddingModel), nameof(Temperature), nameof(MaxOutputTokens),
         nameof(ContextWindowTokens), nameof(TimeoutSeconds), nameof(MaxEvidenceItems), nameof(MaxPromptChars),
         nameof(EnableCloudLlm), nameof(MaskSensitiveDataForCloud), nameof(DisableThinking),
-        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(HighScoreThreshold),
+        nameof(SkipGenerationWhenNoEvidence), nameof(EnableTopNFallback), nameof(UseQuestionAwareEvidenceSelection), nameof(EvidenceRankingMode), nameof(RagPipelineMode), nameof(HighScoreThreshold),
         nameof(MinimumDisplayScore), nameof(AnswerQualityMode), nameof(UseAnswerQualityGate), nameof(UsePhase175QualityControls),
         nameof(UseCoverageAwareEvidenceSelection), nameof(CoverageAwareMaxEvidenceItems),
         nameof(UseRustEvidenceSelector), nameof(UsePersistentRustEvidenceSelector),
@@ -56,12 +56,12 @@ public sealed class MainViewModel : ObservableObject
     private const int ProductionMiniTestMaxOutputTokens = 8;
     private const int ProductionMiniTestMinContextWindowTokens = 512;
     private const int ProductionMiniTestMaxContextWindowTokens = 512;
-    private const string FastManualPreferredModelName = "qwen3:4b";
-    private const string FastManualFallbackModelName = "qwen3:8b";
     private const int FastManualTimeoutSeconds = 90;
     private const int FastManualMaxPromptChars = 6000;
     private const int FastManualMaxEvidenceItems = 2;
     private const int FastManualMaxOutputTokens = 600;
+    private const int DefaultAnswerTimeoutSeconds = 30;
+    private const int QualityAnswerTimeoutSeconds = 60;
     private const int ExpandedProcedureMinPromptChars = 8000;
     private const int ExpandedProcedureMinOutputTokens = 800;
 
@@ -129,6 +129,7 @@ public sealed class MainViewModel : ObservableObject
     private bool enableTopNFallback = true;
     private bool useQuestionAwareEvidenceSelection;
     private string evidenceRankingMode = EvidenceRankingModes.Phase15;
+    private string ragPipelineMode = RagPipelineModes.Legacy;
     private bool useAnswerQualityGate;
     private bool usePhase175QualityControls;
     private bool useCoverageAwareEvidenceSelection;
@@ -213,6 +214,10 @@ public sealed class MainViewModel : ObservableObject
     private string modelCompatibilityTestResultText = "未実行";
     private string knowledgeStatusText = "未作成";
     private string modelResolutionSource = ModelResolutionSources.Unresolved;
+    private string requestedModel = string.Empty;
+    private string effectiveModel = string.Empty;
+    private string fallbackModel = string.Empty;
+    private string modelFallbackReason = string.Empty;
     private string generationState = "Ready";
     private string generationSkippedReason = string.Empty;
     private string ragDiagnosticsText = string.Empty;
@@ -648,6 +653,13 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref chatModel, value?.Trim() ?? string.Empty))
             {
+                RequestedModel = chatModel;
+                EffectiveModel = chatModel;
+                FallbackModel = string.Empty;
+                ModelFallbackReason = string.Empty;
+                ModelResolutionSource = string.IsNullOrWhiteSpace(chatModel)
+                    ? ModelResolutionSources.Unresolved
+                    : ModelResolutionSources.Saved;
                 UpdateModelRecommendationText();
             }
         }
@@ -931,6 +943,40 @@ public sealed class MainViewModel : ObservableObject
     {
         get => modelResolutionSource;
         private set => SetProperty(ref modelResolutionSource, value);
+    }
+
+    public string RagPipelineMode
+    {
+        get => ragPipelineMode;
+        set => SetProperty(
+            ref ragPipelineMode,
+            string.Equals(value, RagPipelineModes.HybridV2, StringComparison.OrdinalIgnoreCase)
+                ? RagPipelineModes.HybridV2
+                : RagPipelineModes.Legacy);
+    }
+
+    public string RequestedModel
+    {
+        get => requestedModel;
+        private set => SetProperty(ref requestedModel, value);
+    }
+
+    public string EffectiveModel
+    {
+        get => effectiveModel;
+        private set => SetProperty(ref effectiveModel, value);
+    }
+
+    public string FallbackModel
+    {
+        get => fallbackModel;
+        private set => SetProperty(ref fallbackModel, value);
+    }
+
+    public string ModelFallbackReason
+    {
+        get => modelFallbackReason;
+        private set => SetProperty(ref modelFallbackReason, value);
     }
 
     public string GenerationState
@@ -1935,35 +1981,23 @@ public sealed class MainViewModel : ObservableObject
 
     private void ApplyQualityModeProfile(string qualityMode)
     {
-        var requestedModel = ModelCapabilityProfiles.ModelForQualityMode(qualityMode);
-        if (string.IsNullOrWhiteSpace(requestedModel))
+        var profileModel = ModelCapabilityProfiles.ModelForQualityMode(qualityMode);
+        if (string.IsNullOrWhiteSpace(profileModel))
         {
             return;
         }
 
-        var selectedModel = requestedModel;
-        var source = ModelResolutionSources.Preset;
-        if (ollamaModelsLoaded && AvailableModels.Count > 0)
+        // Quality mode changes generation parameters; it must not replace an explicit model.
+        var profile = ModelCapabilityProfiles.Resolve(profileModel, modelCapabilityProfiles);
+        Temperature = profile.Temperature;
+        MaxOutputTokens = profile.MaxOutputTokens;
+        TimeoutSeconds = profile.TimeoutSeconds;
+        MaxPromptChars = profile.MaxPromptChars;
+        MaxEvidenceItems = profile.RecommendedEvidenceCount;
+        if (string.IsNullOrWhiteSpace(ChatModel))
         {
-            var resolution = OllamaModelResolver.Resolve(null, qualityMode, AvailableModels.ToList());
-            selectedModel = resolution.Model;
-            source = resolution.Source;
-            if (!string.Equals(selectedModel, requestedModel, StringComparison.OrdinalIgnoreCase))
-            {
-                StatusMessage = $"品質モードの既定モデル '{requestedModel}' がないため、'{selectedModel}' を使用します。自動pullは行いません。";
-            }
+            ChatModel = profileModel;
         }
-
-        if (!AvailableModels.Any(model => ModelNameMatches(model, selectedModel)))
-        {
-            ReplaceAvailableModels(
-                AvailableModels.Append(selectedModel).ToList(),
-                confirmedByOllama: false);
-        }
-
-        ChatModel = selectedModel;
-        ModelResolutionSource = source;
-        ApplyModelProfile(selectedModel);
     }
 
     private void ApplyModelProfile(string selectedModel)
@@ -1982,10 +2016,10 @@ public sealed class MainViewModel : ObservableObject
     {
         var previousModel = ChatModel;
         var resolution = OllamaModelResolver.Resolve(previousModel, AnswerQualityMode, models);
-        ModelResolutionSource = resolution.Source;
         if (!resolution.IsResolved)
         {
             ChatModel = string.Empty;
+            ApplyModelResolutionDiagnostics(resolution);
             var list = resolution.AvailableModels.Count == 0
                 ? "- (なし)"
                 : string.Join(Environment.NewLine, resolution.AvailableModels.Select(static model => $"- {model}"));
@@ -1997,6 +2031,7 @@ public sealed class MainViewModel : ObservableObject
         }
 
         ChatModel = resolution.Model;
+        ApplyModelResolutionDiagnostics(resolution);
         if (!string.Equals(resolution.Source, ModelResolutionSources.Saved, StringComparison.Ordinal))
         {
             ApplyModelProfile(resolution.Model);
@@ -2010,6 +2045,15 @@ public sealed class MainViewModel : ObservableObject
 
         UpdateRagDiagnostics();
         return true;
+    }
+
+    private void ApplyModelResolutionDiagnostics(ModelResolutionResult resolution)
+    {
+        RequestedModel = resolution.RequestedModel;
+        EffectiveModel = resolution.EffectiveModel;
+        FallbackModel = resolution.FallbackModel;
+        ModelFallbackReason = resolution.FallbackReason;
+        ModelResolutionSource = resolution.Source;
     }
 
     private static bool ModelNameMatches(string left, string right)
@@ -2289,7 +2333,9 @@ public sealed class MainViewModel : ObservableObject
                     EffectiveAiIndexFolder(),
                     lastInquiryFocus,
                     BuildSettings().LlmProvider,
-                    searchLimit * 3);
+                    searchLimit * 3,
+                    cancellationToken: default,
+                    ragPipelineMode: BuildSettings().RagPipelineMode);
                 lastSearchSources = allSources
                     .Where(static source => source.SourceType is "PastCaseNote" or "ExactPastAnswer" or "PastAnswer")
                     .ToList();
@@ -2614,10 +2660,12 @@ public sealed class MainViewModel : ObservableObject
         string stage,
         CancellationToken cancellationToken)
     {
+        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var timeoutSeconds = EffectiveAnswerTimeoutSeconds(request.Settings);
+        timeoutCancellation.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         var generationTask = answerServiceFactory(request.Settings.LlmProvider)
-            .GenerateDraftAsync(request, cancellationToken);
+            .GenerateDraftAsync(request, timeoutCancellation.Token);
         var stopwatch = Stopwatch.StartNew();
-        var timeoutSeconds = Math.Max(1, request.Settings.LlmProvider.TimeoutSeconds);
 
         try
         {
@@ -2650,6 +2698,21 @@ public sealed class MainViewModel : ObservableObject
 
             throw;
         }
+        catch (OperationCanceledException) when (timeoutCancellation.IsCancellationRequested)
+        {
+            throw new TimeoutException($"LLM answer generation timed out after {timeoutSeconds} seconds.");
+        }
+    }
+
+    private static int EffectiveAnswerTimeoutSeconds(AiAssistantSettings settings)
+    {
+        var configured = settings.LlmProvider.TimeoutSeconds > 0
+            ? settings.LlmProvider.TimeoutSeconds
+            : DefaultAnswerTimeoutSeconds;
+        var qualityLimit = string.Equals(settings.AnswerQualityMode, AnswerQualityModes.Quality, StringComparison.OrdinalIgnoreCase)
+            ? QualityAnswerTimeoutSeconds
+            : DefaultAnswerTimeoutSeconds;
+        return Math.Min(configured, qualityLimit);
     }
 
     private void CancelGeneration()
@@ -2809,6 +2872,7 @@ public sealed class MainViewModel : ObservableObject
         EnableTopNFallback = settings.EnableTopNFallback;
         UseQuestionAwareEvidenceSelection = settings.UseQuestionAwareEvidenceSelection;
         EvidenceRankingMode = settings.EvidenceRankingMode;
+        RagPipelineMode = settings.RagPipelineMode;
         LlmProvider = string.IsNullOrWhiteSpace(settings.LlmProvider.Provider) ? "Fake" : settings.LlmProvider.Provider;
         OllamaEndpoint = settings.LlmProvider.Endpoint;
         ChatModel = settings.LlmProvider.ChatModel;
@@ -3038,6 +3102,7 @@ public sealed class MainViewModel : ObservableObject
             EnableTopNFallback = EnableTopNFallback,
             UseQuestionAwareEvidenceSelection = UseQuestionAwareEvidenceSelection,
             EvidenceRankingMode = EvidenceRankingMode,
+            RagPipelineMode = RagPipelineMode,
             UseAnswerQualityGate = UseAnswerQualityGate,
             UsePhase175QualityControls = UsePhase175QualityControls,
             UseCoverageAwareEvidenceSelection = UseCoverageAwareEvidenceSelection,
@@ -3686,8 +3751,20 @@ public sealed class MainViewModel : ObservableObject
             string.Equals(source.Source.MatchKind, PastAnswerMatchKinds.NearDuplicate, StringComparison.OrdinalIgnoreCase));
         RagDiagnosticsText = string.Join(Environment.NewLine,
         [
+            $"RagPipelineMode: {BuildSettings().RagPipelineMode}",
+            $"RetrievalMode: {ResolveRetrievalMode()}",
+            $"EmbeddingModel: {ValueOrUnset(BuildSettings().LlmProvider.EmbeddingModel)}",
+            $"EmbeddingStatus: {ResolveEmbeddingStatus(indexPath)}",
+            $"KeywordCandidateCount: {SearchResults.Count(source => source.Source.LexicalScore.HasValue)}",
+            $"VectorCandidateCount: {SearchResults.Count(source => source.Source.SemanticScore.HasValue)}",
+            $"CombinedCandidateCount: {SearchResults.Count}",
+            $"RerankedCandidateCount: {SearchResults.Count(source => source.Source.FinalRerankScore.HasValue)}",
             $"Resolved product: {ValueOrUnset(resolvedProduct?.ProductName)}",
             $"Selected model: {ValueOrUnset(ChatModel)}",
+            $"RequestedModel: {ValueOrUnset(RequestedModel)}",
+            $"EffectiveModel: {ValueOrUnset(EffectiveModel)}",
+            $"FallbackModel: {ValueOrUnset(FallbackModel)}",
+            $"FallbackReason: {ValueOrUnset(ModelFallbackReason)}",
             $"Quality mode: {AnswerQualityMode}",
             $"Model source: {ModelResolutionSource}",
             $"Question type: {string.Join(", ", questionTypes)}",
@@ -3709,6 +3786,14 @@ public sealed class MainViewModel : ObservableObject
             $"Rust Shadow readiness: {lastRustShadowStatistics?.Readiness.ToString() ?? RustAdoptionReadiness.NotEnoughData.ToString()}",
         ]);
     }
+
+    private string ResolveRetrievalMode() => SearchResults.Any(source => source.Source.SemanticScore.HasValue)
+        ? "Hybrid"
+        : "KeywordOnly";
+
+    private static string ResolveEmbeddingStatus(string indexPath) => File.Exists(Path.Combine(indexPath, EmbeddingIndexDocument.FileName))
+        ? "Available"
+        : "Unavailable: embedding index is missing; keyword fallback is active";
 
     private void SynchronizeSelectedProductFromCurrentFields()
     {
@@ -3955,9 +4040,7 @@ public sealed class MainViewModel : ObservableObject
             return settings;
         }
 
-        var availableModel = ResolveFastManualModel()
-            ?? throw new InvalidOperationException("Fast manual model could not be resolved.");
-        var profile = ModelCapabilityProfiles.Resolve(availableModel, modelCapabilityProfiles);
+        var profile = ModelCapabilityProfiles.Resolve(settings.LlmProvider.ChatModel, modelCapabilityProfiles);
         return settings with
         {
             MaxEvidenceItems = Math.Min(FastManualMaxEvidenceItems, Math.Max(1, settings.MaxEvidenceItems)),
@@ -3965,7 +4048,6 @@ public sealed class MainViewModel : ObservableObject
             DisableThinking = true,
             LlmProvider = settings.LlmProvider with
             {
-                ChatModel = availableModel,
                 Temperature = profile.Temperature,
                 MaxOutputTokens = FastManualMaxOutputTokens,
                 ContextWindowTokens = Math.Min(4096, Math.Max(2048, settings.LlmProvider.ContextWindowTokens)),
@@ -4014,34 +4096,7 @@ public sealed class MainViewModel : ObservableObject
             && sources.All(static source =>
                 string.Equals(source.SourceType, "Manual", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(source.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase))
-            && ResolveFastManualModel() is not null;
-    }
-
-    private string? ResolveFastManualModel()
-    {
-        foreach (var candidate in new[] { FastManualPreferredModelName, FastManualFallbackModelName })
-        {
-            var available = AvailableModels.FirstOrDefault(model => ModelNamesEquivalent(model, candidate));
-            if (!string.IsNullOrWhiteSpace(available))
-            {
-                return available;
-            }
-        }
-
-        return null;
-    }
-
-    private static bool ModelNamesEquivalent(string left, string right)
-    {
-        return string.Equals(RemoveLatestModelTag(left), RemoveLatestModelTag(right), StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string RemoveLatestModelTag(string value)
-    {
-        var trimmed = value.Trim();
-        return trimmed.EndsWith(":latest", StringComparison.OrdinalIgnoreCase)
-            ? trimmed[..^7]
-            : trimmed;
+            && !string.IsNullOrWhiteSpace(settings.LlmProvider.ChatModel);
     }
 
     private CaseContext BuildCurrentCaseContext(string? productNameOverride = null)
@@ -4543,6 +4598,7 @@ public sealed class MainViewModel : ObservableObject
         var builder = new StringBuilder();
         builder.AppendLine("回答生成診断");
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
+        AppendModelResolutionDiagnostics(builder, request.Settings.LlmProvider.ChatModel);
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
         builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
@@ -4556,13 +4612,14 @@ public sealed class MainViewModel : ObservableObject
         return builder.ToString();
     }
 
-    private static string FormatGenerationNoEvidenceSkippedDiagnostics(AnswerDraftRequest request)
+    private string FormatGenerationNoEvidenceSkippedDiagnostics(AnswerDraftRequest request)
     {
         var builder = new StringBuilder();
         builder.AppendLine("回答生成診断");
         builder.AppendLine("結果: LLM呼び出しスキップ");
         builder.AppendLine("理由: 根拠0件時は生成しない設定がON、かつ LLM送信予定の根拠 = 0");
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
+        AppendModelResolutionDiagnostics(builder, request.Settings.LlmProvider.ChatModel);
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
         builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
@@ -4573,11 +4630,12 @@ public sealed class MainViewModel : ObservableObject
         return builder.ToString();
     }
 
-    private static string FormatGenerationSuccessDiagnostics(AnswerDraftRequest request, AnswerDraftResult result)
+    private string FormatGenerationSuccessDiagnostics(AnswerDraftRequest request, AnswerDraftResult result)
     {
         var builder = new StringBuilder();
         builder.AppendLine("回答生成診断");
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
+        AppendModelResolutionDiagnostics(builder, request.Settings.LlmProvider.ChatModel);
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
         builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
@@ -4622,13 +4680,14 @@ public sealed class MainViewModel : ObservableObject
         return builder.ToString();
     }
 
-    private static string FormatGenerationSkippedDiagnostics(AnswerDraftRequest request)
+    private string FormatGenerationSkippedDiagnostics(AnswerDraftRequest request)
     {
         var builder = new StringBuilder();
         builder.AppendLine("回答生成診断");
         builder.AppendLine("結果: LLM呼び出しスキップ");
         builder.AppendLine("理由: FreshnessSensitive=true かつ OfficialDoc will send = 0");
         builder.AppendLine($"使用モデル: {ValueOrUnset(request.Settings.LlmProvider.ChatModel)}");
+        AppendModelResolutionDiagnostics(builder, request.Settings.LlmProvider.ChatModel);
         builder.AppendLine($"timeout seconds: {request.Settings.LlmProvider.TimeoutSeconds}");
         builder.AppendLine($"max output tokens: {request.Settings.LlmProvider.MaxOutputTokens}");
         builder.AppendLine($"context window tokens: {request.Settings.LlmProvider.ContextWindowTokens}");
@@ -4719,7 +4778,7 @@ public sealed class MainViewModel : ObservableObject
             : "Fake";
     }
 
-    private static string FormatDraftProviderStatus(
+    private string FormatDraftProviderStatus(
         string provider,
         string? model,
         bool usedRealLlm,
@@ -4729,10 +4788,20 @@ public sealed class MainViewModel : ObservableObject
         var builder = new StringBuilder();
         builder.AppendLine($"使用Provider: {provider}");
         builder.AppendLine($"使用Model: {ValueOrUnset(model)}");
+        AppendModelResolutionDiagnostics(builder, model);
         builder.AppendLine($"実LLM接続: {(usedRealLlm ? "はい" : "いいえ")}");
         builder.AppendLine($"使用した根拠件数: {usedEvidenceCount}");
         builder.AppendLine($"結果: {(isSuccess ? "成功" : "失敗")}");
         return builder.ToString();
+    }
+
+    private void AppendModelResolutionDiagnostics(StringBuilder builder, string? actualModel)
+    {
+        builder.AppendLine($"RequestedModel: {ValueOrUnset(RequestedModel)}");
+        builder.AppendLine($"EffectiveModel: {ValueOrUnset(actualModel ?? EffectiveModel)}");
+        builder.AppendLine($"FallbackModel: {ValueOrUnset(FallbackModel)}");
+        builder.AppendLine($"FallbackReason: {ValueOrUnset(ModelFallbackReason)}");
+        builder.AppendLine($"ModelSource: {ModelResolutionSource}");
     }
 
     private static string FormatIndexBuildResult(

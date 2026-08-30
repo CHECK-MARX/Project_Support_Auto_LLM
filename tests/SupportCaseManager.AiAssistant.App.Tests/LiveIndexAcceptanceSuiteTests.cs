@@ -27,6 +27,7 @@ public sealed class LiveIndexAcceptanceSuiteTests
         new("H", "CLI option", "qacli analyzeの-Pオプションの用途と指定方法を教えてください。", ["-p", "qacli", "analyze"]),
         new("I", "バージョン差異", "QAC 2025.4と2026.1でプロジェクト解析手順に差があるか教えてください。", ["2025.4", "2026.1", "解析"]),
         new("J", "根拠不足", "QACで量子暗号鍵を自動生成する設定方法を教えてください。", ["量子暗号", "quantum"]),
+        new("K", "旧版インストーラの代替提供", "QAC 2026.2のインストーラをFibeからダウンロードできません。一つ前の2026.1を入手したいため、別の提供方法を教えてください。", ["fiebie", "fibe"]),
     ];
 
     [Fact]
@@ -196,6 +197,16 @@ public sealed class LiveIndexAcceptanceSuiteTests
                 answer.CustomerReplyDraft.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n').Take(2));
             Assert.DoesNotContain("TOYO", recipientHeader, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("東陽テクニカ", recipientHeader, StringComparison.OrdinalIgnoreCase);
+            if (testCase.Id == "K")
+            {
+                Assert.Contains(selection.Sources, source => IsPastCase(source.SourceType));
+                Assert.Contains(selection.Sources, source =>
+                    ContainsAny(SourceText(source), testCase.ExpectedTerms));
+                Assert.Contains("Fiebie", answer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("Webフィルタ", answer.CustomerReplyDraft, StringComparison.Ordinal);
+                Assert.Contains("SharePoint", answer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("具体的な解消方法までは記録されていません", answer.CustomerReplyDraft, StringComparison.Ordinal);
+            }
         }
 
         var evidenceTotal = metricRows.Sum(static item => item.EvidenceCount);

@@ -154,7 +154,9 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         InquiryFocus inquiryFocus,
         LlmProviderSettings providerSettings,
         int maxResults = 8,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string ragPipelineMode = RagPipelineModes.Legacy,
+        string? embeddingIndexFolderOverride = null)
     {
         return SearchAllCoreAsync(
             product,
@@ -162,7 +164,9 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             inquiryFocus,
             providerSettings,
             maxResults,
-            cancellationToken);
+            cancellationToken,
+            ragPipelineMode,
+            embeddingIndexFolderOverride);
     }
 
     private async Task<IReadOnlyList<SearchSource>> SearchAllCoreAsync(
@@ -171,12 +175,19 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         InquiryFocus inquiryFocus,
         LlmProviderSettings? providerSettings,
         int maxResults,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string ragPipelineMode = RagPipelineModes.Legacy,
+        string? embeddingIndexFolderOverride = null)
     {
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(inquiryFocus);
-        var query = inquiryFocus.FocusText;
-        var perTypeLimit = Math.Clamp(Math.Max(maxResults, 1) * 3, 1, 120);
+        var query = string.IsNullOrWhiteSpace(inquiryFocus.TechnicalQuery.CoreQuestion)
+            ? inquiryFocus.FocusText
+            : inquiryFocus.TechnicalQuery.CoreQuestion;
+        var isHybridV2 = string.Equals(ragPipelineMode, RagPipelineModes.HybridV2, StringComparison.OrdinalIgnoreCase);
+        var perTypeLimit = isHybridV2
+            ? 50
+            : Math.Clamp(Math.Max(maxResults, 1) * 3, 1, 120);
         var classification = questionClassifier.Classify(query, inquiryFocus);
         var questionTypes = classification.QuestionTypes;
         var latest = questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase);
@@ -212,7 +223,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             : Task.FromResult<IReadOnlyList<SearchSource>>([]);
         await Task.WhenAll(officialTask, manualsTask, pastCasesTask, pastAnswersTask);
 
-        var combined = officialTask.Result
+        var lexicalCandidates = officialTask.Result
             .Concat(manualsTask.Result)
             .Concat(pastAnswersTask.Result)
             .Concat(pastCasesTask.Result)
@@ -222,17 +233,32 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             .Select(static group => group.OrderByDescending(source => source.Score ?? 0).First())
             .ToList();
         var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, product.ProductName);
-        var hybridLimit = Math.Max(combined.Count, maxResults);
+        var embeddingIndexFolder = string.IsNullOrWhiteSpace(embeddingIndexFolderOverride)
+            ? productIndexFolder
+            : embeddingIndexFolderOverride;
+        var vectorCandidates = isHybridV2 && providerSettings is not null &&
+            !string.IsNullOrWhiteSpace(providerSettings.EmbeddingModel)
+            ? await EmbeddingCandidateSourceLoader.LoadAsync(product.ProductName, productIndexFolder, cancellationToken)
+            : [];
+        var combined = lexicalCandidates
+            .Concat(vectorCandidates)
+            .GroupBy(static source => $"{source.SourceType}\n{source.SourceId}", StringComparer.Ordinal)
+            .Select(static group => group.OrderByDescending(source => source.Score ?? 0).First())
+            .ToList();
+        var hybridLimit = isHybridV2
+            ? Math.Min(Math.Max(100, maxResults), combined.Count)
+            : Math.Max(combined.Count, maxResults);
         var hybridRanked = providerSettings is not null && !string.IsNullOrWhiteSpace(providerSettings.EmbeddingModel)
             ? await HybridSearchRanker.RankWithEmbeddingsAsync(
                 combined,
                 query,
                 product.ProductName,
-                productIndexFolder,
+                embeddingIndexFolder,
                 providerSettings,
                 embeddingClient,
                 hybridLimit,
-                cancellationToken)
+                cancellationToken,
+                isHybridV2)
             : HybridSearchRanker.Rank(combined, query, product.ProductName, hybridLimit);
 
         return RankAndMergeSources(
@@ -241,7 +267,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             catalog,
             questionTypes,
             inquiryFocus.IsFreshnessSensitive,
-            maxResults);
+            maxResults,
+            isHybridV2);
     }
 
     private static async Task<IReadOnlyList<SearchSource>> SearchAcrossQueryVariantsAsync(
@@ -293,6 +320,12 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             variants.Add("qacli analyze project analysis procedure");
         }
 
+        if (queryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase))
+        {
+            variants.Add($"{query} Fiebie ファイル転送 ダウンロード アクセスできない プロキシ SSL ブラウザ");
+            variants.Add("Fiebie /api/file/download/content ドメイン許可 代替提供");
+        }
+
         return variants
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -322,7 +355,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         TopicEntityCatalog catalog,
         IReadOnlyList<string> questionTypes,
         bool freshnessSensitive,
-        int maxResults)
+        int maxResults,
+        bool isHybridV2)
     {
         var ranked = sources
             .Select(source => ApplyTopicScore(
@@ -335,7 +369,14 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             .ThenByDescending(static item => item.Source.RetrievedAt)
             .ThenBy(static item => item.Source.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var deduplicated = SuppressExactDuplicates(ranked);
+        var deduplicated = SuppressExactDuplicates(ranked)
+            .Where(item => IsEligibleMergedCandidate(item, queryAnalysis.PrimaryProfile))
+            .ToList();
+        if (isHybridV2)
+        {
+            return SelectWithIntentRouting(deduplicated, queryAnalysis.PrimaryProfile, questionTypes, maxResults);
+        }
+
         var selected = new List<RankedSource>();
 
         foreach (var family in new[] { "OfficialDoc", "Manual", "PastCase" })
@@ -361,6 +402,56 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             .ToList();
     }
 
+    private static IReadOnlyList<SearchSource> SelectWithIntentRouting(
+        IReadOnlyList<RankedSource> candidates,
+        TopicEntityProfile queryProfile,
+        IReadOnlyList<string> questionTypes,
+        int maxResults)
+    {
+        return candidates
+            .Select(candidate => candidate with
+            {
+                Source = candidate.Source with
+                {
+                    Score = ApplyBoundedAdjustment(
+                        candidate.Source.Score ?? 0,
+                        SourceRoutingAdjustment(candidate.Source.SourceType, queryProfile, questionTypes)),
+                },
+            })
+            .OrderByDescending(static candidate => candidate.Source.Score ?? 0)
+            .ThenByDescending(static candidate => candidate.Source.FinalRerankScore ?? candidate.Source.Score ?? 0)
+            .ThenBy(static candidate => candidate.Source.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Clamp(maxResults, 1, 100))
+            .Select(static candidate => candidate.Source)
+            .ToList();
+    }
+
+    private static double SourceRoutingAdjustment(
+        string sourceType,
+        TopicEntityProfile queryProfile,
+        IReadOnlyList<string> questionTypes)
+    {
+        var family = SourceFamily(sourceType);
+        var isTroubleshooting = questionTypes.Contains(QuestionTypes.TroubleshootingQuestion, StringComparer.OrdinalIgnoreCase);
+        var isHowTo = queryProfile.Intents.Contains("HowTo", StringComparer.OrdinalIgnoreCase) ||
+            queryProfile.Operations.Count > 0;
+        var isSpecification = queryProfile.Features.Contains("Supported Languages", StringComparer.OrdinalIgnoreCase) ||
+            queryProfile.Intents.Contains("Overview", StringComparer.OrdinalIgnoreCase);
+        if (isTroubleshooting)
+        {
+            return family == "PastCase" ? 0.12 : family is "OfficialDoc" or "Manual" ? 0.07 : 0;
+        }
+        if (isSpecification)
+        {
+            return family == "OfficialDoc" ? 0.14 : family == "Manual" ? 0.08 : family == "PastCase" ? -0.10 : 0;
+        }
+        if (isHowTo)
+        {
+            return family == "Manual" ? 0.12 : family == "OfficialDoc" ? 0.07 : family == "PastCase" ? 0.02 : 0;
+        }
+        return 0;
+    }
+
     private static RankedSource ApplyTopicScore(
         SearchSource source,
         NegationAwareTopicAnalysis queryAnalysis,
@@ -368,12 +459,15 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         IReadOnlyList<string> questionTypes,
         bool freshnessSensitive)
     {
-        var candidateText = string.Join(
+        var sourceText = string.Join(
             ' ',
             source.Title,
             source.SectionTitle,
             source.DocumentId,
-            source.Text,
+            source.Text);
+        var candidateText = string.Join(
+            ' ',
+            sourceText,
             string.Join(' ', source.MatchedTerms));
         var candidateProfile = TopicEntityAnalyzer.Extract(candidateText, catalog);
         var assessment = TopicEntityAnalyzer.Compare(queryAnalysis.PrimaryProfile, candidateProfile);
@@ -396,6 +490,38 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             {
                 adjustment -= 0.24;
                 reasons.Add("feature=missing");
+            }
+
+            // Keep incidental mentions from outranking a document whose heading is
+            // explicitly about another feature (for example, Stream in a backup guide).
+            var headingProfile = TopicEntityAnalyzer.Extract(
+                string.Join(' ', source.Title, source.SectionTitle),
+                catalog);
+            if (headingProfile.Features.Any(feature =>
+                    !queryAnalysis.PrimaryProfile.Features.Contains(feature, StringComparer.OrdinalIgnoreCase)))
+            {
+                adjustment -= 0.55;
+                reasons.Add("feature=heading-conflict");
+            }
+
+        }
+
+        if (queryAnalysis.PrimaryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase))
+        {
+            var explicitDeliveryMatch = ContainsAny(
+                sourceText,
+                "Fiebie",
+                "Fibe",
+                "/api/file/download/content");
+            if (explicitDeliveryMatch)
+            {
+                adjustment += 0.65;
+                reasons.Add("feature=file-delivery-explicit-match");
+            }
+            else
+            {
+                adjustment -= 0.55;
+                reasons.Add("feature=file-delivery-generic-only");
             }
         }
 
@@ -494,8 +620,34 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             return false;
         }
 
+        if (queryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase) &&
+            SourceFamily(item.Source.SourceType) == "PastCase" &&
+            !ContainsAny(
+                string.Join(' ', item.Source.Title, item.Source.SectionTitle, item.Source.DocumentId, item.Source.Text),
+                "Fiebie",
+                "Fibe",
+                "/api/file/download/content"))
+        {
+            return false;
+        }
+
         return !queryProfile.Operations.Contains("Analysis", StringComparer.Ordinal) ||
             item.Assessment.MatchedOperations.Contains("Analysis", StringComparer.Ordinal);
+    }
+
+    private static bool IsEligibleMergedCandidate(RankedSource item, TopicEntityProfile queryProfile)
+    {
+        if (!queryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase) ||
+            SourceFamily(item.Source.SourceType) != "PastCase")
+        {
+            return true;
+        }
+
+        return ContainsAny(
+            string.Join(' ', item.Source.Title, item.Source.SectionTitle, item.Source.DocumentId, item.Source.Text),
+            "Fiebie",
+            "Fibe",
+            "/api/file/download/content");
     }
 
     private static bool ContainsUnrelatedAnalysisTopic(string value) =>

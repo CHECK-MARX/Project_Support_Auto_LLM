@@ -1,5 +1,6 @@
 pub mod errors;
 pub mod models;
+pub mod reranker;
 pub mod selector;
 
 use std::io::{BufRead, Read, Write};

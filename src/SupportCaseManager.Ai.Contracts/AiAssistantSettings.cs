@@ -4,6 +4,9 @@ namespace SupportCaseManager.Ai.Contracts;
 
 public sealed record class AiAssistantSettings
 {
+    [JsonPropertyName("ragPipelineMode")]
+    public string RagPipelineMode { get; init; } = RagPipelineModes.Legacy;
+
     [JsonPropertyName("aiDataFolder")]
     public string AiDataFolder { get; init; } = string.Empty;
 
@@ -129,4 +132,10 @@ public sealed record class AiAssistantSettings
 
     [JsonPropertyName("ragLabEvidenceMaxItems")]
     public int RagLabEvidenceMaxItems { get; init; } = 3;
+}
+
+public static class RagPipelineModes
+{
+    public const string Legacy = "Legacy";
+    public const string HybridV2 = "HybridV2";
 }

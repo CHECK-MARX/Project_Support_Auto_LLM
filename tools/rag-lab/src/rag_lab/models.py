@@ -139,6 +139,14 @@ class EvaluationCase:
     required_terms: tuple[str, ...] = ()
     excluded_terms: tuple[str, ...] = ()
     notes: str | None = None
+    feature: str | None = None
+    operation: str | None = None
+    technology: str | None = None
+    language: str | None = None
+    intent: str | None = None
+    expected_source_types: tuple[str, ...] = ()
+    required_coverage: tuple[str, ...] = ()
+    manufacturer_confirmation_required: bool = False
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "EvaluationCase":
@@ -164,4 +172,12 @@ class EvaluationCase:
             required_terms=string_tuple("required_terms"),
             excluded_terms=string_tuple("excluded_terms"),
             notes=data.get("notes"),
+            feature=data.get("feature"),
+            operation=data.get("operation"),
+            technology=data.get("technology"),
+            language=data.get("language"),
+            intent=data.get("intent"),
+            expected_source_types=string_tuple("expected_source_types"),
+            required_coverage=string_tuple("required_coverage"),
+            manufacturer_confirmation_required=bool(data.get("manufacturer_confirmation_required", False)),
         )

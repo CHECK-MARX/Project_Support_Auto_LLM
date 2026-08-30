@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "documents": {
+    "p22-cx-tsql": {"product":"Checkmarx","feature":"Supported Languages","operation":"Support","intent":"IsSupported","topics":["Checkmarx SAST","Supported Languages","Microsoft SQL Server","T-SQL","Stored Procedure"]},
+    "p22-cx-plsql": {"product":"Checkmarx","feature":"Supported Languages","operation":"Support","intent":"IsSupported","topics":["Checkmarx SAST","Supported Languages","PL/SQL"]},
+    "p22-cx-engine-pack": {"product":"Checkmarx","feature":"Engine Pack","operation":"Configuration","intent":"HowTo","topics":["Checkmarx SAST","Engine Pack","Configuration"]},
+    "p22-qac-analysis": {"product":"HelixQAC","feature":"Project Analysis","operation":"Analysis","intent":"HowTo","topics":["Helix QAC","Preparation","ProjectSetup","GUI","CLI","AnalysisVerification"]},
+    "p22-qac-cct": {"product":"HelixQAC","feature":"CCT","operation":"Creation","intent":"HowTo","topics":["Helix QAC","CCT","CctConfiguration","CctGenerationDecision"]},
+    "p22-validate-stream": {"product":"Validate","feature":"Stream","operation":"Configuration","intent":"HowTo","topics":["Validate","Stream","Project configuration","Upload","Suppression synchronization"]},
+    "p22-qac-upload": {"product":"HelixQAC","feature":"Build upload","operation":"Upload","intent":"Command","topics":["Helix QAC","Validate","Authentication","Connection","UploadCommand","ValidateVerification"]},
+    "p22-validate-permission": {"product":"Validate","feature":"Permissions","operation":"Troubleshooting","intent":"Troubleshooting","topics":["Validate","Authentication","Connection","Upload","Troubleshooting"]},
+    "p22-qac-license": {"product":"HelixQAC","feature":"License","operation":"Configuration","intent":"HowTo","topics":["Helix QAC","License","Configuration","Verification"]},
+    "p22-qac-ide": {"product":"HelixQAC","feature":"IDE Plugin","operation":"Configuration","intent":"HowTo","topics":["Helix QAC","IDE","Configuration","ProjectSetup"]}
+  },
+  "policies": [
+    {"product":"Checkmarx","feature":"Supported Languages","language":"T-SQL","requiredTopics":["Checkmarx SAST","Microsoft SQL Server","T-SQL","Stored Procedure"],"allowedRelatedTopics":["Supported Languages","Engine Pack"],"forbiddenTopics":["VBA","Java","SCA"]},
+    {"product":"Checkmarx","feature":"Supported Languages","language":"PL/SQL","requiredTopics":["Checkmarx SAST","PL/SQL"],"allowedRelatedTopics":["Supported Languages","Engine Pack","T-SQL"],"forbiddenTopics":["VBA","Java","SCA"]},
+    {"product":"Checkmarx","feature":"Supported Languages","requiredTopics":["Checkmarx SAST","Supported Languages"],"allowedRelatedTopics":["Supported Languages","Engine Pack"],"forbiddenTopics":["VBA","Java","SCA"]},
+    {"product":"Checkmarx","feature":"Engine Pack","requiredTopics":["Checkmarx SAST","Engine Pack","Configuration"],"allowedRelatedTopics":["Supported Languages"],"forbiddenTopics":["VBA","Java","SCA"]},
+    {"product":"HelixQAC","operation":"Analysis","requiredTopics":["Helix QAC","Preparation","ProjectSetup","CLI","AnalysisVerification"],"allowedRelatedTopics":["CCT","Build upload","Creation","Upload"],"forbiddenTopics":["License","IDE","Dashboard","Backup","Toyo Utility"]},
+    {"product":"HelixQAC","feature":"CCT","requiredTopics":["Helix QAC","CCT","CctConfiguration","CctGenerationDecision"],"allowedRelatedTopics":["Project Analysis","Build upload","Analysis","Upload"],"forbiddenTopics":["License","IDE","Dashboard","Backup","Toyo Utility"]},
+    {"product":"HelixQAC","feature":"Build upload","requiredTopics":["Helix QAC","Validate","Authentication","Connection","UploadCommand","ValidateVerification"],"allowedRelatedTopics":["Project Analysis","CCT","Analysis","Creation"],"forbiddenTopics":["License","IDE","Dashboard","Backup","Toyo Utility"]},
+    {"product":"HelixQAC","feature":"License","requiredTopics":["Helix QAC","License","Configuration"],"allowedRelatedTopics":["Project Analysis","Verification"],"forbiddenTopics":["IDE","Dashboard","Backup","Toyo Utility"]},
+    {"product":"HelixQAC","feature":"IDE Plugin","requiredTopics":["Helix QAC","IDE","Configuration"],"allowedRelatedTopics":["Project Analysis","ProjectSetup"],"forbiddenTopics":["License","Dashboard","Backup","Toyo Utility"]},
+    {"product":"Validate","feature":"Stream","requiredTopics":["Validate","Stream"],"allowedRelatedTopics":["Project configuration","Upload","Suppression synchronization","Permissions"],"forbiddenTopics":["License","Dashboard","IDE","Backup","Toyo Utility"]},
+    {"product":"Validate","operation":"Troubleshooting","requiredTopics":["Validate","Authentication","Connection","Troubleshooting"],"allowedRelatedTopics":["Upload","Stream"],"forbiddenTopics":["License","Dashboard","IDE","Backup","Toyo Utility"]}
+  ]
+}

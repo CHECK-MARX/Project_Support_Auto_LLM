@@ -45,6 +45,7 @@ public static partial class AnswerPostProcessor
         var needConfirmations = result.NeedConfirmations.ToList();
         var finalConfidence = confidence;
         var finalEvidence = evidence.ToList();
+        var deterministicAnswerCreated = string.IsNullOrWhiteSpace(result.CustomerReplyDraft);
 
         if (TryBuildFactBasedLatestVersionReply(request, out var factBasedReply, out var factBasedMemo))
         {
@@ -105,13 +106,18 @@ public static partial class AnswerPostProcessor
                     var procedureReply = string.Empty;
                     var usedProcedureFallback = !usedAnalysisFallback && !usedStreamFallback &&
                         TryBuildValidateUploadProcedureReply(request, out procedureReply);
+                    var fileDeliveryReply = string.Empty;
+                    var usedFileDeliveryFallback = !usedAnalysisFallback && !usedStreamFallback &&
+                        !usedProcedureFallback && TryBuildFileDeliveryAccessReply(request, out fileDeliveryReply);
                     customerReply = usedAnalysisFallback
                         ? analysisReply
                         : usedStreamFallback
                             ? streamReply
                             : usedProcedureFallback
                                 ? procedureReply
-                                : BuildEvidenceBackedCustomerReply(request, finalEvidence);
+                                : usedFileDeliveryFallback
+                                    ? fileDeliveryReply
+                                    : BuildEvidenceBackedCustomerReply(request, finalEvidence);
                     internalMemo = BuildInternalMemo(
                         request,
                         finalEvidence,
@@ -122,7 +128,9 @@ public static partial class AnswerPostProcessor
                             ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
                             : usedProcedureFallback
                                 ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
-                                : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                                : usedFileDeliveryFallback
+                                    ? "LLM回答が類似案件を十分に活用できなかったため、送信済み根拠からファイル提供障害の確認事項と代替案を補完しました。"
+                                    : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -144,7 +152,29 @@ public static partial class AnswerPostProcessor
             }
         }
 
+        if (deterministicAnswerCreated && IsHowToQuestion(request) &&
+            !FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(request.InquiryText) &&
+            !request.Sources.Any(static source => ContainsAny(source.Title, "Fiebie", "Fibe") || ContainsAny(source.Text, "Fiebie", "Fibe")) &&
+            !ContainsAny(customerReply, "【概要】", "【設定方法】", "【確認事項】") &&
+            !HowToAnswerComposer.HasRequiredStructure(customerReply))
+        {
+            customerReply = DeterministicAnswerComposer.ComposeHowTo(finalEvidence);
+            mergedWarnings.Add("LLMなしでEvidenceのみからHowTo回答の見出し構造を生成しました。");
+        }
+
+        if (deterministicAnswerCreated && IsProductSpecificationQuestion(request) &&
+            !finalEvidence.Any(static item =>
+                string.Equals(item.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item.SourceType, "Manual", StringComparison.OrdinalIgnoreCase)))
+        {
+            customerReply = DeterministicAnswerComposer.ComposeManufacturerConfirmation(finalEvidence);
+            mergedWarnings.Add("製品仕様の権威根拠がないため、メーカー確認Draftを生成しました。");
+        }
+
         customerReply = CustomerReplyRecipientFormatter.EnsureHeader(request.Case, customerReply);
+
+        var claims = BuildEvidenceClaims(finalEvidence);
+        var readiness = DetermineDraftReadiness(request, finalEvidence, claims);
 
         return result with
         {
@@ -157,7 +187,65 @@ public static partial class AnswerPostProcessor
             Evidence = finalEvidence,
             Confidence = Math.Clamp(finalConfidence, 0, 1),
             Warnings = mergedWarnings.Distinct(StringComparer.Ordinal).ToList(),
+            Readiness = readiness,
+            DeterministicAnswerCreated = deterministicAnswerCreated,
+            Claims = claims,
         };
+    }
+
+    private static IReadOnlyList<Claim> BuildEvidenceClaims(IReadOnlyList<EvidenceItem> evidence)
+    {
+        return evidence
+            .Where(static item => !string.IsNullOrWhiteSpace(item.Excerpt))
+            .Select(static item => new Claim
+            {
+                Statement = BuildClaimStatement(item),
+                SupportingFactIds = [item.SourceId],
+                SupportLevel = ClaimSupportLevels.Supported,
+                CustomerVisible = IsCustomerVisibleSourceType(item.SourceType),
+            })
+            .ToList();
+    }
+
+    private static bool IsHowToQuestion(AnswerDraftRequest request) =>
+        request.FactResolution?.Classification.QuestionTypes.Contains(QuestionTypes.HowToQuestion, StringComparer.OrdinalIgnoreCase) == true ||
+        ContainsAny(request.InquiryText, "手順", "方法", "設定方法", "how to", "procedure");
+
+    private static bool IsProductSpecificationQuestion(AnswerDraftRequest request) =>
+        request.FactResolution?.Classification.QuestionTypes.Contains(QuestionTypes.FeatureAvailabilityQuestion, StringComparer.OrdinalIgnoreCase) == true;
+
+    private static string BuildClaimStatement(EvidenceItem item)
+    {
+        var statement = NormalizeWhitespace(item.Excerpt);
+        return statement.Length <= 300 ? statement : statement[..300] + "...";
+    }
+
+    private static string DetermineDraftReadiness(
+        AnswerDraftRequest request,
+        IReadOnlyList<EvidenceItem> evidence,
+        IReadOnlyList<Claim> claims)
+    {
+        if (evidence.Count == 0 || claims.Count == 0)
+        {
+            return AnswerReadiness.InsufficientEvidence;
+        }
+
+        var asksForProductSpec = request.FactResolution?.Classification.QuestionTypes
+            .Contains(QuestionTypes.FeatureAvailabilityQuestion, StringComparer.OrdinalIgnoreCase) == true;
+        var hasAuthoritativeEvidence = evidence.Any(static item =>
+            string.Equals(item.SourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(item.SourceType, "Manual", StringComparison.OrdinalIgnoreCase));
+        if (asksForProductSpec && !hasAuthoritativeEvidence)
+        {
+            return AnswerReadiness.NeedsManufacturerConfirmation;
+        }
+
+        if (request.FactResolution?.Conflicts.Count > 0 || claims.Any(static claim => claim.Conflicting))
+        {
+            return AnswerReadiness.NeedsReview;
+        }
+
+        return AnswerReadiness.CustomerReady;
     }
 
     private static bool TryBuildFactBasedLatestVersionReply(
@@ -258,6 +346,15 @@ public static partial class AnswerPostProcessor
         if (request.InquiryFocus?.IsFreshnessSensitive == true && !request.Sources.Any(IsOfficialDoc))
         {
             return false;
+        }
+
+        if (FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(request.InquiryText) &&
+            request.Sources.Any(static source =>
+                IsPastCaseSourceType(source.SourceType) ||
+                ContainsAny(source.Title ?? string.Empty, "Fiebie", "Fibe") ||
+                ContainsAny(source.Text ?? string.Empty, "Fiebie", "Fibe", "/api/file/download/content")))
+        {
+            return true;
         }
 
         if (HasHighConfidencePastCaseActionEvidence(request.Sources))
@@ -616,6 +713,67 @@ public static partial class AnswerPostProcessor
         return true;
     }
 
+    private static bool TryBuildFileDeliveryAccessReply(
+        AnswerDraftRequest request,
+        out string customerReply)
+    {
+        customerReply = string.Empty;
+        if (!FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(request.InquiryText))
+        {
+            return false;
+        }
+
+        var sourceText = string.Join(
+            Environment.NewLine,
+            request.Sources.Select(static source => string.Join(' ', source.Title, source.Text, source.SectionTitle)));
+        var compactSource = NormalizeWhitespace(sourceText);
+        var hasFiebie = ContainsAny(compactSource, "Fiebie", "Fibe", "/api/file/download/content");
+        var hasPastCase = request.Sources.Any(static source => IsPastCaseSourceType(source.SourceType));
+        if (!hasFiebie && !hasPastCase)
+        {
+            return false;
+        }
+
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいたQACインストーラの入手について、類似の対応済み案件を含む選択根拠から確認できた内容をご案内します。");
+        builder.AppendLine();
+        builder.AppendLine("【確認結果】");
+        builder.AppendLine(hasFiebie
+            ? "・ご記載の「Fibe」は、ファイル転送サービス「Fiebie」を指すものと考えられます。"
+            : "・ダウンロードサイトへのアクセスまたはファイル取得の段階で制限されている可能性があります。");
+        builder.AppendLine();
+        builder.AppendLine("【主な原因候補】");
+        builder.AppendLine("・社内Webフィルタまたは通信制限");
+        builder.AppendLine("・プロキシ／SSL検査によるダウンロード通信の遮断");
+        builder.AppendLine("・実行ファイル（.exe）やファイルサイズに対するダウンロード制限");
+        builder.AppendLine("・ブラウザ、端末、または利用中のネットワーク経路の影響");
+        builder.AppendLine();
+        builder.AppendLine("【確認をお願いしたい事項】");
+        builder.AppendLine("・表示されたエラー画面と、ログイン後のどの段階で失敗するか");
+        builder.AppendLine("・最新版のEdgeまたはChromeでも同じ事象になるか");
+        builder.AppendLine(hasFiebie
+            ? "・情報システム部門でFiebieのドメインおよびダウンロード通信が許可されているか"
+            : "・情報システム部門で対象サイトのドメインおよびダウンロード通信が許可されているか");
+        builder.AppendLine();
+        builder.AppendLine("【代替手段】");
+        builder.AppendLine("・別のネットワークまたは端末から取得できるかをご確認ください。");
+        builder.AppendLine("・難しい場合は、お客様指定の安全なファイル転送サービス、または外部アップロードを許可したSharePoint／OneDriveの利用可否を確認します。");
+        builder.AppendLine("・メール添付は、容量や実行ファイル制限で遮断される可能性が高いため推奨しません。");
+        if (hasPastCase)
+        {
+            builder.AppendLine();
+            builder.AppendLine("【類似案件】");
+            builder.AppendLine("・同様の案内後に取得できた事例がありますが、具体的な解消方法までは記録されていません。");
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("上記をご確認いただき、エラー画面と失敗する段階をご連絡ください。確認結果に応じて次の対応をご案内します。");
+        builder.AppendLine();
+        builder.AppendLine("以上、よろしくお願いいたします。");
+        customerReply = builder.ToString();
+        return true;
+    }
+
     private static bool ContainsAny(string value, params string[] candidates)
     {
         return candidates.Any(candidate =>
@@ -633,7 +791,9 @@ public static partial class AnswerPostProcessor
     private static bool IsPastCaseSourceType(string sourceType)
     {
         return string.Equals(sourceType, "PastCase", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(sourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase);
+            string.Equals(sourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sourceType, "PastAnswer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildNoDirectEvidenceCustomerReply(AnswerDraftRequest request)
@@ -942,7 +1102,13 @@ public static partial class AnswerPostProcessor
             return false;
         }
 
-        return matchedTerms.Any(IsStrongEvidenceTerm) || matchedTerms.Count >= 2;
+        // Do not let two generic overlaps (for example, company/ownership wording)
+        // make an unrelated manual look relevant when the inquiry has a concrete
+        // product, feature, command, or error term to verify.
+        var hasStrongQueryTerm = terms.Any(IsStrongEvidenceTerm);
+        return hasStrongQueryTerm
+            ? matchedTerms.Any(IsStrongEvidenceTerm)
+            : matchedTerms.Count >= 2;
     }
 
     private static IReadOnlyList<string> BuildEvidenceRelevanceTerms(AnswerDraftRequest request)

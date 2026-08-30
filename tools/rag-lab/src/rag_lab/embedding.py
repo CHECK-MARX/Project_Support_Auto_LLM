@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable, Protocol, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from .models import Chunk
 from .search import (
@@ -55,6 +58,51 @@ class HashingEmbeddingProvider:
         if norm == 0:
             return tuple(values)
         return tuple(value / norm for value in values)
+
+
+@dataclass(slots=True)
+class OllamaEmbeddingProvider:
+    """Local Ollama provider used only by RAG Lab A/B evaluation.
+
+    Inputs are sent only to the configured local endpoint and are never logged.
+    """
+
+    model: str
+    endpoint: str = "http://localhost:11434"
+    timeout_seconds: float = 30.0
+    provider_id: str = "ollama"
+    dimensions: int = 0
+
+    def embed(self, texts: Sequence[str]) -> list[Vector]:
+        if not texts:
+            return []
+        request = Request(
+            f"{self.endpoint.rstrip('/')}/api/embed",
+            data=json.dumps({"model": self.model, "input": list(texts)}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310 local configured endpoint
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")[:400]
+            raise RuntimeError(f"Ollama embedding HTTP {error.code}: {detail}") from error
+        except URLError as error:
+            raise RuntimeError(f"Ollama embedding endpoint is unavailable: {error.reason}") from error
+        vectors = payload.get("embeddings") if isinstance(payload, dict) else None
+        if not isinstance(vectors, list) or len(vectors) != len(texts):
+            raise RuntimeError("Ollama returned an invalid embedding count")
+        result = [tuple(float(value) for value in vector) for vector in vectors]
+        if not result or not result[0] or any(len(vector) != len(result[0]) for vector in result):
+            raise RuntimeError("Ollama returned inconsistent embedding dimensions")
+        self.dimensions = len(result[0])
+        return [_normalize(vector) for vector in result]
+
+
+def _normalize(vector: Vector) -> Vector:
+    norm = math.sqrt(sum(value * value for value in vector))
+    return vector if norm == 0 else tuple(value / norm for value in vector)
 
 
 def _cosine(left: Vector, right: Vector) -> float:

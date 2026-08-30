@@ -25,6 +25,9 @@ public sealed record class FactResolutionResult
     [JsonPropertyName("crawlerConflicts")]
     public IReadOnlyList<string> CrawlerConflicts { get; init; } = [];
 
+    [JsonPropertyName("claims")]
+    public IReadOnlyList<Claim> Claims { get; init; } = [];
+
     [JsonPropertyName("llmPromptUsesResolvedFacts")]
     public bool LlmPromptUsesResolvedFacts { get; init; }
 }

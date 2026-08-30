@@ -31,6 +31,18 @@ public sealed record class SearchSource
     [JsonPropertyName("score")]
     public double? Score { get; init; }
 
+    [JsonPropertyName("lexicalScore")]
+    public double? LexicalScore { get; init; }
+
+    [JsonPropertyName("semanticScore")]
+    public double? SemanticScore { get; init; }
+
+    [JsonPropertyName("rrfScore")]
+    public double? RrfScore { get; init; }
+
+    [JsonPropertyName("finalRerankScore")]
+    public double? FinalRerankScore { get; init; }
+
     [JsonPropertyName("productName")]
     public string? ProductName { get; init; }
 

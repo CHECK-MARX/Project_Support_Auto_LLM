@@ -597,6 +597,87 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public void BuildFailureFallback_FileDeliveryAccessUsesPastCaseChecksAndAlternatives()
+    {
+        const string inquiry = """
+            QAC 2026.2の最新版をFibeからダウンロードできません。
+            一つ前の2026.1を入手したいため、別の提供方法を教えてください。
+            """;
+        var request = new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = inquiry,
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "past-answer-fiebie",
+                    SourceType = "ExactPastAnswer",
+                    Title = "類似案件の回答",
+                    Text = "FiebieでOTP認証後、/api/file/download/contentからダウンロードできません。Webフィルタ、プロキシ、SSL検査、ブラウザ、ドメイン許可、別ネットワークを確認しました。",
+                    Score = 0.9,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(request, new TimeoutException("simulated"));
+
+        Assert.StartsWith($"[会社名]{Environment.NewLine}[お客様名] 様", result.CustomerReplyDraft);
+        Assert.Contains("ファイル転送サービス「Fiebie」", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("Webフィルタ", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("プロキシ／SSL検査", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("EdgeまたはChrome", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("SharePoint／OneDrive", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("メール添付", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("具体的な解消方法までは記録されていません", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("TOYO", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("00016722", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task GenerateDraftAsync_FileDeliveryAccessReplacesGenericSuccessfulReplyWithPastCaseGuidance()
+    {
+        const string inquiry = "QAC 2026.2をFibeからダウンロードできません。2026.1を別の方法で提供できますか。";
+        var service = CreateService("""
+            {
+              "customerReplyDraft": "ダウンロードサイト以外の提供方法が確定していないため、社内確認します。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.7,
+              "warnings": []
+            }
+            """);
+        var request = new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = inquiry,
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "past-answer-fiebie",
+                    SourceType = "PastAnswer",
+                    Title = "類似案件の回答",
+                    Text = "Fiebieから取得できないため、Webフィルタ、プロキシ、SSL検査、ドメイン許可と別ネットワークを確認しました。",
+                    Score = 0.8,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+        };
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Contains("ファイル転送サービス「Fiebie」", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("SharePoint／OneDrive", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("具体的な解消方法までは記録されていません", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains(result.Warnings, warning => warning.Contains("類似案件", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_PreservesStructuredAnalysisHowToFromSuccessfulLlm()
     {
         var response = JsonSerializer.Serialize(new

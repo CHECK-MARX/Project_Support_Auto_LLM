@@ -1,0 +1,11 @@
+{
+  "inputRoots": ["samples"],
+  "outputRoot": "reports/generated",
+  "documentsFile": "samples/phase22_documents.json",
+  "evaluationCasesFile": "samples/phase22_evaluation_cases.json",
+  "reportName": "phase22-holdout",
+  "normalization": {"unicodeNfkc": true, "trimTrailingWhitespace": true, "maxConsecutiveBlankLines": 1, "excludeCategories": []},
+  "chunking": {"maxCharacters": 1200, "overlapCharacters": 120},
+  "evaluation": {"casePartition": "holdout", "topicMetadataFile": "samples/phase22_topic_metadata.json", "chunkStrategies": ["structured"], "searchMethods": ["hybrid"], "rerankers": ["none", "lexical"], "filterModes": ["product"], "topK": [3, 5, 10]},
+  "qualityGate": {"preferredTopK": 5, "minRecallAtK": 0.9, "minMrr": 0.9, "minNdcgAtK": 0.9, "minRequiredTermCoverageAtK": 0.9, "maxExcludedTermHitCount": 0, "maxProductConfusionCount": 0, "maxVersionMismatchCount": 0, "maxMeanSearchTimeMs": 100.0}
+}

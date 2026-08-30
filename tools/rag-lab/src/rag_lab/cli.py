@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 
 from .answer_quality_runner import run_answer_quality_comparison
+from .embedding import OllamaEmbeddingProvider
 from .baseline_readiness import (
     run_baseline_readiness_assessment,
     run_candidate_reproducibility_check,
@@ -32,11 +33,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--config", default="config.example.json")
     evaluate.add_argument("--report-name")
+    evaluate.add_argument("--embedding-provider", choices=("hash", "ollama"), default="hash")
+    evaluate.add_argument("--embedding-model")
     verify = subcommands.add_parser(
         "verify", help="run evaluation and return nonzero when the quality gate fails"
     )
     verify.add_argument("--config", default="config.example.json")
     verify.add_argument("--report-name")
+    verify.add_argument("--embedding-provider", choices=("hash", "ollama"), default="hash")
+    verify.add_argument("--embedding-model")
     compare = subcommands.add_parser(
         "compare", help="compare two generated evaluation reports for regressions"
     )
@@ -143,11 +148,17 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     lab_root = Path(__file__).resolve().parents[2]
+    embedding_provider = None
+    if getattr(args, "embedding_provider", "hash") == "ollama":
+        if not args.embedding_model:
+            _parser().error("--embedding-model is required when --embedding-provider ollama")
+        embedding_provider = OllamaEmbeddingProvider(args.embedding_model)
     if args.command == "evaluate":
         output = run_evaluation(
             lab_root,
             config_path=args.config,
             report_name=args.report_name,
+            embedding_provider=embedding_provider,
         )
         print(f"Evaluation rows: {len(output.report['summary'])}")
         for format_name, path in output.files.items():
@@ -296,6 +307,7 @@ def main(argv: list[str] | None = None) -> int:
             lab_root,
             config_path=args.config,
             report_name=args.report_name,
+            embedding_provider=embedding_provider,
         )
         gate = output.report["quality_gate"]
         recommendation = gate["recommended_configuration"]
@@ -310,3 +322,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0 if gate["status"] == "passed" else 1
     return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

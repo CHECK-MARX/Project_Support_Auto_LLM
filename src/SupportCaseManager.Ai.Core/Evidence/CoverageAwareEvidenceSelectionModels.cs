@@ -38,6 +38,22 @@ public sealed record CoverageEvidenceCandidate
 
     public double ConflictPenalty { get; init; }
 
+    public double LexicalScore { get; init; }
+
+    public double SemanticScore { get; init; }
+
+    public double ExactMatchScore { get; init; }
+
+    public double AliasMatchScore { get; init; }
+
+    public double ProductMatchScore { get; init; }
+
+    public double FeatureMatchScore { get; init; }
+
+    public double OperationMatchScore { get; init; }
+
+    public double IntentMatchScore { get; init; }
+
     public bool ExplicitlyExcluded { get; init; }
 
     public bool TopicConflict { get; init; }

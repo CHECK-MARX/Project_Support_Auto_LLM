@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Quality;
 using SupportCaseManager.Ai.Core.Ranking;
 
@@ -68,6 +69,17 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
         "インストール方法",
         "インストール",
         "アップロード",
+        "Fiebie",
+        "Fibe",
+        "ファイル転送",
+        "ダウンロードサイト",
+        "ダウンロード",
+        "アクセス",
+        "Webフィルタ",
+        "プロキシ",
+        "SSL検査",
+        "ブラウザ",
+        "代替提供",
         "解析結果",
         "接続確認",
         "接続",
@@ -115,7 +127,10 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             return new InquiryFocus();
         }
 
-        var focusText = ExtractFocusText(inquiryText);
+        var separated = TechnicalQueryExtractor.Separate(inquiryText, caseContext);
+        var focusText = ExtractFocusText(string.IsNullOrWhiteSpace(separated.TechnicalText)
+            ? inquiryText
+            : separated.TechnicalText);
         var normalizedFocus = NormalizeText(focusText);
         var excludedTerms = FindExcludedTerms(normalizedFocus);
         var targetVersions = ExtractTargetVersions(focusText);
@@ -146,6 +161,14 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             RequiredCoverage = topicAnalysis is null
                 ? []
                 : CoverageAnalyzer.Required(focusText, topicAnalysis.PrimaryProfile),
+            RecipientContext = separated.RecipientContext,
+            TechnicalQuery = TechnicalQueryExtractor.Extract(
+                focusText,
+                SupportTopicCatalog.Create(caseContext?.ProductName),
+                topicAnalysis?.ExcludedProfile.Features
+                    .Concat(topicAnalysis.ExcludedProfile.Operations)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList() ?? []),
         };
     }
 
@@ -328,6 +351,11 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
 
     private static (bool IsSensitive, string Reason) DetectFreshness(string normalizedFocus)
     {
+        if (FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(normalizedFocus))
+        {
+            return (false, string.Empty);
+        }
+
         var matched = FreshnessKeywords
             .Where(keyword => normalizedFocus.Contains(NormalizeTerm(keyword), StringComparison.Ordinal))
             .Distinct(StringComparer.OrdinalIgnoreCase)

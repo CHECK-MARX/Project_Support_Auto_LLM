@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CoverageEvidenceCandidate {
     pub candidate_id: String,
@@ -38,6 +38,22 @@ pub struct CoverageEvidenceCandidate {
     pub version_score: f64,
     #[serde(default)]
     pub conflict_penalty: f64,
+    #[serde(default)]
+    pub lexical_score: f64,
+    #[serde(default)]
+    pub semantic_score: f64,
+    #[serde(default)]
+    pub exact_match_score: f64,
+    #[serde(default)]
+    pub alias_match_score: f64,
+    #[serde(default)]
+    pub product_match_score: f64,
+    #[serde(default)]
+    pub feature_match_score: f64,
+    #[serde(default)]
+    pub operation_match_score: f64,
+    #[serde(default)]
+    pub intent_match_score: f64,
     #[serde(default)]
     pub explicitly_excluded: bool,
     #[serde(default)]
