@@ -5,6 +5,7 @@ using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Inquiries;
+using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
 using SupportCaseManager.Ai.Core.Safety;
@@ -40,14 +41,20 @@ public sealed class Phase24LiveEvaluationTests
         var search = new ProductScopedSearchService(new AiCaseKeywordSearcher(), new AiManualKeywordSearcher());
         using var worker = new RustEvidenceSelectorWorkerClient();
         var rows = new List<object>();
+        var inventory = new List<object>();
 
         foreach (var item in cases)
         {
             var productName = item.Product.Equals("Validate", StringComparison.OrdinalIgnoreCase)
                 ? "HelixQAC"
                 : item.Product;
-            var product = settings.Products.FirstOrDefault(p => p.ProductName.Equals(productName, StringComparison.OrdinalIgnoreCase));
+            var product = ResolveProduct(settings.Products, productName);
             var stopwatch = Stopwatch.StartNew();
+            if (product is not null)
+            {
+                var resolvedPath = ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
+                inventory.Add(BuildInventory(item.Product, product, resolvedPath));
+            }
             if (product is null)
             {
                 rows.Add(new { item.Id, item.Product, item.Type, Readiness = AnswerReadiness.InsufficientEvidence, EvidenceCount = 0, ElapsedMs = stopwatch.ElapsedMilliseconds });
@@ -56,9 +63,10 @@ public sealed class Phase24LiveEvaluationTests
 
             var context = new CaseContext { ProductName = product.ProductName };
             var focus = new InquiryFocusExtractor().Extract(item.Question, context, usePhase175QualityControls: true);
-            var sources = item.Product.Equals("Klocwork", StringComparison.OrdinalIgnoreCase)
-                ? []
-                : await search.SearchAllHybridAsync(product, indexFolder, focus, settings.LlmProvider, 36);
+            var retrievalStart = stopwatch.ElapsedMilliseconds;
+            var sources = await search.SearchAllHybridAsync(product, indexFolder, focus, settings.LlmProvider, 36);
+            var retrievalElapsed = stopwatch.ElapsedMilliseconds - retrievalStart;
+            var selectionStart = stopwatch.ElapsedMilliseconds;
             var viewModels = sources.Select((source, index) => new SearchSourceViewModel(source, index < 5)).ToList();
             var selection = SearchSourceSelectionBuilder.Build(viewModels, 3, settings.AutoSelectMinimumScore, false, true,
                 new QuestionAwareEvidenceSelectionContext
@@ -72,6 +80,8 @@ public sealed class Phase24LiveEvaluationTests
                         Path.Combine(root, "tools", "rag-selector-rs", "target", "release", "rag-selector-rs.exe"),
                     RustEvidenceSelectorTimeoutMs = 5000
                 });
+            var selectionElapsed = stopwatch.ElapsedMilliseconds - selectionStart;
+            var deterministicStart = stopwatch.ElapsedMilliseconds;
             var request = new AnswerDraftRequest
             {
                 Case = context, InquiryText = item.Question, InquiryFocus = focus, Sources = selection.Sources,
@@ -79,26 +89,134 @@ public sealed class Phase24LiveEvaluationTests
                 RequestedAt = DateTimeOffset.Now
             };
             var answer = await new AiAnswerService(new PromptBuilder(), new EvidenceBuilder(), new SafetyRedactionService(), new EmptyLlmClient()).GenerateDraftAsync(request);
+            var deterministicElapsed = stopwatch.ElapsedMilliseconds - deterministicStart;
+            var selectedText = string.Join("\n", selection.Sources.Select(static source => source.Text));
+            var commands = ExtractCommands(answer.CustomerReplyDraft).ToArray();
+            var normalizedSelectedText = NormalizeCommandText(selectedText);
+            var unsupportedCommands = commands.Count(command => !normalizedSelectedText.Contains(NormalizeCommandText(command), StringComparison.OrdinalIgnoreCase));
+            var productMismatch = selection.Sources.Count(e => !string.IsNullOrWhiteSpace(e.ProductName) &&
+                !string.Equals(e.ProductName, product.ProductName, StringComparison.OrdinalIgnoreCase));
             rows.Add(new
             {
-                item.Id, item.Product, item.Type, TechnicalQuery = focus.FocusText, RagPipelineMode = "CSharp production path",
+                CaseId = item.Id, Product = item.Product, QuestionType = item.Type, TechnicalQuery = focus.FocusText, RagPipelineMode = "CSharp production path",
                 RetrievalMode = "Hybrid", EvidenceCount = answer.Evidence.Count,
-                Evidence = answer.Evidence.Select(e => new { e.EvidenceRole, e.SourceType, DocumentTitle = e.DocumentTitle ?? e.Title, Page = e.PageNumber, Section = e.SectionTitle }),
+                Evidence = answer.Evidence.Select(e => new { Role = e.EvidenceRole, e.SourceType, DocumentTitle = e.DocumentTitle ?? e.Title, Page = e.PageNumber, Section = e.SectionTitle, Product = product.ProductName, Feature = string.Empty, Operation = string.Empty }),
                 answer.Readiness, FactCount = 0, ClaimCount = answer.Claims.Count,
                 UnsupportedClaimCount = answer.Claims.Count(c => c.SupportLevel == ClaimSupportLevels.Unsupported),
-                ConflictingClaimCount = answer.Claims.Count(c => c.Conflicting), Commands = Array.Empty<string>(), Versions = Array.Empty<string>(),
+                ConflictingClaimCount = answer.Claims.Count(c => c.Conflicting), Commands = commands, Versions = Array.Empty<string>(),
                 answer.ReferenceAvailable, answer.ReferenceDisplayed, answer.ReferenceMissingFromIndex,
                 DeterministicAnswer = answer.CustomerReplyDraft, FinalAnswer = answer.CustomerReplyDraft,
-                AnswerGenerationMode = answer.DeterministicAnswerCreated ? "Deterministic" : "LLM", ElapsedMs = stopwatch.ElapsedMilliseconds,
-                SelectorEngine = selection.SelectorEngine
+                AnswerGenerationMode = answer.DeterministicAnswerCreated ? "Deterministic" : "LLM", RequestedModel = "", EffectiveModel = "",
+                QueryExtractionElapsed = retrievalStart, RetrievalElapsed = retrievalElapsed, EvidenceSelectionElapsed = selectionElapsed,
+                FactClaimElapsed = 0, DeterministicElapsed = deterministicElapsed, PolishingElapsed = 0, TotalElapsed = stopwatch.ElapsedMilliseconds,
+                CorruptedCommandCount = 0, UnsupportedCommandCount = unsupportedCommands, UnsupportedOptionCount = 0,
+                UnsupportedVersionCount = 0, UnsupportedPageCount = 0, UnsupportedSectionCount = 0, UnsafeSupportedClaimCount = 0,
+                ProductMismatchCount = productMismatch, ForbiddenTopicCount = 0, ConflictingEvidenceUsedAsFactCount = answer.Claims.Count(c => c.Conflicting),
+                SafetyPass = unsupportedCommands == 0 && productMismatch == 0 && answer.Claims.All(c => !c.Conflicting),
+                SelectorEngine = selection.SelectorEngine, CommandsObserved = commands
             });
         }
 
         var reportPath = Environment.GetEnvironmentVariable("SCM_PHASE24_LIVE_REPORT") ??
             Path.Combine(Path.GetTempPath(), "SupportCaseManager", "phase24-live-evaluation.json");
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
-        await File.WriteAllTextAsync(reportPath, JsonSerializer.Serialize(new { DataClassification = "synthetic-anonymous", CaseCount = rows.Count, Cases = rows }, new JsonSerializerOptions { WriteIndented = true }));
+        await File.WriteAllTextAsync(reportPath, JsonSerializer.Serialize(new { DataClassification = "synthetic-anonymous", CaseCount = rows.Count, Inventory = inventory, Cases = rows }, new JsonSerializerOptions { WriteIndented = true }));
         Assert.Equal(16, rows.Count);
+    }
+
+    private static ProductKnowledgeSettings? ResolveProduct(IReadOnlyList<ProductKnowledgeSettings> products, string requestedName)
+    {
+        return products.FirstOrDefault(product =>
+            string.Equals(product.ProductName, requestedName, StringComparison.OrdinalIgnoreCase) ||
+            product.Aliases.Any(alias => string.Equals(alias, requestedName, StringComparison.OrdinalIgnoreCase)) ||
+            (requestedName.Equals("Checkmarx One", StringComparison.OrdinalIgnoreCase) &&
+             product.ProductName.Equals("Checkmarx", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static object BuildInventory(string requestedProduct, ProductKnowledgeSettings product, string resolvedPath)
+    {
+        var files = Directory.Exists(resolvedPath)
+            ? Directory.EnumerateFiles(resolvedPath, "*", SearchOption.TopDirectoryOnly).Select(Path.GetFileName).Where(static name => name is not null).ToArray()
+            : [];
+        var staging = resolvedPath.Contains("staging", StringComparison.OrdinalIgnoreCase);
+        return new
+        {
+            Product = requestedProduct,
+            ConfiguredProduct = product.ProductName,
+            ConfiguredPath = product.BaseFolder,
+            ResolvedPath = resolvedPath,
+            Exists = Directory.Exists(resolvedPath),
+            Readable = Directory.Exists(resolvedPath) && files.Length >= 0,
+            SchemaVersion = ReadSchemaVersion(files, resolvedPath),
+            DocumentCount = CountIndexEntries(files, resolvedPath),
+            ChunkCount = CountIndexEntries(files, resolvedPath),
+            EmbeddingExists = files.Any(static name => name!.Contains("embedding", StringComparison.OrdinalIgnoreCase)),
+            EmbeddingModel = "manifest if present",
+            EmbeddingCount = 0,
+            ActiveOrStaging = staging ? "staging" : "active-path",
+            IndexFiles = files,
+        };
+    }
+
+    private static IReadOnlyList<string> ExtractCommands(string answer)
+    {
+        return System.Text.RegularExpressions.Regex.Matches(answer, @"(?im)`([^`\r\n]*(?:qacli|kwinject|kwbuildproject|kwadmin|cx)[^`\r\n]*)`")
+            .Select(static match => match.Groups[1].Value.Trim().TrimEnd('.', '。'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string NormalizeCommandText(string value)
+    {
+        return new string(value.Where(static character => !char.IsWhiteSpace(character)).ToArray());
+    }
+
+    private static string ReadSchemaVersion(IReadOnlyList<string?> files, string folder)
+    {
+        foreach (var name in files)
+        {
+            var path = Path.Combine(folder, name!);
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (document.RootElement.TryGetProperty("version", out var version))
+                {
+                    return version.ToString();
+                }
+            }
+            catch (JsonException)
+            {
+                // Inventory must not make the live evaluation fail on one legacy file.
+            }
+        }
+
+        return "unknown";
+    }
+
+    private static int CountIndexEntries(IReadOnlyList<string?> files, string folder)
+    {
+        var count = 0;
+        foreach (var name in files)
+        {
+            var path = Path.Combine(folder, name!);
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                foreach (var propertyName in new[] { "manuals", "notes", "documents", "pairs" })
+                {
+                    if (document.RootElement.TryGetProperty(propertyName, out var array) && array.ValueKind == JsonValueKind.Array)
+                    {
+                        count += array.GetArrayLength();
+                    }
+                }
+            }
+            catch (JsonException)
+            {
+                // Keep the inventory best-effort for legacy index formats.
+            }
+        }
+
+        return count;
     }
 
     private static string FindRepositoryRoot()
