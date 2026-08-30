@@ -39,6 +39,15 @@ public sealed record class AnswerDraftResult
     [JsonPropertyName("claims")]
     public IReadOnlyList<Claim> Claims { get; init; } = [];
 
+    [JsonPropertyName("referenceAvailable")]
+    public int ReferenceAvailable { get; init; }
+
+    [JsonPropertyName("referenceDisplayed")]
+    public int ReferenceDisplayed { get; init; }
+
+    [JsonPropertyName("referenceMissingFromIndex")]
+    public int ReferenceMissingFromIndex { get; init; }
+
     [JsonPropertyName("generatedAt")]
     public DateTimeOffset GeneratedAt { get; init; }
 }

@@ -51,4 +51,7 @@ public sealed record class EvidenceItem
 
     [JsonPropertyName("relevance")]
     public double Relevance { get; init; }
+
+    [JsonPropertyName("evidenceRole")]
+    public string EvidenceRole { get; init; } = "Supporting";
 }

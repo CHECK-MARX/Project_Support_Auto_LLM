@@ -55,6 +55,8 @@ public static partial class HowToAnswerComposer
             requireAnalysisContext: false,
             excludedTerms: ["Validateプロジェクト", "アップロード", "connect", "--push"]);
         var gui = FindGuiInstruction(sources);
+        // Commands are extracted independently from each locator. Never join a prefix
+        // from one source with options or paths from another source.
         var commands = sources
             .SelectMany(static source => ExtractAnalysisCommands(source.Text))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -226,8 +228,9 @@ public static partial class HowToAnswerComposer
 
     private static IReadOnlyList<string> FindVerificationInstructions(IReadOnlyList<SearchSource> sources)
     {
-        var text = string.Join('\n', sources.Select(static source => source.Text));
-        if (AnalysisDialogProgressRegex().IsMatch(text))
+        var matchingSource = sources.FirstOrDefault(static source =>
+            AnalysisDialogProgressRegex().IsMatch(source.Text ?? string.Empty));
+        if (matchingSource is not null)
         {
             return
             [
@@ -235,7 +238,9 @@ public static partial class HowToAnswerComposer
             ];
         }
 
-        if (text.Contains("解析ダイアログ", StringComparison.OrdinalIgnoreCase))
+        matchingSource = sources.FirstOrDefault(static source =>
+            (source.Text ?? string.Empty).Contains("解析ダイアログ", StringComparison.OrdinalIgnoreCase));
+        if (matchingSource is not null)
         {
             return
             [
@@ -243,7 +248,9 @@ public static partial class HowToAnswerComposer
             ];
         }
 
-        if (ContainsAny(text, "［問題］パネル", "[問題]パネル", "問題パネル", "Problems panel"))
+        matchingSource = sources.FirstOrDefault(static source =>
+            ContainsAny(source.Text ?? string.Empty, "［問題］パネル", "[問題]パネル", "問題パネル", "Problems panel"));
+        if (matchingSource is not null)
         {
             return
             [
@@ -251,13 +258,15 @@ public static partial class HowToAnswerComposer
             ];
         }
 
-        if (text.Contains("Progress(", StringComparison.OrdinalIgnoreCase) &&
-            text.Contains("done", StringComparison.OrdinalIgnoreCase))
+        matchingSource = sources.FirstOrDefault(static source =>
+            (source.Text ?? string.Empty).Contains("Progress(", StringComparison.OrdinalIgnoreCase) &&
+            (source.Text ?? string.Empty).Contains("done", StringComparison.OrdinalIgnoreCase));
+        if (matchingSource is not null)
         {
             return
             [
                 "1. CLIの出力で `Progress(...): ... done` と表示され、処理が完了したことを確認します。",
-                text.Contains("Successes and failures", StringComparison.OrdinalIgnoreCase)
+                    matchingSource.Text.Contains("Successes and failures", StringComparison.OrdinalIgnoreCase)
                     ? "2. 続けて `Successes and failures` の集計を確認します。"
                     : string.Empty,
             ];
@@ -323,20 +332,32 @@ public static partial class HowToAnswerComposer
 
     private static IEnumerable<string> ExtractAnalysisCommands(string value)
     {
+        // Keep the original locator boundary. The regex accepts command tokens only,
+        // so prose following a command cannot become an option or an argument.
         var normalized = NormalizeCompactAnalysisCommand(value ?? string.Empty);
         foreach (Match match in AnalysisCommandRegex().Matches(normalized))
         {
             var command = NormalizeAnalysisCommand(match.Value);
-            if (!string.IsNullOrWhiteSpace(command))
+            if (!string.IsNullOrWhiteSpace(command) && IsCompleteAnalysisCommand(command))
             {
                 yield return command;
             }
         }
     }
 
+    private static bool IsCompleteAnalysisCommand(string command)
+    {
+        // -P without a path is a fragment, even when the same locator contains
+        // another option. Do not emit it or let a later stage complete it.
+        return !Regex.IsMatch(
+            command,
+            @"(?:^|\s)-P(?:\s*$|\s+--?[A-Za-z]|\s+-[A-Za-z])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
     private static string NormalizeAnalysisCommand(string value)
     {
-        var command = NormalizeWhitespace(value).TrimEnd('.', '。', ',', '、', ';', '；');
+        var command = NormalizeWhitespace(value).TrimEnd('。', ',', '、', ';', '；');
         command = Regex.Replace(command, "^qaclianalyze", "qacli analyze", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         command = Regex.Replace(command, "(?<=analyze)-", " -", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         command = Regex.Replace(
@@ -363,6 +384,11 @@ public static partial class HowToAnswerComposer
             value,
             "qacli\\s*analyze",
             "qacli analyze",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        normalized = Regex.Replace(
+            normalized,
+            "(?<=[A-Za-z0-9>])(?=--?(?:P|C|cf|csga|raw-source|language-cct)(?![A-Za-z0-9_]))",
+            " ",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return normalized;
     }
@@ -400,7 +426,7 @@ public static partial class HowToAnswerComposer
     private static string? FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value))?.Trim();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli\s*analyze(?:\s*(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|[^\s。；;]+))?|<[^>]+>)){0,8}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli\s+analyze(?:\s+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|\.|[^\s。；;,.]+))?|<[^>]+>)){0,8}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AnalysisCommandRegex();
 
     [GeneratedRegex(@"(?<=[A-Za-z0-9>])(?=[\p{IsHiragana}\p{IsKatakana}\p{IsCJKUnifiedIdeographs}])", RegexOptions.CultureInvariant)]

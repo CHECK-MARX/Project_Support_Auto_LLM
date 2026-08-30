@@ -173,8 +173,16 @@ public static partial class AnswerPostProcessor
 
         customerReply = CustomerReplyRecipientFormatter.EnsureHeader(request.Case, customerReply);
 
+        finalEvidence = ClassifyEvidenceRoles(request, finalEvidence).ToList();
+
         var claims = BuildEvidenceClaims(finalEvidence);
         var readiness = DetermineDraftReadiness(request, finalEvidence, claims);
+        var referenceAvailable = finalEvidence.Count(static item => HasReferenceMetadata(item));
+        var referenceDisplayed = finalEvidence.Count(item =>
+            HasReferenceMetadata(item) && ReferenceAppearsInReply(item, customerReply));
+        var referenceMissingFromIndex = finalEvidence.Count(static item =>
+            !HasReferenceMetadata(item) &&
+            (!string.IsNullOrWhiteSpace(item.DocumentTitle) || !string.IsNullOrWhiteSpace(item.Title)));
 
         return result with
         {
@@ -190,7 +198,49 @@ public static partial class AnswerPostProcessor
             Readiness = readiness,
             DeterministicAnswerCreated = deterministicAnswerCreated,
             Claims = claims,
+            ReferenceAvailable = referenceAvailable,
+            ReferenceDisplayed = referenceDisplayed,
+            ReferenceMissingFromIndex = referenceMissingFromIndex,
         };
+    }
+
+    private static bool HasReferenceMetadata(EvidenceItem item) =>
+        item.PageNumber is > 0 ||
+        !string.IsNullOrWhiteSpace(item.SectionTitle) ||
+        !string.IsNullOrWhiteSpace(item.Url);
+
+    private static bool ReferenceAppearsInReply(EvidenceItem item, string reply)
+    {
+        var title = item.DocumentTitle ?? item.Title;
+        if (!string.IsNullOrWhiteSpace(title) && reply.Contains(title, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        return item.PageNumber is > 0 && reply.Contains($"Page {item.PageNumber.Value}", StringComparison.Ordinal);
+    }
+
+    private static IReadOnlyList<EvidenceItem> ClassifyEvidenceRoles(
+        AnswerDraftRequest request,
+        IReadOnlyList<EvidenceItem> evidence)
+    {
+        var relevant = evidence
+            .Where(item => IsEvidenceRelevantToInquiry(request, item))
+            .OrderByDescending(static item => item.Relevance)
+            .Select(static item => item.SourceId)
+            .ToHashSet(StringComparer.Ordinal);
+        var primaryId = relevant.FirstOrDefault();
+        return evidence.Select(item => item with
+        {
+            EvidenceRole = item.Excerpt.Contains("conflict", StringComparison.OrdinalIgnoreCase) ||
+                item.Excerpt.Contains("競合", StringComparison.Ordinal)
+                ? "Conflicting"
+                : !relevant.Contains(item.SourceId)
+                    ? "Irrelevant"
+                    : string.Equals(item.SourceId, primaryId, StringComparison.Ordinal)
+                        ? "Primary"
+                        : "Supporting"
+        }).ToList();
     }
 
     private static IReadOnlyList<Claim> BuildEvidenceClaims(IReadOnlyList<EvidenceItem> evidence)
@@ -245,7 +295,31 @@ public static partial class AnswerPostProcessor
             return AnswerReadiness.NeedsReview;
         }
 
+        if (RequiresAtomicCliCommand(request) && !HasAtomicCliCommand(request.Sources))
+        {
+            return AnswerReadiness.NeedsReview;
+        }
+
+        if (asksForProductSpec && evidence.All(static item => IsPastCaseSourceType(item.SourceType)))
+        {
+            return AnswerReadiness.NeedsManufacturerConfirmation;
+        }
+
         return AnswerReadiness.CustomerReady;
+    }
+
+    private static bool RequiresAtomicCliCommand(AnswerDraftRequest request)
+    {
+        return ContainsAny(request.InquiryText, "CLI", "コマンド", "オプション", "qacli") ||
+            request.FactResolution?.Classification.QuestionTypes.Contains("CommandQuestion", StringComparer.OrdinalIgnoreCase) == true;
+    }
+
+    private static bool HasAtomicCliCommand(IReadOnlyList<SearchSource> sources)
+    {
+        return sources
+            .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+            .SelectMany(static source => ExtractAtomicCommands(source.Text))
+            .Any();
     }
 
     private static bool TryBuildFactBasedLatestVersionReply(
@@ -548,11 +622,10 @@ public static partial class AnswerPostProcessor
             return false;
         }
 
-        var sourceText = string.Join(
-            Environment.NewLine,
-            request.Sources
-                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
-                .Select(static source => source.Text));
+        var visibleSources = request.Sources
+            .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+            .ToList();
+        var sourceText = string.Join(Environment.NewLine, visibleSources.Select(static source => source.Text));
         var compactSource = NormalizeWhitespace(sourceText);
         if (!ContainsAny(compactSource, "Stream", "stream", "ストリーム"))
         {
@@ -574,12 +647,18 @@ public static partial class AnswerPostProcessor
         var supportsStreamCreation =
             ContainsAny(compactSource, "Validate内でストリームを生成", "Validateでストリームを生成", "create a stream in Validate") ||
             supportsStreamAssociation;
-        var supportsCliStream =
-            ContainsAny(compactSource, "qacli validate build", "qaclivalidatebuild") &&
-            compactSource.Contains("--stream", StringComparison.OrdinalIgnoreCase);
-        var supportsValidateProjectOption =
-            compactSource.Contains("qacli validate config", StringComparison.OrdinalIgnoreCase) &&
-            compactSource.Contains("--validate-project", StringComparison.OrdinalIgnoreCase);
+        var atomicCommands = visibleSources
+            .SelectMany(static source => ExtractAtomicCommands(source.Text))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var streamCommand = atomicCommands.FirstOrDefault(static command =>
+            command.Contains("validate build", StringComparison.OrdinalIgnoreCase) &&
+            command.Contains("--stream", StringComparison.OrdinalIgnoreCase));
+        var validateConfigCommand = atomicCommands.FirstOrDefault(static command =>
+            command.Contains("validate config", StringComparison.OrdinalIgnoreCase) &&
+            command.Contains("--validate-project", StringComparison.OrdinalIgnoreCase));
+        var supportsCliStream = !string.IsNullOrWhiteSpace(streamCommand);
+        var supportsValidateProjectOption = !string.IsNullOrWhiteSpace(validateConfigCommand);
         var supportsProjectConnection =
             supportsValidateProjectOption ||
             ContainsAny(compactSource, "qacli validate connect", "qaclivalidateconnect", "プロジェクト間の接続", "プロジェクトを結合");
@@ -614,7 +693,7 @@ public static partial class AnswerPostProcessor
         {
             if (supportsValidateProjectOption)
             {
-                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトをValidateへ接続します。CLIでは qacli validate config --create -P <project_dir> --url <validate_url> --validate-project <Validateプロジェクト/ストリーム名> を使用します。");
+                builder.AppendLine($"{step++}. 対象のPerforce QACプロジェクトをValidateへ接続します。CLIでは `{validateConfigCommand}` を使用します。");
             }
             else
             {
@@ -629,7 +708,7 @@ public static partial class AnswerPostProcessor
 
         if (supportsCliStream)
         {
-            builder.AppendLine($"{step}. コマンドラインからビルドを登録する場合は、qacli validate build の --stream オプションで登録先ストリームを指定します。");
+            builder.AppendLine($"{step}. コマンドラインからビルドを登録する場合は、`{streamCommand}` を使用します。");
         }
 
         builder.AppendLine();
@@ -661,21 +740,24 @@ public static partial class AnswerPostProcessor
             return false;
         }
 
-        var sourceText = string.Join(
-            Environment.NewLine,
-            request.Sources
-                .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
-                .Select(static source => source.Text));
+        var visibleSources = request.Sources
+            .Where(static source => IsCustomerVisibleSourceType(source.SourceType))
+            .ToList();
+        var sourceText = string.Join(Environment.NewLine, visibleSources.Select(static source => source.Text));
         var compactSource = NormalizeWhitespace(sourceText);
-        var hasGuiProcedure =
-            (compactSource.Contains("ポータル", StringComparison.OrdinalIgnoreCase) ||
-             compactSource.Contains("Portals", StringComparison.OrdinalIgnoreCase)) &&
-            compactSource.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
-            (compactSource.Contains("解析結果をアップロード", StringComparison.OrdinalIgnoreCase) ||
-             compactSource.Contains("Upload Results", StringComparison.OrdinalIgnoreCase));
-        var hasCliProcedure =
-            compactSource.Contains("qaclivalidatebuild", StringComparison.OrdinalIgnoreCase) ||
-            compactSource.Contains("qacli validate build", StringComparison.OrdinalIgnoreCase);
+        var guiSource = visibleSources.FirstOrDefault(static source =>
+            (source.Text.Contains("ポータル", StringComparison.OrdinalIgnoreCase) ||
+             source.Text.Contains("Portals", StringComparison.OrdinalIgnoreCase)) &&
+            source.Text.Contains("Validate", StringComparison.OrdinalIgnoreCase) &&
+            (source.Text.Contains("解析結果をアップロード", StringComparison.OrdinalIgnoreCase) ||
+             source.Text.Contains("Upload Results", StringComparison.OrdinalIgnoreCase)));
+        var atomicCommands = visibleSources
+            .SelectMany(static source => ExtractAtomicCommands(source.Text))
+            .Where(static command => command.Contains("validate build", StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var hasGuiProcedure = guiSource is not null;
+        var hasCliProcedure = atomicCommands.Count > 0;
         if (!hasGuiProcedure && !hasCliProcedure)
         {
             return false;
@@ -697,9 +779,10 @@ public static partial class AnswerPostProcessor
             builder.AppendLine();
             builder.AppendLine("【CLIでの手順】");
             builder.AppendLine("対象プロジェクトのディレクトリを指定して、次のコマンドを実行します。");
-            builder.AppendLine("qacli validate build --qaf-project .");
-            builder.AppendLine("任意のビルド名を付ける場合は、次のように --build-name を追加します。");
-            builder.AppendLine("qacli validate build --qaf-project . --build-name MyBuild-1");
+            foreach (var command in atomicCommands.Take(2))
+            {
+                builder.AppendLine($"`{command}`");
+            }
         }
 
         builder.AppendLine();
@@ -778,6 +861,26 @@ public static partial class AnswerPostProcessor
     {
         return candidates.Any(candidate =>
             value.Contains(candidate, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<string> ExtractAtomicCommands(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            yield break;
+        }
+
+        // A command must be complete inside one SearchSource. The expression accepts
+        // only option/value tokens and therefore stops before explanatory prose.
+        const string pattern = @"(?<![A-Za-z0-9_])qacli\s+validate\s+[A-Za-z][A-Za-z0-9_-]*(?:\s+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|\.|[^\s。；;,.]+))?|<[^>]+>))*";
+        foreach (Match match in Regex.Matches(value, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var command = NormalizeWhitespace(match.Value).TrimEnd('。', ',', '、', ';', '；');
+            if (command.Length > 0)
+            {
+                yield return command;
+            }
+        }
     }
 
     private static bool IsCustomerVisibleSourceType(string sourceType)
