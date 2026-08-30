@@ -9,6 +9,7 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 public static class CoverageAwareSearchSourceSelector
 {
     private const double CoverageSelectorMinimumQualityCeiling = 0.20;
+    private const int CoverageExcerptMaxLength = 240;
 
     public static bool ShouldApplyAutomatically(string? inquiryText, string? productName)
     {
@@ -178,12 +179,17 @@ public static class CoverageAwareSearchSourceSelector
                 OperationMatchScore = assessment.OperationScore,
                 IntentMatchScore = assessment.IntentScore,
                 ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded ||
-                    (analysisHowTo && !item.IsManuallySelected && !HasDirectAnalysisEvidence(item)),
+                    (analysisHowTo && !item.IsManuallySelected &&
+                     !HasDirectAnalysisEvidence(item) &&
+                     !HasRelevantAnalysisCoverage(coverage, requiredCoverage)),
                 TopicConflict = assessment.TopicConflict ||
                     (queryProfile.Features.Count > 0 && !assessment.HasTopicMatch),
                 ProductMismatch = assessment.ProductMatch is false,
                 IsManuallySelected = item.IsManuallySelected,
-                EstimatedChars = item.Title.Length + item.Text.Length,
+                // Coverage-aware evidence is converted to a bounded excerpt before prompt
+                // construction. Estimate that same upper bound here so long source chunks do
+                // not evict candidates that provide otherwise missing required coverage.
+                EstimatedChars = item.Title.Length + Math.Min(CoverageExcerptMaxLength, item.Text.Length),
             };
         }).ToList();
 
@@ -352,7 +358,7 @@ public static class CoverageAwareSearchSourceSelector
             return 0.55;
         }
 
-        if (ContainsValidateWorkflow(text))
+        if (ContainsValidateWorkflow(text) && !HasDirectAnalysisEvidence(item))
         {
             return -0.60;
         }
@@ -399,6 +405,11 @@ public static class CoverageAwareSearchSourceSelector
             ContainsAnalysisPreparation(text) ||
             (coverage.Contains(CoverageAnalyzer.AnalysisVerification) && !ContainsValidateWorkflow(text));
     }
+
+    private static bool HasRelevantAnalysisCoverage(
+        IEnumerable<string> coverage,
+        IReadOnlyList<string> requiredCoverage) =>
+        coverage.Any(requiredCoverage.Contains);
 
     private static bool ContainsAnalysisPreparation(string value) =>
         ContainsAny(value, "解析", "analyze", "analysis") &&
