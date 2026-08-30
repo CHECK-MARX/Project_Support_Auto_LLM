@@ -23,7 +23,7 @@ public static class SupportTopicCatalog
                 new TopicAliasDefinition { CanonicalName = "License", Aliases = ["ライセンス"] },
                 new TopicAliasDefinition { CanonicalName = "IDE Plugin", Aliases = ["IDEプラグイン", "Eclipse Plugin"] },
                 new TopicAliasDefinition { CanonicalName = "CCT", Aliases = ["Compiler Compatibility Template", "CCT", "コンパイラ互換性テンプレート"] },
-                new TopicAliasDefinition { CanonicalName = "Project Analysis", Aliases = ["project analysis", "プロジェクトの解析", "プロジェクトを解析"] },
+                new TopicAliasDefinition { CanonicalName = "Project Analysis", Aliases = ["project analysis", "プロジェクトの解析", "プロジェクトを解析", "解析CLI", "解析 CLI", "解析コマンド"] },
                 new TopicAliasDefinition { CanonicalName = "Dashboard", Aliases = ["ダッシュボード"] },
                 new TopicAliasDefinition { CanonicalName = "Backup", Aliases = ["バックアップ"] },
                 new TopicAliasDefinition { CanonicalName = "Build upload", Aliases = ["validate build", "build upload", "解析結果をアップロード"] },
