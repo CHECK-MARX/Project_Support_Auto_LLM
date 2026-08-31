@@ -52,8 +52,11 @@ public static partial class HowToAnswerComposer
         var profile = TopicEntityAnalyzer.Extract(
             request.InquiryText,
             SupportTopicCatalog.Create(request.Case.ProductName));
-        return profile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
-            profile.Intents.Contains("HowTo", StringComparer.Ordinal);
+        var analysisTopic = profile.Operations.Contains("Analysis", StringComparer.Ordinal) ||
+            (profile.Intents.Contains("Troubleshooting", StringComparer.Ordinal) &&
+             ContainsAny(request.InquiryText, "解析", "analysis", "analyze"));
+        return analysisTopic &&
+            profile.Intents.Any(intent => intent is "HowTo" or "Troubleshooting");
     }
 
     public static bool HasRequiredStructure(string? value) =>
@@ -70,10 +73,14 @@ public static partial class HowToAnswerComposer
 
         var sources = request.Sources
             .Where(static source => !string.IsNullOrWhiteSpace(source.Text))
+            .Where(source => IsAnalysisProcedureEvidence(source, request))
             .ToList();
         if (sources.Count == 0)
         {
-            return false;
+            // Do not fall through to the generic fallback with operation-conflicting
+            // evidence. A conservative structured answer is safer than reusing it.
+            reply = DeterministicAnswerComposer.ComposeHowTo([]);
+            return true;
         }
 
         var preparation = FindBestEvidenceSentence(
@@ -123,6 +130,31 @@ public static partial class HowToAnswerComposer
         AppendReferences(builder, sources);
         reply = builder.ToString().Trim();
         return true;
+    }
+
+    private static bool IsAnalysisProcedureEvidence(SearchSource source, AnswerDraftRequest request)
+    {
+        var queryProfile = TopicEntityAnalyzer.Extract(
+            request.InquiryText,
+            SupportTopicCatalog.Create(request.Case.ProductName));
+        var candidateProfile = TopicEntityAnalyzer.Extract(
+            string.Join(' ', source.Title, source.SectionTitle, source.Text),
+            SupportTopicCatalog.Create(request.Case.ProductName));
+
+        if (!queryProfile.Operations.Contains("Upload", StringComparer.Ordinal) &&
+            candidateProfile.Operations.Contains("Upload", StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        var candidateText = string.Join(' ', source.Title, source.SectionTitle, source.Text);
+        var hasValidateCommand = ContainsAny(
+            candidateText,
+            "qacli validate",
+            "qacli validate build",
+            "qacli validate cibuild");
+        var asksForValidateWorkflow = ContainsAny(request.InquiryText, "Validate", "アップロード", "upload");
+        return !hasValidateCommand || asksForValidateWorkflow;
     }
 
     public static bool TryComposeAnalysisCli(AnswerDraftRequest request, out string reply)

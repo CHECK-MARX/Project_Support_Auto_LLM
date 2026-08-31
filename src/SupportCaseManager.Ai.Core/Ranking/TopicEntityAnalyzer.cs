@@ -18,7 +18,7 @@ public static partial class TopicEntityAnalyzer
             "解析する", "解析開始", "解析CLI", "解析 CLI", "解析コマンド", "プロジェクト解析", "AnalysisをCLI", "analyze project", "project analysis", "run analysis", "execute analysis",
         ]),
         ("Execution", ["実行", "起動", "run", "execute", "launch"]),
-        ("Troubleshooting", ["原因", "対処", "解決", "troubleshoot", "failure", "failed"]),
+        ("Troubleshooting", ["原因", "対処", "解決", "失敗", "エラー", "troubleshoot", "failure", "failed"]),
     ];
 
     private static readonly (string Name, string[] Terms)[] IntentTerms =
@@ -29,7 +29,7 @@ public static partial class TopicEntityAnalyzer
         ("Command", ["コマンド", "command", "cli", "qacli"]),
         ("Configuration", ["設定", "構成", "configuration", "configure", "setup"]),
         ("Verification", ["確認", "検証", "verify", "verification"]),
-        ("Troubleshooting", ["原因", "対処", "解決", "troubleshoot", "error", "failed"]),
+        ("Troubleshooting", ["原因", "対処", "解決", "失敗", "エラー", "troubleshoot", "error", "failed"]),
     ];
 
     private static readonly (string Canonical, string[] Aliases)[] OperatingSystems =

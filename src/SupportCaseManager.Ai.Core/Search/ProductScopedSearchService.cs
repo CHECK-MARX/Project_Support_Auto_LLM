@@ -506,6 +506,32 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
 
         }
 
+        if (queryAnalysis.PrimaryProfile.Intents.Any(intent =>
+                intent is "HowTo" or "Configuration") ||
+            queryAnalysis.PrimaryProfile.Operations.Contains("Configuration", StringComparer.Ordinal))
+        {
+            var asksForProcedure = queryAnalysis.PrimaryProfile.Operations.Contains(
+                    "Configuration",
+                    StringComparer.Ordinal) ||
+                queryAnalysis.PrimaryProfile.Intents.Contains("HowTo", StringComparer.Ordinal);
+            var migrationEvidence = ContainsAny(
+                candidateText,
+                "migration", "migrate", "移行", "バックアップ", "backup", "restore", "復元");
+            var configurationEvidence = ContainsAny(
+                candidateText,
+                "configuration", "configure", "設定", "scan", "スキャン", "setup");
+            if (asksForProcedure && migrationEvidence && !configurationEvidence)
+            {
+                adjustment -= 0.35;
+                reasons.Add("operation=migration-for-configuration-query");
+            }
+            else if (asksForProcedure && configurationEvidence)
+            {
+                adjustment += 0.10;
+                reasons.Add("operation=configuration-procedure-match");
+            }
+        }
+
         if (queryAnalysis.PrimaryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase))
         {
             var explicitDeliveryMatch = ContainsAny(

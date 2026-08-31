@@ -7,17 +7,25 @@ namespace SupportCaseManager.Ai.Core.Answers;
 /// <summary>Creates a conservative answer when an LLM result is unavailable.</summary>
 public static class DeterministicAnswerComposer
 {
+    private static readonly (string Heading, string[] Terms)[] ProcedureSections =
+    [
+        ("【事前準備】", ["準備", "前提", "必要", "権限", "認証", "ライセンス", "環境", "prerequisite", "before"]),
+        ("【プロジェクト作成】", ["プロジェクト", "作成", "開く", "関連付け", "project", "create", "open"]),
+        ("【コンパイラ・CCT設定】", ["コンパイラ", "コンパイル", "CCT", "CIP", "include", "macro", "compiler"]),
+        ("【GUIでの手順】", ["GUI", "画面", "メニュー", "クリック", "選択", "dashboard"]),
+        ("【CLIでの手順】", ["qacli", "CLI", "コマンド", "command", "powershell", "shell"]),
+        ("【結果確認】", ["確認", "検証", "結果", "完了", "done", "success", "status", "check", "verify"]),
+        ("【注意点】", ["注意", "制限", "バージョン", "異なる", "warning", "注意事項"]),
+    ];
+
     public static string ComposeHowTo(IReadOnlyList<EvidenceItem> evidence)
     {
         ArgumentNullException.ThrowIfNull(evidence);
         var builder = new StringBuilder();
-        AppendEvidenceSection(builder, "【事前準備】", evidence, 0, 1);
-        AppendEvidenceSection(builder, "【プロジェクト作成】", evidence, 1, 1);
-        AppendEvidenceSection(builder, "【コンパイラ・CCT設定】", evidence, 2, 1);
-        AppendEvidenceSection(builder, "【GUIでの手順】", evidence, 3, 1);
-        AppendEvidenceSection(builder, "【CLIでの手順】", evidence, 4, 1);
-        AppendEvidenceSection(builder, "【結果確認】", evidence, 5, 1);
-        AppendEvidenceSection(builder, "【注意点】", evidence, 6, 1);
+        foreach (var (heading, terms) in ProcedureSections)
+        {
+            AppendEvidenceSection(builder, heading, evidence, terms);
+        }
         builder.AppendLine("【参照先】");
         var references = evidence.Select(BuildReference).Where(static value => value.Length > 0).Distinct().ToList();
         builder.AppendLine(references.Count == 0 ? "確認できません。" : string.Join(Environment.NewLine, references.Select(static value => $"・{value}")));
@@ -44,13 +52,47 @@ public static class DeterministicAnswerComposer
         return builder.ToString().Trim();
     }
 
-    private static void AppendEvidenceSection(StringBuilder builder, string heading, IReadOnlyList<EvidenceItem> evidence, int offset, int count)
+    private static void AppendEvidenceSection(
+        StringBuilder builder,
+        string heading,
+        IReadOnlyList<EvidenceItem> evidence,
+        IReadOnlyList<string> terms)
     {
         builder.AppendLine(heading);
-        var item = evidence.Where(static item => !string.IsNullOrWhiteSpace(item.Excerpt)).Skip(offset).Take(count).FirstOrDefault();
-        builder.AppendLine(item is null ? "確認できません。" : $"・{Compact(item.Excerpt)}");
+        var sentence = evidence
+            .SelectMany(static item => SplitEvidence(item.Excerpt))
+            .Select(value => (Value: value, Score: ScoreEvidence(value, terms)))
+            .Where(static item => item.Score > 0)
+            .OrderByDescending(static item => item.Score)
+            .ThenByDescending(static item => item.Value.Length)
+            .Select(static item => item.Value)
+            .FirstOrDefault();
+        builder.AppendLine(sentence is null ? "確認できません。" : $"・{Compact(sentence)}");
         builder.AppendLine();
     }
+
+    private static IEnumerable<string> SplitEvidence(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            yield break;
+        }
+
+        foreach (var line in value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            foreach (var sentence in line.Split(['。', '！', '!', '？', '?', ';', '；'], StringSplitOptions.RemoveEmptyEntries))
+            {
+                var normalized = sentence.Trim();
+                if (normalized.Length > 0)
+                {
+                    yield return normalized;
+                }
+            }
+        }
+    }
+
+    private static int ScoreEvidence(string value, IReadOnlyList<string> terms) =>
+        terms.Count(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private static string BuildReference(EvidenceItem item)
     {
