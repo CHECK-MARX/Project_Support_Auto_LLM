@@ -140,11 +140,23 @@ public sealed class Phase24LiveEvaluationTests
         var candidateRows = candidates.Select((source, index) =>
         {
             var coverage = CoverageAnalyzer.ObserveForCoverageSelection(
-                string.Join(' ', source.Title, source.SectionTitle, source.Text));
+                string.Join(' ', source.Title, source.SectionTitle, source.Text)).ToList();
             var profile = TopicEntityAnalyzer.Extract(
                 string.Join(' ', source.Title, source.SectionTitle, source.Text), catalog);
             var isVerificationCandidate = coverage.Contains(CoverageAnalyzer.Verification, StringComparer.Ordinal) ||
                 coverage.Contains(CoverageAnalyzer.ValidateVerification, StringComparer.Ordinal);
+            if (selection.RequiredCoverage.Contains(CoverageAnalyzer.Configuration, StringComparer.Ordinal) &&
+                profile.Operations.Contains("Configuration", StringComparer.Ordinal))
+            {
+                coverage.Add(CoverageAnalyzer.Configuration);
+            }
+            if (selection.RequiredCoverage.Contains(CoverageAnalyzer.ProjectSetup, StringComparer.Ordinal) &&
+                profile.Operations.Contains("Configuration", StringComparer.Ordinal) &&
+                ContainsAny(string.Join(' ', source.Title, source.SectionTitle, source.Text),
+                    "project", "プロジェクト", "project file", "プロジェクトファイル"))
+            {
+                coverage.Add(CoverageAnalyzer.ProjectSetup);
+            }
             return new
             {
                 CandidateId = GetCandidateId(source, index),
@@ -227,6 +239,9 @@ public sealed class Phase24LiveEvaluationTests
         string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase)
             ? null
             : source.SectionTitle;
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private static string Sha256(string value)
     {

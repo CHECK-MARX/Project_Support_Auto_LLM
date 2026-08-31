@@ -120,6 +120,18 @@ public static class CoverageAwareSearchSourceSelector
             var assessment = assessments[index];
             var analysisAdjustment = AnalysisSelectionAdjustment(queryProfile, item);
             var coverage = CoverageAnalyzer.ObserveForCoverageSelection(DocumentText(item)).ToList();
+            var candidateProfile = rankingCandidates[index].Profile;
+            if (requiredCoverage.Contains(CoverageAnalyzer.Configuration, StringComparer.Ordinal) &&
+                candidateProfile.Operations.Contains("Configuration", StringComparer.Ordinal))
+            {
+                coverage.Add(CoverageAnalyzer.Configuration);
+            }
+            if (requiredCoverage.Contains(CoverageAnalyzer.ProjectSetup, StringComparer.Ordinal) &&
+                candidateProfile.Operations.Contains("Configuration", StringComparer.Ordinal) &&
+                ContainsAny(DocumentText(item), "project", "プロジェクト", "project file", "プロジェクトファイル"))
+            {
+                coverage.Add(CoverageAnalyzer.ProjectSetup);
+            }
             if (compoundStreamQuestion &&
                 assessment.HasTopicMatch &&
                 !IsPastEvidenceSourceType(item.SourceType))

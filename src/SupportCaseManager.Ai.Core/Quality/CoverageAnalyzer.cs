@@ -136,13 +136,29 @@ public static partial class CoverageAnalyzer
         TopicEntityProfile profile)
     {
         ArgumentNullException.ThrowIfNull(profile);
+        var isStreamQuestion = profile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase) ||
+            ContainsAny(question, "stream", "ストリーム");
+        var requiresConfiguration = !isStreamQuestion &&
+            (profile.Operations.Contains("Configuration", StringComparer.Ordinal) ||
+            ContainsAny(question, "configuration", "configure", "setup", "setting", "設定", "構成", "セットアップ"));
+        var requiresProjectSetup = requiresConfiguration &&
+            ContainsAny(question, "project", "プロジェクト", "project file", "プロジェクトファイル");
         var upload = profile.Operations.Contains("Upload", StringComparer.Ordinal) ||
             profile.Features.Contains("Build upload", StringComparer.OrdinalIgnoreCase) ||
             (ContainsAny(question, "Validate", "Validateへ") &&
              ContainsAny(question, "upload", "アップロード", "build", "登録"));
         if (upload)
         {
-            var required = CoverageSelectionUploadRequirements.ToList();
+            var required = new List<string>();
+            if (requiresProjectSetup)
+            {
+                required.Add(ProjectSetup);
+            }
+            if (requiresConfiguration)
+            {
+                required.Add(Configuration);
+            }
+            required.AddRange(CoverageSelectionUploadRequirements);
             if (ContainsAny(question, "GUI", "QA GUI", "QA·GUI", "画面", "ポータル"))
             {
                 required.Add(GuiUploadProcedure);
@@ -151,6 +167,17 @@ public static partial class CoverageAnalyzer
             {
                 required.Add(CliUploadProcedure);
             }
+            return required.Distinct(StringComparer.Ordinal).ToList();
+        }
+
+        if (requiresConfiguration)
+        {
+            var required = new List<string>();
+            if (requiresProjectSetup)
+            {
+                required.Add(ProjectSetup);
+            }
+            required.Add(Configuration);
             return required;
         }
 
