@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Config;
 using MessageBox = System.Windows.MessageBox;
@@ -278,29 +279,9 @@ public sealed class ProductEditorDialog : Window
 
     private static string NormalizeExistingFolderForDialog(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path.Trim()));
-            var root = Path.GetPathRoot(normalized) ?? string.Empty;
-            if (normalized.AsSpan(root.Length).Contains(':'))
-            {
-                return string.Empty;
-            }
-
-            var directory = new DirectoryInfo(normalized);
-            return directory.Exists && directory.LinkTarget is null
-                ? directory.FullName
-                : string.Empty;
-        }
-        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException or UnauthorizedAccessException)
-        {
-            return string.Empty;
-        }
+        return CaseFolderPathPolicy.TryNormalizeConfiguredRoot(path, createIfMissing: false, out var normalized)
+            ? normalized
+            : string.Empty;
     }
 
     private static string BuildPromptFileName(string productName)

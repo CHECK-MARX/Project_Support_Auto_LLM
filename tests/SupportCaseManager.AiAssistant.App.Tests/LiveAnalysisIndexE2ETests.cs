@@ -15,11 +15,18 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class LiveAnalysisIndexE2ETests
 {
-    private const string Question =
-        "QACで、プロジェクトを解析するための手順を教えてください。";
+    public static TheoryData<string> AnalysisQueryVariants => new()
+    {
+        "QACで、プロジェクトを解析するための手順を教えてください。",
+        "QACのプロジェクト解析をコマンドラインで実行する方法を教えてください。",
+        "QACの解析CLIと主要なオプションを教えてください。",
+        "QACでプロジェクト解析を自動化する場合のCLI手順を教えてください。",
+        "QACのAnalysisをCLIで実行する方法を教えてください。",
+    };
 
-    [Fact]
-    public async Task ActualIndex_SelectsThreeAnalysisEvidenceAndBuildsDirectFallbackAnswer()
+    [Theory]
+    [MemberData(nameof(AnalysisQueryVariants))]
+    public async Task ActualIndex_SelectsAnalysisEvidenceAndBuildsDirectFallbackAnswer(string question)
     {
         if (!string.Equals(
             Environment.GetEnvironmentVariable("SCM_RUN_LIVE_ANALYSIS_E2E"),
@@ -42,7 +49,7 @@ public sealed class LiveAnalysisIndexE2ETests
             ? Path.Combine(localAppData, "SupportCaseManager", "ai-index")
             : settings.AiIndexFolder;
         var caseContext = new CaseContext { ProductName = product.ProductName };
-        var focus = new InquiryFocusExtractor().Extract(Question, caseContext, usePhase175QualityControls: true);
+        var focus = new InquiryFocusExtractor().Extract(question, caseContext, usePhase175QualityControls: true);
         var search = new ProductScopedSearchService(
             new AiCaseKeywordSearcher(),
             new AiManualKeywordSearcher());
@@ -65,7 +72,7 @@ public sealed class LiveAnalysisIndexE2ETests
             questionAwareContext: new QuestionAwareEvidenceSelectionContext
             {
                 Enabled = true,
-                InquiryText = Question,
+                InquiryText = question,
                 ProductName = product.ProductName,
                 RankingMode = EvidenceRankingModes.Phase16,
                 UsePhase175QualityControls = true,
@@ -80,7 +87,7 @@ public sealed class LiveAnalysisIndexE2ETests
         var reportPath = Environment.GetEnvironmentVariable("SCM_LIVE_ANALYSIS_REPORT");
         await WriteReportAsync(reportPath, new
         {
-            Question,
+            question,
             SettingsPath = settingsPath,
             IndexPath = aiIndexFolder,
             CandidateCount = candidates.Count,
@@ -132,7 +139,7 @@ public sealed class LiveAnalysisIndexE2ETests
         var request = new AnswerDraftRequest
         {
             Case = caseContext,
-            InquiryText = Question,
+            InquiryText = question,
             InquiryFocus = focus,
             Sources = selection.Sources,
             Settings = settings with
@@ -164,7 +171,7 @@ public sealed class LiveAnalysisIndexE2ETests
 
         await WriteReportAsync(reportPath, new
         {
-            Question,
+            question,
             SettingsPath = settingsPath,
             IndexPath = aiIndexFolder,
             CandidateCount = candidates.Count,
@@ -212,10 +219,9 @@ public sealed class LiveAnalysisIndexE2ETests
             FallbackWarnings = fallbackAnswer.Warnings,
         });
 
-        Assert.True(
-            fallbackAnswer.CustomerReplyDraft.Contains("解析ダイアログ", StringComparison.Ordinal) ||
-            fallbackAnswer.CustomerReplyDraft.Contains("解析中ダイアログ", StringComparison.Ordinal) ||
-            fallbackAnswer.CustomerReplyDraft.Contains("［問題］パネル", StringComparison.Ordinal));
+        Assert.Contains("【解析結果の確認】", fallbackAnswer.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("qacli analyze -P <directory>", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("qacli validate", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AssertAnalysisAnswer(string answer)

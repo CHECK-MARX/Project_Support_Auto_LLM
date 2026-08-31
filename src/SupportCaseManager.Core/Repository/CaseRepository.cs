@@ -55,6 +55,10 @@ public sealed class CaseRepository
 
         return Directory
             .EnumerateDirectories(_basePath)
+            .Select(path => CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(path, [_basePath], out var normalized)
+                ? normalized
+                : string.Empty)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => new DirectoryInfo(path).Name)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .OrderBy(name => name, StringComparer.Ordinal)
@@ -302,14 +306,22 @@ public sealed class CaseRepository
             {
                 foreach (var entry in Directory.EnumerateDirectories(current))
                 {
-                    var info = new DirectoryInfo(entry);
+                    if (!CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(
+                            entry,
+                            [_basePath],
+                            out var normalizedEntry))
+                    {
+                        continue;
+                    }
+
+                    var info = new DirectoryInfo(normalizedEntry);
                     var record = CaseParser.ParseCaseFromDirectory(info);
                     if (record != null)
                     {
                         found.Add(record);
                     }
 
-                    stack.Push(entry);
+                    stack.Push(normalizedEntry);
                 }
             }
             catch (Exception ex)

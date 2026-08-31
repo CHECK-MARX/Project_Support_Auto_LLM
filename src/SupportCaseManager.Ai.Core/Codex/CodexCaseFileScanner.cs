@@ -80,9 +80,10 @@ public sealed class CodexCaseFileScanner : ICodexCaseFileScanner
             {
                 foreach (var child in Directory.EnumerateDirectories(directory))
                 {
-                    if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0)
+                    if (SafePathPolicy.TryNormalizeDescendant(root, child, out var normalizedChild)
+                        && !SafePathPolicy.ContainsLinkedDirectory(root, normalizedChild))
                     {
-                        pendingDirectories.Push(child);
+                        pendingDirectories.Push(normalizedChild);
                     }
                     else
                     {
@@ -93,15 +94,15 @@ public sealed class CodexCaseFileScanner : ICodexCaseFileScanner
                 foreach (var file in Directory.EnumerateFiles(directory))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0)
-                    {
-                        warnings.Add($"リンクファイルは案件外参照防止のため除外しました: {Path.GetRelativePath(root, file)}");
-                        continue;
-                    }
-
                     if (!SafePathPolicy.TryNormalizeDescendant(root, file, out var normalized))
                     {
                         warnings.Add($"{Path.GetFileName(file)}: path is outside the case folder.");
+                        continue;
+                    }
+
+                    if (SafePathPolicy.IsLinkedFile(normalized))
+                    {
+                        warnings.Add($"リンクファイルは案件外参照防止のため除外しました: {Path.GetRelativePath(root, file)}");
                         continue;
                     }
 

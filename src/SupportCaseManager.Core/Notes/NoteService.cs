@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Compatibility;
 
 namespace SupportCaseManager.Core.Notes;
@@ -9,8 +10,8 @@ public static class NoteService
 {
     public static string EnsureNoteFile(string folderPath, NoteDefinition definition, string supportNumber)
     {
-        Directory.CreateDirectory(folderPath);
-        var path = ResolveNotePath(folderPath, definition, supportNumber);
+        var safeFolder = NormalizeExistingFolder(folderPath);
+        var path = ResolveNotePath(safeFolder, definition, supportNumber);
         if (!File.Exists(path))
         {
             File.WriteAllText(path, string.Empty, EncodingPolicy.Utf8NoBom);
@@ -37,8 +38,8 @@ public static class NoteService
             throw new FileNotFoundException("Source note not found.", sourcePath);
         }
 
-        Directory.CreateDirectory(folderPath);
-        var target = Path.Combine(folderPath, definition.FileName(supportNumber));
+        var safeFolder = NormalizeExistingFolder(folderPath);
+        var target = ResolveSafeChildPath(safeFolder, definition.FileName(supportNumber));
         File.Copy(sourcePath, target, overwrite: true);
 
         var sourceInfo = new FileInfo(sourcePath);
@@ -49,12 +50,13 @@ public static class NoteService
 
     public static string CreateSubfolder(string folderPath, NoteDefinition definition, string supportNumber)
     {
+        var safeFolder = NormalizeExistingFolder(folderPath);
         var baseName = definition.FolderName(supportNumber);
-        var candidate = Path.Combine(folderPath, baseName);
+        var candidate = ResolveSafeChildPath(safeFolder, baseName);
         var counter = 1;
         while (Directory.Exists(candidate))
         {
-            candidate = Path.Combine(folderPath, definition.FolderName(supportNumber, counter));
+            candidate = ResolveSafeChildPath(safeFolder, definition.FolderName(supportNumber, counter));
             counter += 1;
         }
 
@@ -74,14 +76,48 @@ public static class NoteService
     {
         foreach (var candidate in definition.CandidateFileNames(supportNumber))
         {
-            var path = Path.Combine(folderPath, candidate);
+            var path = ResolveSafeChildPath(folderPath, candidate);
             if (File.Exists(path))
             {
                 return path;
             }
         }
 
-        return Path.Combine(folderPath, definition.FileName(supportNumber));
+        return ResolveSafeChildPath(folderPath, definition.FileName(supportNumber));
+    }
+
+    private static string NormalizeExistingFolder(string folderPath)
+    {
+        if (!CaseFolderPathPolicy.TryNormalizeConfiguredRoot(
+                folderPath,
+                createIfMissing: false,
+                out var normalizedFolder))
+        {
+            throw new ArgumentException("ノート保存先フォルダを安全に使用できません。", nameof(folderPath));
+        }
+
+        return normalizedFolder;
+    }
+
+    private static string ResolveSafeChildPath(string folderPath, string childName)
+    {
+        if (string.IsNullOrWhiteSpace(childName) ||
+            !string.Equals(Path.GetFileName(childName), childName, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("ノート名が不正です。", nameof(childName));
+        }
+
+        var candidate = Path.GetFullPath(Path.Combine(folderPath, childName));
+        var relative = Path.GetRelativePath(folderPath, candidate);
+        if (Path.IsPathRooted(relative) ||
+            relative.Equals("..", StringComparison.Ordinal) ||
+            relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) ||
+            relative.StartsWith($"..{Path.AltDirectorySeparatorChar}", StringComparison.Ordinal))
+        {
+            throw new ArgumentException("ノート保存先が案件フォルダの範囲外です。", nameof(childName));
+        }
+
+        return candidate;
     }
 
     private static void AtomicAppend(string path, string text)

@@ -31,4 +31,21 @@ public class NoteServiceTests
             }
         }
     }
+
+    [Fact]
+    public void EnsureNoteFile_RejectsMissingOrUnsafeFolder()
+    {
+        using var temp = new TempDirectory();
+        var missing = Path.Combine(temp.Path, "missing");
+        var definition = NoteDefinitions.All[0];
+
+        Assert.Throws<ArgumentException>(() =>
+            NoteService.EnsureNoteFile(missing, definition, "00001234"));
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<ArgumentException>(() =>
+                NoteService.EnsureNoteFile(temp.Path + ":metadata", definition, "00001234"));
+        }
+    }
 }

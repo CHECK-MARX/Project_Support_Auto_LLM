@@ -1,4 +1,5 @@
 using SupportCaseManager.Ai.Contracts;
+using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Quality;
@@ -93,6 +94,8 @@ public static class CoverageAwareSearchSourceSelector
         var compoundStreamQuestion = compoundFeatureQuestion &&
             queryProfile.Features.Contains("Stream", StringComparer.OrdinalIgnoreCase);
         var requiredCoverage = CoverageAnalyzer.RequiredForCoverageSelection(context.InquiryText, queryProfile).ToList();
+        var hasCompleteAnalysisCommand = analysisHowTo && items.Any(item =>
+            HowToAnswerComposer.ContainsCompleteAnalysisCommand(DocumentText(item)));
         var assessments = ranked.Assessed.ToDictionary(static item => item.CandidateIndex);
         var nonPastCoverage = items
             .Select((item, index) => (Item: item, Assessment: assessments[index]))
@@ -179,9 +182,9 @@ public static class CoverageAwareSearchSourceSelector
                 OperationMatchScore = assessment.OperationScore,
                 IntentMatchScore = assessment.IntentScore,
                 ExplicitlyExcluded = item.IsManuallyExcluded || assessment.ExplicitlyExcluded ||
-                    (analysisHowTo && !item.IsManuallySelected &&
+                    (analysisHowTo && hasCompleteAnalysisCommand && !item.IsManuallySelected &&
                      !HasDirectAnalysisEvidence(item) &&
-                     !HasRelevantAnalysisCoverage(coverage, requiredCoverage)),
+                     (hasCompleteAnalysisCommand || !HasRelevantAnalysisCoverage(coverage, requiredCoverage))),
                 TopicConflict = assessment.TopicConflict ||
                     (queryProfile.Features.Count > 0 && !assessment.HasTopicMatch),
                 ProductMismatch = assessment.ProductMatch is false,
@@ -363,7 +366,7 @@ public static class CoverageAwareSearchSourceSelector
             return -0.60;
         }
 
-        if (ContainsAny(text, "qacli analyze", "qaclianalyze"))
+        if (HowToAnswerComposer.ContainsCompleteAnalysisCommand(text))
         {
             return 0.24;
         }
@@ -401,7 +404,8 @@ public static class CoverageAwareSearchSourceSelector
 
         var coverage = CoverageAnalyzer.ObserveForCoverageSelection(text);
         return ContainsAnalysisGuiProcedure(text) ||
-            ContainsAny(text, "qacli analyze", "qaclianalyze", "Analyze Project", "Run Analysis") ||
+            HowToAnswerComposer.ContainsCompleteAnalysisCommand(text) ||
+            ContainsAny(text, "Analyze Project", "Run Analysis") ||
             ContainsAnalysisPreparation(text) ||
             (coverage.Contains(CoverageAnalyzer.AnalysisVerification) && !ContainsValidateWorkflow(text));
     }
