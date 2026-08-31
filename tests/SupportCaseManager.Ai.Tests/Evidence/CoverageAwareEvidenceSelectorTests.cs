@@ -119,6 +119,66 @@ public sealed class CoverageAwareEvidenceSelectorTests
         Assert.Equal(1, result.RedundantCandidatesSkipped);
     }
 
+    [Fact]
+    public void Select_KeepsSameDocumentFamilyCandidateWhenItAddsRequiredCoverage()
+    {
+        var result = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisCommand", "AnalysisVerification"],
+            BaseMaxItems = 2,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("procedure", 1, ["AnalysisProcedure"], 0.9) with
+                {
+                    DocumentTitle = "Perforce-QAC-Manual",
+                    Text = "Open the project from the QAC desktop application and choose the analysis settings.",
+                },
+                Candidate("command", 2, ["AnalysisCommand", "AnalysisVerification"], 0.8) with
+                {
+                    DocumentTitle = "Perforce_QAC_Manual",
+                    Text = "Run qacli analyze -P project from the command line and review the analysis results.",
+                },
+            ],
+        });
+
+        Assert.Equal(["procedure", "command"], result.Selected.Select(static item => item.CandidateId));
+        Assert.Empty(result.MissingCoverage);
+    }
+
+    [Fact]
+    public void Select_KeepsSameSectionCandidateWhenItAddsCompleteAnalysisCommand()
+    {
+        var result = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisCommand"],
+            BaseMaxItems = 2,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("procedure", 1, ["AnalysisProcedure"], 0.9) with
+                {
+                    DocumentId = "manual.pdf",
+                    Section = "Perforce-QAC-Manual",
+                    Text = "Open the QAC project and choose the analysis settings.",
+                },
+                Candidate("command", 2, ["AnalysisCommand"], 0.8) with
+                {
+                    DocumentId = "manual.pdf",
+                    Section = "Perforce-QAC-Manual",
+                    Text = "Run qacli analyze -P project from the command line.",
+                },
+            ],
+        });
+
+        Assert.Equal(["procedure", "command"], result.Selected.Select(static item => item.CandidateId));
+        Assert.Empty(result.MissingCoverage);
+    }
+
     public static IEnumerable<object[]> FixtureCases() => LoadCases()
         .Select(static item => new object[] { item });
 

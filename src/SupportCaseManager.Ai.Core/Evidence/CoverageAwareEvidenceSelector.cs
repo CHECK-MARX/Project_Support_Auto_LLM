@@ -201,11 +201,15 @@ public static class CoverageAwareEvidenceSelector
 
             var sameDocument = Same(candidate.DocumentId, existing.DocumentId) || Same(candidate.FilePath, existing.FilePath);
             var sameSection = Same(candidate.Section, existing.Section);
-            if (sameDocument && (sameSection || !addsRequiredCoverage))
+            var addsCompleteAnalysisCommand = addsRequiredCoverage &&
+                SupportCaseManager.Ai.Core.Answers.HowToAnswerComposer.ContainsCompleteAnalysisCommand(candidate.Text);
+            if (sameDocument && (sameSection || !addsRequiredCoverage) && !addsCompleteAnalysisCommand)
             {
                 return true;
             }
             if (SameDocumentFamily(candidate.DocumentTitle, existing.DocumentTitle) &&
+                (!addsRequiredCoverage ||
+                 !addsCompleteAnalysisCommand) &&
                 HasAnalysisProcedureSignature(candidate.Text) &&
                 HasAnalysisProcedureSignature(existing.Text))
             {

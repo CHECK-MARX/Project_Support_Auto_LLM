@@ -15,7 +15,7 @@ public static partial class TopicEntityAnalyzer
         ("Association", ["関連付け", "紐付け", "associate", "association", "link"]),
         ("Analysis", [
             "qacli analyze", "プロジェクトを解析", "プロジェクトの解析", "解析を実行", "解析の実行",
-            "解析する", "解析開始", "解析CLI", "解析 CLI", "解析コマンド", "analyze project", "project analysis", "run analysis", "execute analysis",
+            "解析する", "解析開始", "解析CLI", "解析 CLI", "解析コマンド", "プロジェクト解析", "AnalysisをCLI", "analyze project", "project analysis", "run analysis", "execute analysis",
         ]),
         ("Execution", ["実行", "起動", "run", "execute", "launch"]),
         ("Troubleshooting", ["原因", "対処", "解決", "troubleshoot", "failure", "failed"]),
@@ -25,7 +25,7 @@ public static partial class TopicEntityAnalyzer
     [
         ("Overview", ["概要", "何ですか", "とは", "what is", "overview"]),
         ("Purpose", ["用途", "目的", "何に使", "purpose", "use case"]),
-        ("HowTo", ["方法", "手順", "やり方", "how to", "procedure"]),
+        ("HowTo", ["方法", "手順", "やり方", "オプションを教えて", "how to", "procedure"]),
         ("Command", ["コマンド", "command", "cli", "qacli"]),
         ("Configuration", ["設定", "構成", "configuration", "configure", "setup"]),
         ("Verification", ["確認", "検証", "verify", "verification"]),
