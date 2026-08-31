@@ -220,7 +220,8 @@ public sealed class LiveAnalysisIndexE2ETests
         });
 
         Assert.Contains("【解析結果の確認】", fallbackAnswer.CustomerReplyDraft, StringComparison.Ordinal);
-        Assert.Contains("qacli analyze -P <directory>", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("qacli analyze", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("-P <directory>", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("qacli validate", fallbackAnswer.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
     }
 

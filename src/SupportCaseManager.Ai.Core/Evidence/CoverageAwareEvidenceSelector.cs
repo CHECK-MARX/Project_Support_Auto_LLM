@@ -191,18 +191,19 @@ public static class CoverageAwareEvidenceSelector
         IReadOnlyList<CoverageEvidenceCandidate> selected,
         bool addsRequiredCoverage)
     {
+        var addsCompleteAnalysisCommand = addsRequiredCoverage &&
+            SupportCaseManager.Ai.Core.Answers.HowToAnswerComposer.ContainsCompleteAnalysisCommand(candidate.Text);
         foreach (var existing in selected)
         {
             if (!string.IsNullOrWhiteSpace(candidate.ContentHash) &&
-                string.Equals(candidate.ContentHash, existing.ContentHash, StringComparison.OrdinalIgnoreCase))
+                string.Equals(candidate.ContentHash, existing.ContentHash, StringComparison.OrdinalIgnoreCase) &&
+                !addsCompleteAnalysisCommand)
             {
                 return true;
             }
 
             var sameDocument = Same(candidate.DocumentId, existing.DocumentId) || Same(candidate.FilePath, existing.FilePath);
             var sameSection = Same(candidate.Section, existing.Section);
-            var addsCompleteAnalysisCommand = addsRequiredCoverage &&
-                SupportCaseManager.Ai.Core.Answers.HowToAnswerComposer.ContainsCompleteAnalysisCommand(candidate.Text);
             if (sameDocument && (sameSection || !addsRequiredCoverage) && !addsCompleteAnalysisCommand)
             {
                 return true;
@@ -215,7 +216,8 @@ public static class CoverageAwareEvidenceSelector
             {
                 return true;
             }
-            if (HasEnoughTextForSimilarity(candidate.Text, existing.Text) &&
+            if (!addsCompleteAnalysisCommand &&
+                HasEnoughTextForSimilarity(candidate.Text, existing.Text) &&
                 TextSimilarity(candidate.Text, existing.Text) >= NearDuplicateThreshold)
             {
                 return true;

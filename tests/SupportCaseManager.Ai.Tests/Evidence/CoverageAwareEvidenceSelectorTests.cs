@@ -179,6 +179,42 @@ public sealed class CoverageAwareEvidenceSelectorTests
         Assert.Empty(result.MissingCoverage);
     }
 
+    [Fact]
+    public void Select_KeepsCompleteAnalysisCommandWhenItIsNearDuplicateOfProcedureEvidence()
+    {
+        Assert.True(SupportCaseManager.Ai.Core.Answers.HowToAnswerComposer.ContainsCompleteAnalysisCommand(
+            "qacli analyze -cf -P <directory>"));
+
+        var result = CoverageAwareEvidenceSelector.Select(new CoverageEvidenceSelectionRequest
+        {
+            RequiredCoverage = ["AnalysisProcedure", "AnalysisCommand", "AnalysisVerification"],
+            BaseMaxItems = 2,
+            ExpansionMaxItems = 3,
+            CharacterBudget = 5000,
+            MinimumQualityScore = 0,
+            Candidates =
+            [
+                Candidate("procedure", 1, ["AnalysisProcedure", "AnalysisVerification"], 0.9) with
+                {
+                    DocumentId = "manual.pdf",
+                    Section = "Analysis",
+                    ContentHash = "shared-normalized-content",
+                    Text = "Open the QAC project and run the analysis. Review the analysis progress and results.",
+                },
+                Candidate("command", 2, ["AnalysisCommand"], 0.8) with
+                {
+                    DocumentId = "manual.pdf",
+                    Section = "Analysis",
+                    ContentHash = "shared-normalized-content",
+                    Text = "Open the QAC project and run the analysis. Review the analysis progress and results. qacli analyze -cf -P <directory>",
+                },
+            ],
+        });
+
+        Assert.Equal(["procedure", "command"], result.Selected.Select(static item => item.CandidateId));
+        Assert.Empty(result.MissingCoverage);
+    }
+
     public static IEnumerable<object[]> FixtureCases() => LoadCases()
         .Select(static item => new object[] { item });
 
