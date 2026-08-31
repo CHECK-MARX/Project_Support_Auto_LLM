@@ -53,10 +53,12 @@ public sealed class Phase24LiveEvaluationTests
                 ? "HelixQAC"
                 : item.Product;
             var product = ResolveProduct(settings.Products, productName);
+            var resolvedPath = product is null
+                ? string.Empty
+                : ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
             var stopwatch = Stopwatch.StartNew();
             if (product is not null)
             {
-                var resolvedPath = ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
                 inventory.Add(BuildInventory(item.Product, product, resolvedPath));
             }
             if (product is null)
@@ -68,7 +70,7 @@ public sealed class Phase24LiveEvaluationTests
             var context = new CaseContext { ProductName = product.ProductName };
             var focus = new InquiryFocusExtractor().Extract(item.Question, context, usePhase175QualityControls: true);
             var retrievalStart = stopwatch.ElapsedMilliseconds;
-            var sources = await search.SearchAllHybridAsync(product, indexFolder, focus, settings.LlmProvider, 36);
+            var sources = await search.SearchAllHybridAsync(product, indexFolder, focus, settings.LlmProvider, 50);
             var retrievalElapsed = stopwatch.ElapsedMilliseconds - retrievalStart;
             var selectionStart = stopwatch.ElapsedMilliseconds;
             var viewModels = sources.Select((source, index) => new SearchSourceViewModel(source, index < 5)).ToList();
@@ -118,7 +120,7 @@ public sealed class Phase24LiveEvaluationTests
                 ProductMismatchCount = productMismatch, ForbiddenTopicCount = 0, ConflictingEvidenceUsedAsFactCount = answer.Claims.Count(c => c.Conflicting),
                 SafetyPass = unsupportedCommands == 0 && productMismatch == 0 && answer.Claims.All(c => !c.Conflicting),
                 SelectorEngine = selection.SelectorEngine, CommandsObserved = commands,
-                Lineage = BuildLineage(item, focus, sources, selection, answer)
+                Lineage = BuildLineage(item, focus, sources, selection, answer, product, resolvedPath)
             });
         }
 
@@ -134,7 +136,9 @@ public sealed class Phase24LiveEvaluationTests
         InquiryFocus focus,
         IReadOnlyList<SearchSource> candidates,
         SearchSourceSelectionResult selection,
-        AnswerDraftResult answer)
+        AnswerDraftResult answer,
+        ProductKnowledgeSettings product,
+        string resolvedPath)
     {
         var catalog = SupportTopicCatalog.Create(item.Product);
         var candidateRows = candidates.Select((source, index) =>
@@ -160,6 +164,12 @@ public sealed class Phase24LiveEvaluationTests
             return new
             {
                 CandidateId = GetCandidateId(source, index),
+                SourceId = Sha256(source.SourceId ?? string.Empty),
+                IndexedDocumentId = Sha256(source.DocumentId ?? string.Empty),
+                IndexedChunkId = Sha256(source.ChunkId ?? string.Empty),
+                SourceFileFingerprint = Sha256(source.FilePath ?? source.Url ?? string.Empty),
+                IndexedDocumentPresent = !string.IsNullOrWhiteSpace(source.DocumentId),
+                IndexedChunkPresent = !string.IsNullOrWhiteSpace(source.ChunkId),
                 source.SourceType,
                 DocumentTitle = SafeDocumentTitle(source),
                 source.PageNumber,
@@ -193,6 +203,8 @@ public sealed class Phase24LiveEvaluationTests
             .Select((id, index) => Sha256($"composer|{index}|{id}"))
             .ToArray();
         var rendered = !string.IsNullOrWhiteSpace(answer.CustomerReplyDraft);
+        var sourceAudit = BuildSourceLineageAudit(product, resolvedPath, focus, item.Question,
+            candidateRows.Count(static row => row.VerificationCandidate));
 
         return new
         {
@@ -201,7 +213,9 @@ public sealed class Phase24LiveEvaluationTests
             TechnicalQueryFingerprint = Sha256(focus.FocusText),
             RequiredCoverage = selection.RequiredCoverage,
             SearchCandidateCount = candidateRows.Length,
+            SearchLimit = 50,
             SearchCandidates = candidateRows,
+            SourceToSearchAudit = sourceAudit,
             VerificationCandidateIds = verificationIds,
             CSharpSelectedIds = selectedIds,
             RustSelectedIds = candidateRows.Where(static row => row.RustSelected).Select(static row => row.CandidateId).ToArray(),
@@ -211,8 +225,152 @@ public sealed class Phase24LiveEvaluationTests
             ComposerInputEvidenceIds = composerEvidenceIds,
             ComposerUsedEvidence = composerEvidenceIds.Length > 0,
             FinalRendered = rendered,
-            LossLayer = DetermineLossLayer(verificationIds, selectedVerificationIds, composerEvidenceIds, rendered),
+            LossLayer = verificationIds.Length == 0 && sourceAudit.Classification != "V11_UNKNOWN_VERIFICATION_LINEAGE"
+                ? sourceAudit.Classification
+                : DetermineLossLayer(verificationIds, selectedVerificationIds, composerEvidenceIds, rendered),
         };
+    }
+
+    private static SourceLineageAudit BuildSourceLineageAudit(
+        ProductKnowledgeSettings product,
+        string resolvedPath,
+        InquiryFocus focus,
+        string question,
+        int searchableSignals)
+    {
+        var sourceFiles = product.ManualFolders
+            .Where(Directory.Exists)
+            .SelectMany(folder => Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories))
+            .Where(IsReadableTextSource)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var sourceSignals = sourceFiles.Count(path => HasVerificationSignalInFile(path, focus, question));
+        var indexedFiles = Directory.Exists(resolvedPath)
+            ? Directory.EnumerateFiles(resolvedPath, "*.json", SearchOption.TopDirectoryOnly).ToArray()
+            : [];
+        var indexedSignals = indexedFiles.Sum(path => CountIndexedVerificationSignals(path, focus, question));
+        var sourceStatus = sourceFiles.Length == 0
+            ? "SOURCE_ROOT_UNAVAILABLE"
+            : sourceSignals == 0 ? "SOURCE_RELEVANT_VERIFICATION_NOT_ESTABLISHED" : "SOURCE_RELEVANT_VERIFICATION_FOUND";
+        var indexStatus = indexedSignals == 0
+            ? "INDEXED_VERIFICATION_NOT_ESTABLISHED"
+            : "INDEXED_VERIFICATION_FOUND";
+        var searchStatus = searchableSignals == 0
+            ? "TOP50_VERIFICATION_NOT_FOUND"
+            : "TOP50_VERIFICATION_FOUND";
+        var classification = sourceSignals == 0 && indexedSignals == 0 && searchableSignals == 0
+            ? "V11_UNKNOWN_VERIFICATION_LINEAGE"
+            : sourceSignals > 0 && indexedSignals == 0
+                ? "V2_SOURCE_PRESENT_INDEX_MISSING"
+                : indexedSignals > 0 && searchableSignals == 0
+                    ? "V3_INDEX_PRESENT_SEARCH_MISSING"
+                    : "VERIFICATION_LINEAGE_REACHABLE";
+        return new SourceLineageAudit
+        {
+            SourceRootCount = product.ManualFolders.Count,
+            ExistingSourceFileCount = sourceFiles.Length,
+            SourceVerificationSignalFileCount = sourceSignals,
+            SourceStatus = sourceStatus,
+            IndexedJsonFileCount = indexedFiles.Length,
+            IndexedVerificationSignalCount = indexedSignals,
+            IndexStatus = indexStatus,
+            SearchTop50VerificationCandidateCount = searchableSignals,
+            SearchStatus = searchStatus,
+            Classification = classification,
+            MissingLineageField = classification == "V11_UNKNOWN_VERIFICATION_LINEAGE"
+                ? "No authoritative source/index/search verification signal was established by this read-only audit"
+                : string.Empty,
+            DataHandling = "counts-and-anonymous-candidate-ids-only"
+        };
+    }
+
+    private static bool IsReadableTextSource(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".txt", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".html", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".htm", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".csv", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasVerificationSignalInFile(string path, InquiryFocus focus, string question)
+    {
+        try
+        {
+            var text = File.ReadAllText(path);
+            return HasVerificationSignal(text, focus, question);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasVerificationSignal(string text, InquiryFocus focus, string question)
+    {
+        var normalized = TopicEntityAnalyzer.NormalizeText(text);
+        var hasVerification = ContainsAny(normalized,
+            "verification", "verify", "確認", "検証", "結果", "完了", "status", "ステータス",
+            "output", "出力", "ログ", "log", "診断", "解析結果", "実行結果");
+        var hasQueryAnchor = ExtractQueryAnchors(focus, question).Any(normalized.Contains);
+        return hasVerification && hasQueryAnchor;
+    }
+
+    private static int CountIndexedVerificationSignals(string path, InquiryFocus focus, string question)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            return CountIndexedVerificationSignals(document.RootElement, focus, question);
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+    }
+
+    private static int CountIndexedVerificationSignals(JsonElement element, InquiryFocus focus, string question)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var text = string.Join(' ', element.EnumerateObject()
+                .Where(property => property.Value.ValueKind == JsonValueKind.String)
+                .Select(property => property.Value.GetString()));
+            var ownSignal = HasVerificationSignal(text, focus, question) ? 1 : 0;
+            return ownSignal + element.EnumerateObject()
+                .Where(property => property.Value.ValueKind is JsonValueKind.Object or JsonValueKind.Array)
+                .Sum(property => CountIndexedVerificationSignals(property.Value, focus, question));
+        }
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            return element.EnumerateArray().Sum(item => CountIndexedVerificationSignals(item, focus, question));
+        }
+        return 0;
+    }
+
+    private static IReadOnlyList<string> ExtractQueryAnchors(InquiryFocus focus, string question)
+    {
+        var value = TopicEntityAnalyzer.NormalizeText(string.Join(' ', focus.FocusText, question));
+        var excluded = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "checkmarx", "checkmarxone", "helixqac", "qac", "klocwork", "one", "方法", "手順", "教えて",
+            "確認", "原因", "場合", "解析", "設定", "対象", "切り分け", "ください", "について"
+        };
+        return System.Text.RegularExpressions.Regex.Matches(value, @"[a-z0-9][a-z0-9_-]{2,}|[\p{IsCJKUnifiedIdeographs}]{2,}")
+            .Select(match => match.Value)
+            .Where(term => !excluded.Contains(term))
+            .Distinct(StringComparer.Ordinal)
+            .Take(12)
+            .ToArray();
     }
 
     private static string DetermineLossLayer(
@@ -352,6 +510,22 @@ public sealed class Phase24LiveEvaluationTests
     }
 
     private sealed record Phase24Case(string Id, string Product, string Type, string Question);
+
+    private sealed record SourceLineageAudit
+    {
+        public int SourceRootCount { get; init; }
+        public int ExistingSourceFileCount { get; init; }
+        public int SourceVerificationSignalFileCount { get; init; }
+        public string SourceStatus { get; init; } = string.Empty;
+        public int IndexedJsonFileCount { get; init; }
+        public int IndexedVerificationSignalCount { get; init; }
+        public string IndexStatus { get; init; } = string.Empty;
+        public int SearchTop50VerificationCandidateCount { get; init; }
+        public string SearchStatus { get; init; } = string.Empty;
+        public string Classification { get; init; } = string.Empty;
+        public string MissingLineageField { get; init; } = string.Empty;
+        public string DataHandling { get; init; } = string.Empty;
+    }
 
     private sealed class EmptyLlmClient : ILlmClient
     {
