@@ -29,6 +29,17 @@ public static partial class HowToAnswerComposer
         int End,
         CliCommandIntegrity Integrity);
 
+    public sealed record CliOptionProvenance(
+        string OptionText,
+        string Description,
+        string SourceEvidenceId,
+        string SourceType,
+        string DocumentTitle,
+        int? PageNumber,
+        string? SectionTitle,
+        int Start,
+        int End);
+
     private static readonly string[] RequiredHeadings =
     [
         "【事前準備】", "【GUIでの手順】", "【CLIでの手順】",
@@ -146,7 +157,7 @@ public static partial class HowToAnswerComposer
             ["解析を実行", "解析結果", "プロジェクトを解析", "analyze the project", "analysis result"],
             requireAnalysisContext: true,
             excludedTerms: ["Validate", "アップロード", "ライセンス", "license"]);
-        var optionEvidence = FindOptionEvidence(sources, commands);
+        var optionEvidence = FindOptionEvidence(sources);
         var verification = FindVerificationInstructions(sources);
         var builder = new StringBuilder();
         builder.AppendLine("お問い合わせいただいたQACの解析CLIについて、選択された根拠から確認できる範囲をご案内します。");
@@ -170,6 +181,15 @@ public static partial class HowToAnswerComposer
         return ExtractAnalysisCommandRecords(normalized, source).ToArray();
     }
 
+    public static IReadOnlyList<CliOptionProvenance> ExtractAnalysisOptionProvenance(SearchSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var records = ExtractAnalysisCommandRecords(source.Text ?? string.Empty, source)
+            .Where(static record => record.Integrity == CliCommandIntegrity.Complete)
+            .ToList();
+        return ExtractOptionRecords(source, records).ToArray();
+    }
+
     private static bool IsAnalysisCliQuestion(AnswerDraftRequest request)
     {
         var profile = TopicEntityAnalyzer.Extract(
@@ -181,28 +201,120 @@ public static partial class HowToAnswerComposer
     }
 
     private static IReadOnlyList<string> FindOptionEvidence(
-        IReadOnlyList<SearchSource> sources,
-        IReadOnlyList<string> commands)
+        IReadOnlyList<SearchSource> sources)
     {
-        var optionTokens = commands
-            .SelectMany(command => Regex.Matches(command, @"(?<![A-Za-z0-9_])-{1,2}[A-Za-z][A-Za-z0-9_-]*", RegexOptions.CultureInvariant)
-                .Cast<Match>()
-                .Select(match => match.Value))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (optionTokens.Count == 0)
-        {
-            return [];
-        }
-
         return sources
-            .SelectMany(static source => SplitSentences(source.Text))
-            .Where(sentence => optionTokens.Any(token => sentence.Contains(token, StringComparison.OrdinalIgnoreCase)) &&
-                !ContainsAny(sentence, "Validate", "アップロード", "ライセンス", "license"))
-            .Select(sentence => $"・{sentence}")
+            .SelectMany(static source => ExtractAnalysisOptionProvenance(source))
+            .Select(FormatOptionEvidence)
             .Distinct(StringComparer.Ordinal)
             .Take(3)
             .ToList();
+    }
+
+    private static string FormatOptionEvidence(CliOptionProvenance record)
+    {
+        if (string.IsNullOrWhiteSpace(record.Description))
+        {
+            return $"・{record.OptionText}: この根拠ではオプションの詳細説明までは確認できません。";
+        }
+
+        var optionName = Regex.Match(
+            record.OptionText,
+            @"^--?[A-Za-z][A-Za-z0-9_-]*",
+            RegexOptions.CultureInvariant).Value;
+        return string.IsNullOrWhiteSpace(optionName)
+            ? $"・{record.OptionText}: {record.Description}"
+            : $"・{optionName} {record.Description}（形式: {record.OptionText}）";
+    }
+
+    private static IEnumerable<CliOptionProvenance> ExtractOptionRecords(
+        SearchSource source,
+        IReadOnlyList<CliCommandProvenance> commands)
+    {
+        foreach (var command in commands)
+        {
+            var optionMatches = OptionTokenRegex().Matches(command.CommandText).Cast<Match>().ToList();
+            foreach (var option in optionMatches)
+            {
+                var optionText = option.Value;
+                var absoluteStart = command.Start + option.Index;
+                var description = FindLocalOptionDescription(
+                    source.Text ?? string.Empty,
+                    absoluteStart,
+                    optionText);
+                yield return new CliOptionProvenance(
+                    optionText,
+                    description,
+                    source.SourceId,
+                    source.SourceType,
+                    source.DocumentTitle ?? source.Title,
+                    source.PageNumber,
+                    source.SectionTitle,
+                    absoluteStart,
+                    absoluteStart + option.Length);
+            }
+        }
+    }
+
+    private static string FindLocalOptionDescription(
+        string value,
+        int optionStart,
+        string optionText)
+    {
+        var optionName = Regex.Match(optionText, @"^--?[A-Za-z][A-Za-z0-9_-]*", RegexOptions.CultureInvariant).Value;
+        if (string.IsNullOrWhiteSpace(optionName))
+        {
+            return string.Empty;
+        }
+
+        foreach (Match occurrence in Regex.Matches(
+            value,
+            $"(?<![A-Za-z0-9_]){Regex.Escape(optionName)}(?=\\s|<|$)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            if (occurrence.Index == optionStart)
+            {
+                continue;
+            }
+
+            var lineStart = value.LastIndexOfAny(['\r', '\n'], occurrence.Index);
+            lineStart = lineStart < 0 ? 0 : lineStart + 1;
+            var lineEnd = value.IndexOfAny(['\r', '\n'], occurrence.Index);
+            lineEnd = lineEnd < 0 ? value.Length : lineEnd;
+            var line = value[lineStart..lineEnd].Trim();
+            if (line.StartsWith("【", StringComparison.Ordinal) ||
+                line.StartsWith("[", StringComparison.Ordinal) ||
+                line.StartsWith("［", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var suffixStart = occurrence.Index + occurrence.Length;
+            var suffix = value[suffixStart..lineEnd];
+            var placeholder = Regex.Match(suffix, @"^[ \t]*<[^>\r\n]+>", RegexOptions.CultureInvariant);
+            if (placeholder.Success)
+            {
+                suffix = suffix[placeholder.Length..];
+            }
+
+            var boundary = SentenceBoundaryRegex().Match(suffix);
+            if (boundary.Success)
+            {
+                suffix = suffix[..boundary.Index];
+            }
+
+            suffix = suffix.Trim(' ', '\t', ':', '：', '-', '－');
+            if (string.IsNullOrWhiteSpace(suffix) ||
+                ContainsAny(suffix, "qacli analyze", "qacli validate", "次の", "脚注") ||
+                OptionTokenRegex().IsMatch(suffix))
+            {
+                continue;
+            }
+
+            return suffix;
+        }
+
+        return string.Empty;
     }
 
     private static void AppendSection(
@@ -556,6 +668,9 @@ public static partial class HowToAnswerComposer
 
     [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli[ \t]+analyze(?:[ \t]+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:<[^>\r\n]+>)?|<[^>\r\n]+>|[A-Za-z0-9_./:-]+))*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AnalysisCommandRegex();
+
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])-+[A-Za-z][A-Za-z0-9_-]*(?:[ \t]*<[^>\r\n]+>)?", RegexOptions.CultureInvariant)]
+    private static partial Regex OptionTokenRegex();
 
     [GeneratedRegex(@"(?<=[A-Za-z0-9>])(?=[\p{IsHiragana}\p{IsKatakana}\p{IsCJKUnifiedIdeographs}])", RegexOptions.CultureInvariant)]
     private static partial Regex JapaneseProseStartRegex();
