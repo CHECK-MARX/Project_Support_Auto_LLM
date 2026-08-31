@@ -158,7 +158,14 @@ public static partial class AnswerPostProcessor
             !ContainsAny(customerReply, "【概要】", "【設定方法】", "【確認事項】") &&
             !HowToAnswerComposer.HasRequiredStructure(customerReply))
         {
-            customerReply = DeterministicAnswerComposer.ComposeHowTo(finalEvidence);
+            var customerVisibleEvidence = finalEvidence
+                .Where(static item => IsCustomerVisibleSourceType(item.SourceType))
+                .ToList();
+            customerReply = customerVisibleEvidence.Count == 0
+                ? BuildPastCaseOnlySafeCustomerReply(request, finalEvidence
+                    .Where(static item => IsPastCaseSourceType(item.SourceType))
+                    .ToList())
+                : DeterministicAnswerComposer.ComposeHowTo(customerVisibleEvidence);
             mergedWarnings.Add("LLMなしでEvidenceのみからHowTo回答の見出し構造を生成しました。");
         }
 
@@ -176,7 +183,7 @@ public static partial class AnswerPostProcessor
         finalEvidence = ClassifyEvidenceRoles(request, finalEvidence).ToList();
 
         var claims = BuildEvidenceClaims(finalEvidence);
-        var readiness = DetermineDraftReadiness(request, finalEvidence, claims);
+        var readiness = DetermineDraftReadiness(request, finalEvidence, claims, customerReply);
         var referenceAvailable = finalEvidence.Count(static item => HasReferenceMetadata(item));
         var referenceDisplayed = finalEvidence.Count(item =>
             HasReferenceMetadata(item) && ReferenceAppearsInReply(item, customerReply));
@@ -273,7 +280,8 @@ public static partial class AnswerPostProcessor
     private static string DetermineDraftReadiness(
         AnswerDraftRequest request,
         IReadOnlyList<EvidenceItem> evidence,
-        IReadOnlyList<Claim> claims)
+        IReadOnlyList<Claim> claims,
+        string customerReply)
     {
         if (evidence.Count == 0 || claims.Count == 0)
         {
@@ -291,6 +299,11 @@ public static partial class AnswerPostProcessor
         }
 
         if (request.FactResolution?.Conflicts.Count > 0 || claims.Any(static claim => claim.Conflicting))
+        {
+            return AnswerReadiness.NeedsReview;
+        }
+
+        if (ContainsCustomerContextLeakage(customerReply) || ContainsUnresolvedRequiredContent(request, customerReply))
         {
             return AnswerReadiness.NeedsReview;
         }
@@ -576,15 +589,22 @@ public static partial class AnswerPostProcessor
             }
         }
 
-        foreach (var item in pastCaseEvidence
+        var supportingPastCaseLines = pastCaseEvidence
+            .Where(item => IsEvidenceRelevantToInquiry(request, item))
             .OrderByDescending(static item => item.Relevance)
             .ThenBy(static item => item.SourceId, StringComparer.Ordinal)
-            .Take(3))
+            .Select(BuildPastCaseEvidenceLine)
+            .Where(static line => !string.IsNullOrWhiteSpace(line))
+            .Distinct(StringComparer.Ordinal)
+            .Take(2)
+            .ToList();
+        if (supportingPastCaseLines.Count > 0)
         {
-            var line = BuildPastCaseEvidenceLine(item);
-            if (!string.IsNullOrWhiteSpace(line))
+            builder.AppendLine();
+            builder.AppendLine("参考となる過去案件の技術情報");
+            foreach (var line in supportingPastCaseLines)
             {
-                builder.AppendLine($"・類似過去案件では、{line}");
+                builder.AppendLine($"・{line}");
             }
         }
 
@@ -1535,6 +1555,22 @@ public static partial class AnswerPostProcessor
             line.Contains("技術サポート担当", StringComparison.Ordinal) ||
             line.Contains("To:", StringComparison.OrdinalIgnoreCase) ||
             line.Contains("From:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool ContainsCustomerContextLeakage(string value) =>
+        ContainsAny(
+            value,
+            "共有いただいた", "お客様環境では", "本件", "当該案件", "追記部",
+            "お客様ご相談内容", "お客様への返信案", "Helix_Generic_C.cct", "default.acf");
+
+    private static bool ContainsUnresolvedRequiredContent(AnswerDraftRequest request, string value)
+    {
+        if (!IsHowToQuestion(request) && !RequiresAtomicCliCommand(request))
+        {
+            return false;
+        }
+
+        return ContainsAny(value, "確認できません", "根拠からは確認できません");
     }
 
     private static IEnumerable<string> TrimExcessBlankLines(IEnumerable<string> lines)
