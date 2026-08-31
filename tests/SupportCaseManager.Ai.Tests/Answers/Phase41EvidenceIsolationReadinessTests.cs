@@ -92,6 +92,32 @@ public sealed class Phase41EvidenceIsolationReadinessTests
         Assert.DoesNotContain("00099999", result.CustomerReplyDraft, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void VerificationEvidenceIsRenderedInAnalysisSection()
+    {
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            Request("QACでプロジェクトを解析する手順を教えてください。", [
+                Source("manual", "qacli analyze -P <directory> を実行します。完了後、解析結果を確認します。"),
+            ]),
+            new TimeoutException());
+
+        Assert.Contains("【解析結果の確認】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("解析結果を確認", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MissingVerificationEvidenceIsNotInvented()
+    {
+        var result = AnswerPostProcessor.BuildFailureFallback(
+            Request("QACでプロジェクトを解析する手順を教えてください。", [
+                Source("manual", "qacli analyze -P <directory> を実行します。"),
+            ]),
+            new TimeoutException());
+
+        Assert.Contains("【解析結果の確認】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("確認できません", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
     private static AnswerDraftRequest Request(string inquiry, IReadOnlyList<SearchSource> sources) => new()
     {
         Case = new CaseContext { ProductName = "HelixQAC" },

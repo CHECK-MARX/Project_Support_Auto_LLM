@@ -56,7 +56,7 @@ public static partial class AnswerPostProcessor
         }
 
         if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
-            !HowToAnswerComposer.HasRequiredStructure(customerReply) &&
+            (!HowToAnswerComposer.HasRequiredStructure(customerReply) || HasUnresolvedHowToSection(customerReply)) &&
             HowToAnswerComposer.TryComposeAnalysis(request, out var structuredHowToReply))
         {
             customerReply = structuredHowToReply;
@@ -1571,6 +1571,21 @@ public static partial class AnswerPostProcessor
         }
 
         return ContainsAny(value, "確認できません", "根拠からは確認できません");
+    }
+
+    private static bool HasUnresolvedHowToSection(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        return ContainsAny(
+            value,
+            "【CLIでの手順】\r\n確認できません",
+            "【CLIでの手順】\n確認できません",
+            "【解析結果の確認】\r\n確認できません",
+            "【解析結果の確認】\n確認できません");
     }
 
     private static IEnumerable<string> TrimExcessBlankLines(IEnumerable<string> lines)
