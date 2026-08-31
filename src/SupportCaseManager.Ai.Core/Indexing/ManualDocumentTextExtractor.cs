@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using UglyToad.PdfPig;
+using UglyToad.PdfPig.Content;
 
 namespace SupportCaseManager.Ai.Core.Indexing;
 
@@ -117,15 +118,65 @@ internal static class ManualDocumentTextExtractor
         using var document = PdfDocument.Open(filePath);
         foreach (var page in document.GetPages())
         {
-            if (!string.IsNullOrWhiteSpace(page.Text))
+            var pageText = ExtractPdfPageText(page);
+            if (!string.IsNullOrWhiteSpace(pageText))
             {
-                builder.AppendLine(page.Text);
+                builder.AppendLine(pageText);
                 builder.AppendLine();
-                pages.Add(new ManualDocumentPage(page.Number, page.Text));
+                pages.Add(new ManualDocumentPage(page.Number, pageText));
             }
         }
 
         return new ManualDocumentContent(builder.ToString(), "Pdf", pages);
+    }
+
+    private static string ExtractPdfPageText(Page page)
+    {
+        var words = page.GetWords()
+            .Where(static word => !string.IsNullOrWhiteSpace(word.Text))
+            .ToList();
+        if (words.Count == 0)
+        {
+            return page.Text;
+        }
+
+        var builder = new StringBuilder();
+        var previous = words[0];
+        builder.Append(previous.Text);
+        foreach (var current in words.Skip(1))
+        {
+            var previousBox = previous.BoundingBox;
+            var currentBox = current.BoundingBox;
+            var previousHeight = Math.Max(previousBox.Height, 0.1);
+            var currentHeight = Math.Max(currentBox.Height, 0.1);
+            var verticalOverlap = Math.Min(previousBox.Top, currentBox.Top) -
+                Math.Max(previousBox.Bottom, currentBox.Bottom);
+            var sameLine = verticalOverlap >= Math.Min(previousHeight, currentHeight) * 0.45;
+
+            if (!sameLine)
+            {
+                builder.AppendLine();
+            }
+            else
+            {
+                var horizontalGap = currentBox.Left - previousBox.Right;
+                var touchingThreshold = Math.Max(0.5, Math.Min(previousHeight, currentHeight) * 0.12);
+                var columnThreshold = Math.Max(18.0, Math.Max(previousHeight, currentHeight) * 2.5);
+                if (horizontalGap >= columnThreshold)
+                {
+                    builder.AppendLine();
+                }
+                else if (horizontalGap > touchingThreshold)
+                {
+                    builder.Append(' ');
+                }
+            }
+
+            builder.Append(current.Text);
+            previous = current;
+        }
+
+        return builder.ToString().Trim();
     }
 
     private static ManualDocumentContent ReadDocxContent(string filePath)
