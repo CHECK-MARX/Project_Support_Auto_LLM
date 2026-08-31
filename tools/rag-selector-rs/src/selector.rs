@@ -151,6 +151,7 @@ pub fn select(request: &CoverageEvidenceSelectionRequest) -> CoverageEvidenceSel
                 &assessment.candidate,
                 &selected,
                 assessment.new_required_coverage_count > 0,
+                &required,
             ) {
                 redundant_ids.insert(assessment.candidate.candidate_id.clone());
                 continue;
@@ -285,20 +286,30 @@ fn is_redundant(
     candidate: &CoverageEvidenceCandidate,
     selected: &[CoverageEvidenceCandidate],
     adds_required_coverage: bool,
+    required: &[String],
 ) -> bool {
+    let protects_required_analysis_command = required.iter().any(|item| item == "AnalysisCommand")
+        && candidate
+            .coverage
+            .iter()
+            .any(|item| item == "AnalysisCommand")
+        && !candidate.product_mismatch
+        && candidate.operation_match_score > 0.0
+        && adds_required_coverage;
+
     for existing in selected {
         if candidate.content_hash.as_ref().is_some_and(|hash| {
             existing
                 .content_hash
                 .as_ref()
                 .is_some_and(|other| hash.eq_ignore_ascii_case(other))
-        }) {
+        }) && !protects_required_analysis_command
+        {
             return true;
         }
         let same_document = same(&candidate.document_id, &existing.document_id)
             || same(&candidate.file_path, &existing.file_path);
-        let same_section = same(&candidate.section, &existing.section);
-        if same_document && (same_section || !adds_required_coverage) {
+        if same_document && !adds_required_coverage {
             return true;
         }
         if same_document_family(&candidate.document_title, &existing.document_title)
@@ -309,6 +320,7 @@ fn is_redundant(
         }
         if has_enough_text_for_similarity(&candidate.text, &existing.text)
             && text_similarity(&candidate.text, &existing.text) >= NEAR_DUPLICATE_THRESHOLD
+            && !protects_required_analysis_command
         {
             return true;
         }
@@ -623,6 +635,67 @@ mod tests {
     }
 
     #[test]
+    fn complete_analysis_command_survives_exact_hash_competition() {
+        let mut primary = candidate("primary", 1, &["AnalysisProcedure"], 0.9);
+        primary.content_hash = Some("shared".to_owned());
+        primary.text = "qacli analyze -P <directory> --build-name name".to_owned();
+        let mut command = analysis_command_candidate("command", 2, 0.8);
+        command.content_hash = Some("SHARED".to_owned());
+        command.text = primary.text.clone();
+
+        let result = select(&request(
+            &["AnalysisProcedure", "AnalysisCommand"],
+            vec![primary, command],
+            2,
+            3,
+            5000,
+        ));
+
+        assert_eq!(ids(&result), ["primary", "command"]);
+        assert!(result.missing_coverage.is_empty());
+    }
+
+    #[test]
+    fn complete_analysis_command_survives_near_duplicate_competition() {
+        let mut primary = candidate("primary", 1, &["AnalysisProcedure"], 0.9);
+        primary.text = "qacli analyze -P <directory> --build-name name".to_owned();
+        let mut command = analysis_command_candidate("command", 2, 0.8);
+        command.text = primary.text.clone();
+
+        let result = select(&request(
+            &["AnalysisProcedure", "AnalysisCommand"],
+            vec![primary, command],
+            2,
+            3,
+            5000,
+        ));
+
+        assert_eq!(ids(&result), ["primary", "command"]);
+        assert!(result.missing_coverage.is_empty());
+    }
+
+    #[test]
+    fn same_document_command_and_option_can_coexist_for_different_coverage() {
+        let mut command = analysis_command_candidate("command", 1, 0.9);
+        command.document_id = Some("manual".to_owned());
+        command.section = Some("analysis".to_owned());
+        let mut option = candidate("option", 2, &["CommandOptions"], 0.8);
+        option.document_id = Some("manual".to_owned());
+        option.section = Some("analysis".to_owned());
+
+        let result = select(&request(
+            &["AnalysisCommand", "CommandOptions"],
+            vec![command, option],
+            2,
+            3,
+            5000,
+        ));
+
+        assert_eq!(ids(&result), ["command", "option"]);
+        assert!(result.missing_coverage.is_empty());
+    }
+
+    #[test]
     fn archived_copy_of_same_analysis_procedure_is_suppressed() {
         let mut current = candidate("current", 1, &["A"], 0.9);
         current.document_title = Some("Perforce-QAC-Manual".to_owned());
@@ -778,6 +851,15 @@ mod tests {
             estimated_chars: 0,
             ..Default::default()
         }
+    }
+
+    fn analysis_command_candidate(id: &str, rank: i32, quality: f64) -> CoverageEvidenceCandidate {
+        let mut item = candidate(id, rank, &["AnalysisCommand"], quality);
+        item.operation_match_score = 1.0;
+        item.product_match_score = 1.0;
+        item.feature_match_score = 1.0;
+        item.text = "qacli analyze -P <directory>".to_owned();
+        item
     }
 
     fn ids(result: &crate::models::CoverageEvidenceSelectionResult) -> Vec<&str> {
