@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
@@ -8,6 +10,8 @@ using SupportCaseManager.Ai.Core.Inquiries;
 using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
+using SupportCaseManager.Ai.Core.Quality;
+using SupportCaseManager.Ai.Core.Ranking;
 using SupportCaseManager.Ai.Core.Safety;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.AiAssistant.App.ViewModels;
@@ -113,7 +117,8 @@ public sealed class Phase24LiveEvaluationTests
                 UnsupportedVersionCount = 0, UnsupportedPageCount = 0, UnsupportedSectionCount = 0, UnsafeSupportedClaimCount = 0,
                 ProductMismatchCount = productMismatch, ForbiddenTopicCount = 0, ConflictingEvidenceUsedAsFactCount = answer.Claims.Count(c => c.Conflicting),
                 SafetyPass = unsupportedCommands == 0 && productMismatch == 0 && answer.Claims.All(c => !c.Conflicting),
-                SelectorEngine = selection.SelectorEngine, CommandsObserved = commands
+                SelectorEngine = selection.SelectorEngine, CommandsObserved = commands,
+                Lineage = BuildLineage(item, focus, sources, selection, answer)
             });
         }
 
@@ -122,6 +127,111 @@ public sealed class Phase24LiveEvaluationTests
         Directory.CreateDirectory(Path.GetDirectoryName(reportPath)!);
         await File.WriteAllTextAsync(reportPath, JsonSerializer.Serialize(new { DataClassification = "synthetic-anonymous", CaseCount = rows.Count, Inventory = inventory, Cases = rows }, new JsonSerializerOptions { WriteIndented = true }));
         Assert.Equal(16, rows.Count);
+    }
+
+    private static object BuildLineage(
+        Phase24Case item,
+        InquiryFocus focus,
+        IReadOnlyList<SearchSource> candidates,
+        SearchSourceSelectionResult selection,
+        AnswerDraftResult answer)
+    {
+        var catalog = SupportTopicCatalog.Create(item.Product);
+        var candidateRows = candidates.Select((source, index) =>
+        {
+            var coverage = CoverageAnalyzer.ObserveForCoverageSelection(
+                string.Join(' ', source.Title, source.SectionTitle, source.Text));
+            var profile = TopicEntityAnalyzer.Extract(
+                string.Join(' ', source.Title, source.SectionTitle, source.Text), catalog);
+            var isVerificationCandidate = coverage.Contains(CoverageAnalyzer.Verification, StringComparer.Ordinal) ||
+                coverage.Contains(CoverageAnalyzer.ValidateVerification, StringComparer.Ordinal);
+            return new
+            {
+                CandidateId = GetCandidateId(source, index),
+                source.SourceType,
+                DocumentTitle = SafeDocumentTitle(source),
+                source.PageNumber,
+                Section = SafeSection(source),
+                source.ProductName,
+                Feature = string.Join(", ", profile.Features),
+                Operation = string.Join(", ", profile.Operations),
+                Intent = string.Join(", ", profile.Intents),
+                CoverageRole = string.Join(", ", coverage),
+                ConfigurationRelevance = coverage.Contains(CoverageAnalyzer.Configuration, StringComparer.Ordinal),
+                ProjectRelevance = coverage.Contains(CoverageAnalyzer.ProjectSetup, StringComparer.Ordinal),
+                UploadRelevance = coverage.Contains(CoverageAnalyzer.UploadCommand, StringComparer.Ordinal),
+                CibuildRelevance = TopicEntityAnalyzer.NormalizeText(string.Join(' ', source.Title, source.SectionTitle, source.Text)).Contains("cibuild", StringComparison.Ordinal),
+                VerificationCandidate = isVerificationCandidate,
+                SearchRank = index + 1,
+                SearchScore = source.Score,
+                CSharpSelected = selection.Sources.Contains(source),
+                RustSelected = selection.SelectorEngine is "Rust" or "PersistentRust" && selection.Sources.Contains(source),
+            };
+        }).ToArray();
+        var selectedIds = candidateRows.Where(static row => row.CSharpSelected).Select(static row => row.CandidateId).ToArray();
+        var verificationIds = candidateRows.Where(static row => row.VerificationCandidate).Select(static row => row.CandidateId).ToArray();
+        var selectedVerificationIds = candidateRows
+            .Where(static row => row.CSharpSelected && row.VerificationCandidate)
+            .Select(static row => row.CandidateId)
+            .ToArray();
+        var composerEvidenceIds = answer.Evidence
+            .Select(evidence => evidence.SourceId)
+            .Where(static id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Select((id, index) => Sha256($"composer|{index}|{id}"))
+            .ToArray();
+        var rendered = !string.IsNullOrWhiteSpace(answer.CustomerReplyDraft);
+
+        return new
+        {
+            CaseId = item.Id,
+            QuestionFingerprint = Sha256(item.Question),
+            TechnicalQueryFingerprint = Sha256(focus.FocusText),
+            RequiredCoverage = selection.RequiredCoverage,
+            SearchCandidateCount = candidateRows.Length,
+            SearchCandidates = candidateRows,
+            VerificationCandidateIds = verificationIds,
+            CSharpSelectedIds = selectedIds,
+            RustSelectedIds = candidateRows.Where(static row => row.RustSelected).Select(static row => row.CandidateId).ToArray(),
+            SelectedVerificationEvidence = selectedVerificationIds.Length > 0,
+            FactCreated = false,
+            CoverageSatisfied = selection.MissingCoverage.Count == 0,
+            ComposerInputEvidenceIds = composerEvidenceIds,
+            ComposerUsedEvidence = composerEvidenceIds.Length > 0,
+            FinalRendered = rendered,
+            LossLayer = DetermineLossLayer(verificationIds, selectedVerificationIds, composerEvidenceIds, rendered),
+        };
+    }
+
+    private static string DetermineLossLayer(
+        IReadOnlyList<string> verificationIds,
+        IReadOnlyList<string> selectedVerificationIds,
+        IReadOnlyList<string> composerEvidenceIds,
+        bool rendered)
+    {
+        if (verificationIds.Count == 0) return "V11_UNKNOWN_VERIFICATION_LINEAGE";
+        if (selectedVerificationIds.Count == 0) return "V4_C_SHARP_SELECTION_MISSING";
+        if (composerEvidenceIds.Count == 0) return "V8_COMPOSER_MISSING";
+        return rendered ? "NONE" : "V9_POST_PROCESSOR_OR_RENDERING";
+    }
+
+    private static string GetCandidateId(SearchSource source, int index) =>
+        Sha256($"candidate|{index}|{source.SourceId ?? string.Empty}");
+
+    private static string SafeDocumentTitle(SearchSource source) =>
+        string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase)
+            ? "PastCaseNote"
+            : source.DocumentTitle ?? source.Title ?? string.Empty;
+
+    private static string? SafeSection(SearchSource source) =>
+        string.Equals(source.SourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase)
+            ? null
+            : source.SectionTitle;
+
+    private static string Sha256(string value)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value ?? string.Empty));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
     private static ProductKnowledgeSettings? ResolveProduct(IReadOnlyList<ProductKnowledgeSettings> products, string requestedName)
