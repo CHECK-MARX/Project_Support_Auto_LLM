@@ -537,7 +537,7 @@ public class AiAnswerServiceTests
 
         Assert.Contains("[解析(N)]>プロジェクト全体のファイルベース解析", result.CustomerReplyDraft, StringComparison.Ordinal);
         Assert.Contains("解析中ダイアログにプロセスが表示", result.CustomerReplyDraft, StringComparison.Ordinal);
-        Assert.Contains("qacli analyze -cf -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("qacli analyze -cf -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -562,8 +562,8 @@ public class AiAnswerServiceTests
             request,
             new TimeoutException("simulated timeout"));
 
-        Assert.Contains("qacli analyze -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("-C<cma-project-name> -csga", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("qacli analyze -P<directory>", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("-C<cma-project-name> -csga", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("<cma-project-name>-csga", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("このコマンドは", result.CustomerReplyDraft, StringComparison.Ordinal);
     }
@@ -590,10 +590,7 @@ public class AiAnswerServiceTests
             request,
             new TimeoutException("simulated timeout"));
 
-        Assert.Contains(
-            "qacli analyze -P<directory> --raw-source<file-path> --language-cct<cct-path>",
-            result.CustomerReplyDraft,
-            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("qacli analyze", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

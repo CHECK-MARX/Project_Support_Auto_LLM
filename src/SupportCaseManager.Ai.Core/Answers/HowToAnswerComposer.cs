@@ -8,6 +8,27 @@ namespace SupportCaseManager.Ai.Core.Answers;
 
 public static partial class HowToAnswerComposer
 {
+    public enum CliCommandIntegrity
+    {
+        Complete,
+        Incomplete,
+        Ambiguous,
+        Rejected,
+    }
+
+    public sealed record CliCommandProvenance(
+        string CommandText,
+        string RawCommandText,
+        string NormalizedCommandText,
+        string SourceEvidenceId,
+        string SourceType,
+        string DocumentTitle,
+        int? PageNumber,
+        string? SectionTitle,
+        int Start,
+        int End,
+        CliCommandIntegrity Integrity);
+
     private static readonly string[] RequiredHeadings =
     [
         "【事前準備】", "【GUIでの手順】", "【CLIでの手順】",
@@ -140,6 +161,13 @@ public static partial class HowToAnswerComposer
         AppendReferences(builder, sources);
         reply = builder.ToString().Trim();
         return true;
+    }
+
+    public static IReadOnlyList<CliCommandProvenance> ExtractAnalysisCommandProvenance(SearchSource source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        var normalized = NormalizeCompactAnalysisCommand(source.Text ?? string.Empty);
+        return ExtractAnalysisCommandRecords(normalized, source).ToArray();
     }
 
     private static bool IsAnalysisCliQuestion(AnswerDraftRequest request)
@@ -416,17 +444,56 @@ public static partial class HowToAnswerComposer
 
     private static IEnumerable<string> ExtractAnalysisCommands(string value)
     {
-        // Keep the original locator boundary. The regex accepts command tokens only,
-        // so prose following a command cannot become an option or an argument.
+        // Keep line/paragraph boundaries. A compact option or an attached prose token
+        // makes the whole candidate ambiguous; it must not be repaired heuristically.
         var normalized = NormalizeCompactAnalysisCommand(value ?? string.Empty);
+        foreach (var record in ExtractAnalysisCommandRecords(normalized, null))
+        {
+            if (record.Integrity == CliCommandIntegrity.Complete)
+            {
+                yield return record.CommandText;
+            }
+        }
+    }
+
+    private static IEnumerable<CliCommandProvenance> ExtractAnalysisCommandRecords(
+        string normalized,
+        SearchSource? source)
+    {
         foreach (Match match in AnalysisCommandRegex().Matches(normalized))
         {
             var command = NormalizeAnalysisCommand(match.Value);
-            if (!string.IsNullOrWhiteSpace(command) && IsCompleteAnalysisCommand(command))
-            {
-                yield return command;
-            }
+            var trailing = normalized[(match.Index + match.Length)..];
+            var integrity = string.IsNullOrWhiteSpace(command)
+                ? CliCommandIntegrity.Rejected
+                : !IsCompleteAnalysisCommand(command)
+                    ? CliCommandIntegrity.Incomplete
+                    : HasAmbiguousTrailingToken(trailing)
+                        ? CliCommandIntegrity.Ambiguous
+                        : CliCommandIntegrity.Complete;
+            yield return new CliCommandProvenance(
+                command,
+                match.Value,
+                command,
+                source?.SourceId ?? string.Empty,
+                source?.SourceType ?? string.Empty,
+                source?.DocumentTitle ?? source?.Title ?? string.Empty,
+                source?.PageNumber,
+                source?.SectionTitle,
+                match.Index,
+                match.Index + match.Length,
+                integrity);
         }
+    }
+
+    private static bool HasAmbiguousTrailingToken(string value)
+    {
+        if (value.Length == 0 || char.IsWhiteSpace(value[0]))
+        {
+            return false;
+        }
+
+        return value[0] is not ('.' or ',' or '、' or '。' or ';' or '；' or ')' or '）' or ']' or '］');
     }
 
     private static bool IsCompleteAnalysisCommand(string command)
@@ -446,40 +513,12 @@ public static partial class HowToAnswerComposer
 
     private static string NormalizeAnalysisCommand(string value)
     {
-        var command = NormalizeWhitespace(value).TrimEnd('。', ',', '、', ';', '；');
-        command = Regex.Replace(command, "^qaclianalyze", "qacli analyze", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        command = Regex.Replace(command, "(?<=analyze)-", " -", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        command = Regex.Replace(
-            command,
-            "(?<=[A-Za-z0-9>])(?=-(?:P|cf)(?![A-Za-z0-9_-]))",
-            " ",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        command = Regex.Replace(
-            command,
-            "(?<=>)(?=--?(?:P|C|cf|csga|raw-source|language-cct)(?![A-Za-z0-9_-]))",
-            " ",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        var proseStart = JapaneseProseStartRegex().Match(command);
-        if (proseStart.Success)
-        {
-            command = command[..proseStart.Index].TrimEnd();
-        }
-        return command;
+        return NormalizeWhitespace(value).TrimEnd('。', ',', '、', ';', '；');
     }
 
     private static string NormalizeCompactAnalysisCommand(string value)
     {
-        var normalized = Regex.Replace(
-            value,
-            "qacli\\s*analyze",
-            "qacli analyze",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        normalized = Regex.Replace(
-            normalized,
-            "(?<=[A-Za-z0-9>])(?=--?(?:P|C|cf|csga|raw-source|language-cct)(?![A-Za-z0-9_]))",
-            " ",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        return normalized;
+        return value;
     }
 
     private static string NormalizeGuiInstruction(string value)
@@ -515,7 +554,7 @@ public static partial class HowToAnswerComposer
     private static string? FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(static value => !string.IsNullOrWhiteSpace(value))?.Trim();
 
-    [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli\s+analyze(?:\s+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|\.|[^\s。；;,.]+))?|<[^>]+>)){0,8}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![A-Za-z0-9_])qacli[ \t]+analyze(?:[ \t]+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:<[^>\r\n]+>)?|<[^>\r\n]+>|[A-Za-z0-9_./:-]+))*", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex AnalysisCommandRegex();
 
     [GeneratedRegex(@"(?<=[A-Za-z0-9>])(?=[\p{IsHiragana}\p{IsKatakana}\p{IsCJKUnifiedIdeographs}])", RegexOptions.CultureInvariant)]

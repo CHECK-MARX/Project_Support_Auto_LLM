@@ -877,15 +877,16 @@ public static partial class AnswerPostProcessor
 
         // A command must be complete inside one SearchSource. The expression accepts
         // only option/value tokens and therefore stops before explanatory prose.
-        const string pattern = @"(?<![A-Za-z0-9_])qacli\s+(?:validate\s+[A-Za-z][A-Za-z0-9_-]*|analyze)(?:\s+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:[ =]?(?:<[^>]+>|\.|[^\s。；;,.]+))?|<[^>]+>))*";
-        var normalized = Regex.Replace(value, @"qacli\s*analyze", "qacli analyze", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        normalized = Regex.Replace(normalized, @"(?<=[A-Za-z0-9>])(?=--?(?:P|C|cf|csga|raw-source|language-cct)(?![A-Za-z0-9_]))", " ", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        const string pattern = @"(?<![A-Za-z0-9_])qacli[ \t]+(?:validate[ \t]+[A-Za-z][A-Za-z0-9_-]*|analyze)(?:[ \t]+(?:--?[A-Za-z][A-Za-z0-9_-]*(?:<[^>\r\n]+>)?|<[^>\r\n]+>|[A-Za-z0-9_./:-]+))*";
+        var normalized = value;
         foreach (Match match in Regex.Matches(normalized, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
         {
             var command = NormalizeWhitespace(match.Value).TrimEnd('。', ',', '、', ';', '；');
+            var trailing = normalized[(match.Index + match.Length)..];
             if (command.Length > 0 &&
                 !Regex.IsMatch(command, @"^qacli\s+analyze\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
-                !Regex.IsMatch(command, @"(?:^|\s)-P(?:\s*$|\s+--?[A-Za-z]|\s+-[A-Za-z])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                !Regex.IsMatch(command, @"(?:^|\s)-P(?:\s*$|\s+--?[A-Za-z]|\s+-[A-Za-z])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+                (trailing.Length == 0 || char.IsWhiteSpace(trailing[0]) || ".,、。;；)）]］".Contains(trailing[0])))
             {
                 yield return command;
             }
