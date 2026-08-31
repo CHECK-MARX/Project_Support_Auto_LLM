@@ -181,6 +181,10 @@ public static partial class HowToAnswerComposer
         return ExtractAnalysisCommandRecords(normalized, source).ToArray();
     }
 
+    public static bool ContainsCompleteAnalysisCommand(string? value) =>
+        ExtractAnalysisCommandRecords(value ?? string.Empty, null)
+            .Any(static record => record.Integrity == CliCommandIntegrity.Complete);
+
     public static IReadOnlyList<CliOptionProvenance> ExtractAnalysisOptionProvenance(SearchSource source)
     {
         ArgumentNullException.ThrowIfNull(source);

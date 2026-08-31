@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Ranking;
 
 namespace SupportCaseManager.Ai.Core.Quality;
@@ -286,7 +287,7 @@ public static partial class CoverageAnalyzer
                 observed.Add(AnalysisProcedure);
             }
 
-            if (ContainsAny(value, "qacli analyze", "qaclianalyze"))
+            if (HowToAnswerComposer.ContainsCompleteAnalysisCommand(value))
             {
                 observed.Add(AnalysisCommand);
             }

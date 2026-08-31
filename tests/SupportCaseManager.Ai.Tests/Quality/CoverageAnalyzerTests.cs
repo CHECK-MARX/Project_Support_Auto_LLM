@@ -58,4 +58,41 @@ public sealed class CoverageAnalyzerTests
 
         Assert.Contains(expectedCoverage, observed);
     }
+
+    [Theory]
+    [InlineData("qacli analyze")]
+    [InlineData("qacli analyze -P")]
+    public void ObserveForCoverageSelection_DoesNotTreatAnalysisFragmentsAsCompleteCommand(string text)
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(text);
+
+        Assert.DoesNotContain(CoverageAnalyzer.AnalysisCommand, observed);
+    }
+
+    [Fact]
+    public void ObserveForCoverageSelectionRequiresCompleteAtomicAnalysisCommand()
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(
+            "qacli analyze -P <project-directory>");
+
+        Assert.Contains(CoverageAnalyzer.AnalysisCommand, observed);
+    }
+
+    [Fact]
+    public void ObserveForCoverageSelectionUsesCompleteEvidenceWhenFragmentsAlsoExist()
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(
+            "qacli analyze\nqacli analyze -P <project-directory>");
+
+        Assert.Contains(CoverageAnalyzer.AnalysisCommand, observed);
+    }
+
+    [Fact]
+    public void ObserveForCoverageSelectionDoesNotUseValidateCommandForAnalysisCoverage()
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(
+            "qacli validate build -P <project-directory>");
+
+        Assert.DoesNotContain(CoverageAnalyzer.AnalysisCommand, observed);
+    }
 }
