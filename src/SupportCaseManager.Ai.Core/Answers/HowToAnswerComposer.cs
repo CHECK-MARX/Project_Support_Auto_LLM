@@ -93,6 +93,90 @@ public static partial class HowToAnswerComposer
         return true;
     }
 
+    public static bool TryComposeAnalysisCli(AnswerDraftRequest request, out string reply)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        reply = string.Empty;
+        if (!IsAnalysisCliQuestion(request) || request.Sources.Count == 0)
+        {
+            return false;
+        }
+
+        var sources = request.Sources
+            .Where(static source => !IsPastCase(source.SourceType) && !string.IsNullOrWhiteSpace(source.Text))
+            .ToList();
+        var commands = sources
+            .SelectMany(static source => ExtractAnalysisCommands(source.Text))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToList();
+        if (commands.Count == 0)
+        {
+            return false;
+        }
+
+        var preparation = FindBestEvidenceSentence(
+            sources,
+            ["コンパイル環境", "ソースファイル", "コンパイラ設定", "インクルードパス", "マクロ定義", "source file", "compiler", "include path", "macro"],
+            requireAnalysisContext: true,
+            excludedTerms: ["Validate", "アップロード", "ライセンス", "license"]);
+        var purpose = FindBestEvidenceSentence(
+            sources,
+            ["解析を実行", "解析結果", "プロジェクトを解析", "analyze the project", "analysis result"],
+            requireAnalysisContext: true,
+            excludedTerms: ["Validate", "アップロード", "ライセンス", "license"]);
+        var optionEvidence = FindOptionEvidence(sources, commands);
+        var verification = FindVerificationInstructions(sources);
+        var builder = new StringBuilder();
+        builder.AppendLine("お問い合わせいただいたQACの解析CLIについて、選択された根拠から確認できる範囲をご案内します。");
+        builder.AppendLine();
+        AppendSection(builder, "【結論】", ["選択された根拠に記載された完全なコマンドだけを使用して解析を実行してください。"]);
+        AppendSection(builder, "【実行目的】", purpose);
+        AppendSection(builder, "【前提条件】", preparation);
+        AppendSection(builder, "【CLIコマンド】", commands.Select((command, index) => $"{index + 1}. `{command}` を実行します。").ToList());
+        AppendSection(builder, "【オプション】", optionEvidence);
+        AppendSection(builder, "【実行後の確認】", verification);
+        AppendSection(builder, "【注意事項】", ["根拠に記載のないオプション、値、バージョン、実行結果は補っていません。対象環境のマニュアルで最終確認してください。"]);
+        AppendReferences(builder, sources);
+        reply = builder.ToString().Trim();
+        return true;
+    }
+
+    private static bool IsAnalysisCliQuestion(AnswerDraftRequest request)
+    {
+        var profile = TopicEntityAnalyzer.Extract(
+            request.InquiryText,
+            SupportTopicCatalog.Create(request.Case.ProductName));
+        return profile.Operations.Contains("Analysis", StringComparer.Ordinal) &&
+            (profile.Intents.Contains("Command", StringComparer.Ordinal) ||
+             ContainsAny(request.InquiryText, "CLI", "qacli", "コマンド", "オプション"));
+    }
+
+    private static IReadOnlyList<string> FindOptionEvidence(
+        IReadOnlyList<SearchSource> sources,
+        IReadOnlyList<string> commands)
+    {
+        var optionTokens = commands
+            .SelectMany(command => Regex.Matches(command, @"(?<![A-Za-z0-9_])-{1,2}[A-Za-z][A-Za-z0-9_-]*", RegexOptions.CultureInvariant)
+                .Cast<Match>()
+                .Select(match => match.Value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (optionTokens.Count == 0)
+        {
+            return [];
+        }
+
+        return sources
+            .SelectMany(static source => SplitSentences(source.Text))
+            .Where(sentence => optionTokens.Any(token => sentence.Contains(token, StringComparison.OrdinalIgnoreCase)) &&
+                !ContainsAny(sentence, "Validate", "アップロード", "ライセンス", "license"))
+            .Select(sentence => $"・{sentence}")
+            .Distinct(StringComparer.Ordinal)
+            .Take(3)
+            .ToList();
+    }
+
     private static void AppendSection(
         StringBuilder builder,
         string heading,
@@ -347,6 +431,11 @@ public static partial class HowToAnswerComposer
 
     private static bool IsCompleteAnalysisCommand(string command)
     {
+        if (Regex.IsMatch(command, @"^qacli\s+analyze\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
         // -P without a path is a fragment, even when the same locator contains
         // another option. Do not emit it or let a later stage complete it.
         return !Regex.IsMatch(
