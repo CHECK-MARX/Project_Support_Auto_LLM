@@ -48,7 +48,7 @@ public static partial class CoverageAnalyzer
     private static readonly string[] CoverageSelectionUploadRequirements =
     [
         Authentication, Connection, ProjectAssociation, UploadCommand, CommandOptions,
-        BuildName, ValidateVerification, IncrementalBuild, Troubleshooting,
+        BuildName, IncrementalBuild, Troubleshooting,
     ];
 
     private static readonly string[] CoverageSelectionStreamRequirements =
@@ -150,6 +150,10 @@ public static partial class CoverageAnalyzer
         if (upload)
         {
             var required = new List<string>();
+            var requiresVerification = ContainsAny(
+                question,
+                "確認", "検証", "verify", "verification", "status", "ステータス", "状態",
+                "アップロード完了", "結果を確認", "結果が表示");
             if (requiresProjectSetup)
             {
                 required.Add(ProjectSetup);
@@ -166,6 +170,10 @@ public static partial class CoverageAnalyzer
             if (ContainsAny(question, "CLI", "qacli", "コマンドライン"))
             {
                 required.Add(CliUploadProcedure);
+            }
+            if (requiresVerification)
+            {
+                required.Add(ValidateVerification);
             }
             return required.Distinct(StringComparer.Ordinal).ToList();
         }
@@ -259,7 +267,7 @@ public static partial class CoverageAnalyzer
         if (legacy.Contains(Command) || legacy.Contains(UploadProcedure)) observed.Add(UploadCommand);
         if (legacy.Contains(Options)) observed.Add(CommandOptions);
         if (ContainsAny(value, "--build-name", "build name", "build-name", "ビルド名")) observed.Add(BuildName);
-        if (legacy.Contains(ValidateVerification)) observed.Add(ValidateVerification);
+        if (hasValidate && HasExplicitValidateVerification(value)) observed.Add(ValidateVerification);
         if (ContainsAny(value, "validate ibuild", "incremental build", "incremental-build", "増分ビルド", "差分ビルド"))
         {
             observed.Add(IncrementalBuild);
@@ -357,6 +365,24 @@ public static partial class CoverageAnalyzer
             "プロジェクト全体のファイルベース解析", "Analyze Project", "Run Analysis") ||
         (ContainsAny(value, "QAGUIで", "QA GUIで", "GUIで") &&
          ContainsAny(value, "解析を実行", "解析を開始", "ファイルベース解析", "ファイルベース解析を実行"));
+
+    private static bool HasExplicitValidateVerification(string value)
+    {
+        if (ContainsAny(
+            value,
+            "アップロード完了", "upload complete", "upload completed",
+            "ビルド一覧", "Build一覧", "build list", "result state", "result status",
+            "結果を確認", "結果が表示", "結果を表示", "結果を参照",
+            "verification result", "verify the result", "ステータスを確認", "状態を確認"))
+        {
+            return true;
+        }
+
+        return Regex.IsMatch(
+            value,
+            @"(?:解析結果|アップロード結果).{0,60}(?:確認|表示|参照)|(?:確認|表示|参照).{0,60}(?:解析結果|アップロード結果)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Singleline);
+    }
 
     private static bool ContainsAny(string? value, params string[] terms) =>
         terms.Any(term => (value ?? string.Empty).Contains(term, StringComparison.OrdinalIgnoreCase));

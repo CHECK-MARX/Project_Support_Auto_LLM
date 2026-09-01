@@ -47,6 +47,48 @@ public sealed class CoverageAnalyzerTests
         Assert.Contains(CoverageAnalyzer.CliUploadProcedure, required);
     }
 
+    [Fact]
+    public void RequiredForCoverageSelection_DoesNotRequireVerificationForUploadProcedureOnly()
+    {
+        const string question = "Validateへ解析結果をアップロードする方法を教えてください。";
+        var profile = TopicEntityAnalyzer.Extract(question, SupportTopicCatalog.Create("HelixQAC"));
+
+        var required = CoverageAnalyzer.RequiredForCoverageSelection(question, profile);
+
+        Assert.DoesNotContain(CoverageAnalyzer.ValidateVerification, required);
+    }
+
+    [Fact]
+    public void RequiredForCoverageSelection_RequiresVerificationWhenQuestionAsksForResultCheck()
+    {
+        const string question = "Validateへアップロードした解析結果の確認方法を教えてください。";
+        var profile = TopicEntityAnalyzer.Extract(question, SupportTopicCatalog.Create("HelixQAC"));
+
+        var required = CoverageAnalyzer.RequiredForCoverageSelection(question, profile);
+
+        Assert.Contains(CoverageAnalyzer.ValidateVerification, required);
+    }
+
+    [Theory]
+    [InlineData("[ポータル] > [Validate] > [解析結果をアップロード]を選択します。")]
+    [InlineData("Validateサーバーに接続し、アップロードを実行します。")]
+    public void ObserveForCoverageSelection_DoesNotTreatUploadProcedureAsVerification(string text)
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(text);
+
+        Assert.DoesNotContain(CoverageAnalyzer.ValidateVerification, observed);
+    }
+
+    [Theory]
+    [InlineData("Validateでアップロード完了と表示されるまで待ちます。")]
+    [InlineData("Validateへアップロード後にビルド一覧で結果を確認します。")]
+    public void ObserveForCoverageSelectionRecognizesExplicitUploadVerification(string text)
+    {
+        var observed = CoverageAnalyzer.ObserveForCoverageSelection(text);
+
+        Assert.Contains(CoverageAnalyzer.ValidateVerification, observed);
+    }
+
     [Theory]
     [InlineData("ポータル > Validate > 解析結果をアップロード", CoverageAnalyzer.GuiUploadProcedure)]
     [InlineData("qacli validate build --qaf-project sample", CoverageAnalyzer.CliUploadProcedure)]
