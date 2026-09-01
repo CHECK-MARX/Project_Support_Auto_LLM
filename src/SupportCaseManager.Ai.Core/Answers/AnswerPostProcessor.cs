@@ -55,7 +55,15 @@ public static partial class AnswerPostProcessor
             finalConfidence = Math.Max(finalConfidence, 0.9);
         }
 
-        if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
+        var directValidateUploadReply = string.Empty;
+        var usedDirectValidateUpload = deterministicAnswerCreated &&
+            TryBuildValidateUploadProcedureReply(request, out directValidateUploadReply);
+        if (usedDirectValidateUpload)
+        {
+            customerReply = directValidateUploadReply;
+            mergedWarnings.Add("LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。");
+        }
+        else if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
             (!HowToAnswerComposer.HasRequiredStructure(customerReply) || HasUnresolvedHowToSection(customerReply)) &&
             HowToAnswerComposer.TryComposeAnalysis(request, out var structuredHowToReply))
         {
@@ -99,22 +107,22 @@ public static partial class AnswerPostProcessor
 
                 if (finalEvidence.Count > 0)
                 {
-                    var usedAnalysisFallback = TryBuildQacAnalysisProcedureReply(request, out var analysisReply);
-                    var streamReply = string.Empty;
-                    var usedStreamFallback = !usedAnalysisFallback &&
-                        TryBuildValidateStreamReply(request, out streamReply);
                     var procedureReply = string.Empty;
-                    var usedProcedureFallback = !usedAnalysisFallback && !usedStreamFallback &&
-                        TryBuildValidateUploadProcedureReply(request, out procedureReply);
+                    var usedProcedureFallback = TryBuildValidateUploadProcedureReply(request, out procedureReply);
+                    var analysisReply = string.Empty;
+                    var usedAnalysisFallback = !usedProcedureFallback && TryBuildQacAnalysisProcedureReply(request, out analysisReply);
+                    var streamReply = string.Empty;
+                    var usedStreamFallback = !usedProcedureFallback && !usedAnalysisFallback &&
+                        TryBuildValidateStreamReply(request, out streamReply);
                     var fileDeliveryReply = string.Empty;
-                    var usedFileDeliveryFallback = !usedAnalysisFallback && !usedStreamFallback &&
-                        !usedProcedureFallback && TryBuildFileDeliveryAccessReply(request, out fileDeliveryReply);
-                    customerReply = usedAnalysisFallback
-                        ? analysisReply
-                        : usedStreamFallback
-                            ? streamReply
-                            : usedProcedureFallback
-                                ? procedureReply
+                    var usedFileDeliveryFallback = !usedProcedureFallback && !usedAnalysisFallback && !usedStreamFallback &&
+                        TryBuildFileDeliveryAccessReply(request, out fileDeliveryReply);
+                    customerReply = usedProcedureFallback
+                        ? procedureReply
+                        : usedAnalysisFallback
+                            ? analysisReply
+                            : usedStreamFallback
+                                ? streamReply
                                 : usedFileDeliveryFallback
                                     ? fileDeliveryReply
                                     : BuildEvidenceBackedCustomerReply(request, finalEvidence);
@@ -122,15 +130,15 @@ public static partial class AnswerPostProcessor
                         request,
                         finalEvidence,
                         "LLM回答が送信済み根拠を十分に活用できていなかったため、根拠タイトル/抜粋から保守的に回答案を補完しました。");
-                    mergedWarnings.Add(usedAnalysisFallback
-                        ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からQACプロジェクト解析手順を補完しました。"
-                        : usedStreamFallback
-                            ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
-                            : usedProcedureFallback
-                                ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
-                                : usedFileDeliveryFallback
-                                    ? "LLM回答が類似案件を十分に活用できなかったため、送信済み根拠からファイル提供障害の確認事項と代替案を補完しました。"
-                                    : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
+                    mergedWarnings.Add(usedProcedureFallback
+                        ? "LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。"
+                        : usedAnalysisFallback
+                            ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からQACプロジェクト解析手順を補完しました。"
+                            : usedStreamFallback
+                                ? "LLM回答が根拠を十分に反映できなかったため、送信済み根拠からValidate Streamの概要と設定方法を補完しました。"
+                            : usedFileDeliveryFallback
+                                ? "LLM回答が類似案件を十分に活用できなかったため、送信済み根拠からファイル提供障害の確認事項と代替案を補完しました。"
+                                : "LLM回答が根拠を活用できていなかったため、送信済み根拠から回答案を補完しました。");
                     finalConfidence = Math.Max(finalConfidence, CalculateEvidenceBackedFallbackConfidence(finalEvidence));
                 }
             }
@@ -153,6 +161,7 @@ public static partial class AnswerPostProcessor
         }
 
         if (deterministicAnswerCreated && IsHowToQuestion(request) &&
+            !usedDirectValidateUpload &&
             !FreshnessIntentPolicy.IsOperationalAccessOrDeliveryInquiry(request.InquiryText) &&
             !request.Sources.Any(static source => ContainsAny(source.Title, "Fiebie", "Fibe") || ContainsAny(source.Text, "Fiebie", "Fibe")) &&
             !ContainsAny(customerReply, "【概要】", "【設定方法】", "【確認事項】") &&
@@ -779,10 +788,19 @@ public static partial class AnswerPostProcessor
         var atomicCommands = visibleSources
             .SelectMany(static source => ExtractAtomicCommands(source.Text))
             .Where(static command => command.Contains("validate build", StringComparison.OrdinalIgnoreCase))
+            .Where(static command => HasValidateBuildProjectArgument(command))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         var hasGuiProcedure = guiSource is not null;
         var hasCliProcedure = atomicCommands.Count > 0;
+        var uploadVerification = visibleSources
+            .SelectMany(static source => SentenceSeparatorRegex().Split(source.Text ?? string.Empty))
+            .Select(NormalizeWhitespace)
+            .Where(static sentence => sentence.Length > 0)
+            .Where(static sentence =>
+                ContainsAny(sentence, "アップロード完了と表示", "upload complete", "upload completed"))
+            .OrderBy(static sentence => sentence.Length)
+            .FirstOrDefault();
         if (!hasGuiProcedure && !hasCliProcedure)
         {
             return false;
@@ -808,6 +826,13 @@ public static partial class AnswerPostProcessor
             {
                 builder.AppendLine($"`{command}`");
             }
+        }
+
+        if (!string.IsNullOrWhiteSpace(uploadVerification))
+        {
+            builder.AppendLine();
+            builder.AppendLine("【アップロード後の確認】");
+            builder.AppendLine($"・{uploadVerification}");
         }
 
         builder.AppendLine();
@@ -919,6 +944,14 @@ public static partial class AnswerPostProcessor
             string.Equals(sourceType, "OfficialDoc", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(sourceType, "CuratedFactCatalog", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(sourceType, "Curated", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasValidateBuildProjectArgument(string command)
+    {
+        return Regex.IsMatch(
+            command,
+            @"(?:^|\s)(?:-P|--qaf-project)(?:\s+|=)(?:<[^>\r\n]+>|[^\s]+)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static bool IsPastCaseSourceType(string sourceType)

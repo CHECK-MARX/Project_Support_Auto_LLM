@@ -462,6 +462,95 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public void BuildFailureFallback_UsesValidateUploadRouteBeforeGenericAnalysisRoute()
+    {
+        const string question = "Validateへの解析結果のアップロード方法を教えてください";
+        var request = new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = question,
+            InquiryFocus = new InquiryFocusExtractor().Extract(question),
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "gui-upload",
+                    SourceType = "Manual",
+                    Title = "Validate利用手順書",
+                    Text = "3.1 GUIを用いる場合 [ポータル] > [Validate] > [解析結果をアップロード]を選択します。アップロード完了と表示されるまで待ちます。",
+                    Score = 0.852,
+                },
+                new SearchSource
+                {
+                    SourceId = "cli-auth-only",
+                    SourceType = "Manual",
+                    Title = "Validate利用手順書",
+                    Text = "3.2 コマンドを用いる場合、コマンドで解析結果をValidateサーバーへアップロードするにはビルドライセンスが必要です。Validateサーバーに接続します qacli auth --validate --username <ユーザー名> --password <パスワード> --url <Validateサーバー>",
+                    Score = 0.840,
+                },
+                new SearchSource
+                {
+                    SourceId = "upload-context",
+                    SourceType = "Manual",
+                    Title = "Validate利用手順書",
+                    Text = "解析結果をアップロードするには、QAC/QAC++による解析を実施済みであることが必要です。",
+                    Score = 0.838,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(request, new TimeoutException("simulated"));
+
+        Assert.Contains("【GUIでの手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("【プロジェクト作成】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("【コンパイラ・CCT設定】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("【解析結果の確認】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("qacli auth", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("qacli validate build", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("解析結果をアップロード", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.Contains("アップロード完了", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildFailureFallback_OmitsIncompleteValidateCliProcedure()
+    {
+        const string question = "Validateへの解析結果のアップロード方法を教えてください";
+        var request = new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "HelixQAC" },
+            InquiryText = question,
+            InquiryFocus = new InquiryFocusExtractor().Extract(question),
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "gui-upload",
+                    SourceType = "Manual",
+                    Title = "Validate利用手順書",
+                    Text = "[ポータル] > [Validate] > [解析結果をアップロード]を選択します。アップロード完了と表示されるまで待ちます。",
+                    Score = 0.852,
+                },
+                new SearchSource
+                {
+                    SourceId = "cli-fragment",
+                    SourceType = "Manual",
+                    Title = "Validate利用手順書",
+                    Text = "コマンドで解析結果をValidateサーバーへアップロードします。qacli validate build",
+                    Score = 0.840,
+                },
+            ],
+            Settings = new AiAssistantSettings { MaxEvidenceItems = 3 },
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(request, new TimeoutException("simulated"));
+
+        Assert.Contains("【GUIでの手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("【CLIでの手順】", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("qacli validate build", result.CustomerReplyDraft, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void BuildFailureFallback_DoesNotExposePastCaseReferenceToCustomer()
     {
         var request = CreateAnalysisHowToRequest() with
