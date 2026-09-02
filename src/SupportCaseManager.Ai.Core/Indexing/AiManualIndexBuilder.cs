@@ -284,7 +284,12 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
 
         await WriteIndexAsync(indexFilePath, string.Join(Path.PathSeparator, targetFolders), indexedManuals, cancellationToken);
-        await ProvenanceRegistryStore.SaveAsync(aiIndexFolder, provenanceEntries, parsedArtifacts, cancellationToken);
+        await ProvenanceRegistryStore.SaveAsync(
+            aiIndexFolder,
+            provenanceEntries,
+            parsedArtifacts,
+            cancellationToken,
+            GenerationManifest.CreateManual());
         var pageNumberChunkCount = indexedManuals.Count(static item => item.PageNumber is > 0);
         var sectionTitleChunkCount = indexedManuals.Count(static item => !string.IsNullOrWhiteSpace(item.SectionTitle));
         return new AiManualIndexBuildResult
@@ -435,7 +440,12 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             string.Join(Path.PathSeparator, targetFolders),
             output,
             cancellationToken);
-        await ProvenanceRegistryStore.SaveAsync(aiIndexFolder, provenanceEntries, parsedArtifacts, cancellationToken);
+        await ProvenanceRegistryStore.SaveAsync(
+            aiIndexFolder,
+            provenanceEntries,
+            parsedArtifacts,
+            cancellationToken,
+            GenerationManifest.CreateManual());
 
         return new AiManualIndexBuildResult
         {

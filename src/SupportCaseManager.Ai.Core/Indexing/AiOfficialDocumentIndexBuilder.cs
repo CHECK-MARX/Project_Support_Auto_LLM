@@ -281,7 +281,12 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             var candidateFacts = new OfficialDocumentFactExtractor().Extract(document);
             var factCatalog = FactCatalogStore.BuildCatalog(product.ProductName, candidateFacts, now);
             await FactCatalogStore.SaveAsync(productIndexFolder, factCatalog, cancellationToken);
-            await ProvenanceRegistryStore.SaveAsync(productIndexFolder, provenanceEntries, parsedArtifacts, cancellationToken);
+            await ProvenanceRegistryStore.SaveAsync(
+                productIndexFolder,
+                provenanceEntries,
+                parsedArtifacts,
+                cancellationToken,
+                GenerationManifest.CreateOfficial());
         }
 
         if (documents.Count == 0 && sourceUrls.Count > 0)

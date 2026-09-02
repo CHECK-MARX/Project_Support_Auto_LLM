@@ -10,9 +10,10 @@ public static class ProvenanceRegistryStore
         string indexFolder,
         IReadOnlyList<SourceRegistryEntry> entries,
         IReadOnlyList<ParsedSourceArtifact> artifacts,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        GenerationManifest? generationManifest = null)
     {
-        if (entries.Count == 0 && artifacts.Count == 0)
+        if (entries.Count == 0 && artifacts.Count == 0 && generationManifest is null)
         {
             return;
         }
@@ -44,6 +45,13 @@ public static class ProvenanceRegistryStore
             Path.Combine(indexFolder, ParsedSourceArtifactDocument.FileName),
             new ParsedSourceArtifactDocument { Sources = parsedArtifacts },
             cancellationToken);
+        if (generationManifest is not null)
+        {
+            await SaveAtomicallyAsync(
+                Path.Combine(indexFolder, GenerationManifest.FileName),
+                generationManifest,
+                cancellationToken);
+        }
     }
 
     private static async Task<T?> LoadAsync<T>(string path, CancellationToken cancellationToken)
