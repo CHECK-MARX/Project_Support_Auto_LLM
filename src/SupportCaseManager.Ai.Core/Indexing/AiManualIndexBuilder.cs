@@ -52,6 +52,8 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         var indexFilePath = Path.Combine(aiIndexFolder, IndexFileName);
         var warnings = new List<string>();
         var indexedManuals = new List<AiIndexedManual>();
+        var provenanceEntries = new List<SourceRegistryEntry>();
+        var parsedArtifacts = new List<ParsedSourceArtifact>();
         var seenFilePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var seenContentHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var regularCandidates = new List<string>();
@@ -177,7 +179,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     continue;
                 }
 
-                var source = ManualSourceDescriptor.ForFile(filePath, contentHash);
+                var source = ManualSourceDescriptor.ForFile(filePath, contentHash, FindCorpusRoot(filePath, targetFolders));
                 var chunks = CreateManualChunks(source, content).ToList();
                 if (chunks.Count == 0)
                 {
@@ -200,6 +202,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
 
                 indexedFileCount += 1;
                 indexedManuals.AddRange(chunks);
+                AddProvenance(source, content, GetProductNameHint(aiIndexFolder), provenanceEntries, parsedArtifacts);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -249,7 +252,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     continue;
                 }
 
-                var source = ManualSourceDescriptor.ForArchiveEntry(entry, sourcePath);
+                var source = ManualSourceDescriptor.ForArchiveEntry(entry, sourcePath, FindCorpusRoot(entry.ArchivePath, targetFolders));
                 var chunks = CreateManualChunks(source, entry.Content).ToList();
                 if (chunks.Count == 0)
                 {
@@ -276,10 +279,12 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 indexedFileCount += 1;
                 indexedZipEntryCount += 1;
                 indexedManuals.AddRange(chunks);
+                AddProvenance(source, entry.Content, GetProductNameHint(aiIndexFolder), provenanceEntries, parsedArtifacts);
             }
         }
 
         await WriteIndexAsync(indexFilePath, string.Join(Path.PathSeparator, targetFolders), indexedManuals, cancellationToken);
+        await ProvenanceRegistryStore.SaveAsync(aiIndexFolder, provenanceEntries, parsedArtifacts, cancellationToken);
         var pageNumberChunkCount = indexedManuals.Count(static item => item.PageNumber is > 0);
         var sectionTitleChunkCount = indexedManuals.Count(static item => !string.IsNullOrWhiteSpace(item.SectionTitle));
         return new AiManualIndexBuildResult
@@ -369,6 +374,8 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             .ToList();
         var currentPaths = currentFiles.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var output = new List<AiIndexedManual>();
+        var provenanceEntries = new List<SourceRegistryEntry>();
+        var parsedArtifacts = new List<ParsedSourceArtifact>();
         var added = 0;
         var changed = 0;
         var unchanged = 0;
@@ -398,9 +405,10 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     continue;
                 }
 
-                var source = ManualSourceDescriptor.ForFile(filePath, contentHash);
+                var source = ManualSourceDescriptor.ForFile(filePath, contentHash, FindCorpusRoot(filePath, targetFolders));
                 var chunks = CreateManualChunks(source, content).ToList();
                 output.AddRange(chunks);
+                AddProvenance(source, content, GetProductNameHint(aiIndexFolder), provenanceEntries, parsedArtifacts);
                 if (oldChunks is { Count: > 0 })
                 {
                     changed += 1;
@@ -427,6 +435,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             string.Join(Path.PathSeparator, targetFolders),
             output,
             cancellationToken);
+        await ProvenanceRegistryStore.SaveAsync(aiIndexFolder, provenanceEntries, parsedArtifacts, cancellationToken);
 
         return new AiManualIndexBuildResult
         {
@@ -609,12 +618,13 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         {
             foreach (var chunk in SplitIntoChunks(section.Text))
             {
-                if (string.IsNullOrWhiteSpace(chunk))
+                if (string.IsNullOrWhiteSpace(chunk.Text))
                 {
                     continue;
                 }
 
                 var id = BuildId(source.SourcePath, chunkIndex, section.SectionTitle);
+                var parsedPageHash = HashText(section.Text);
                 yield return new AiIndexedManual
                 {
                     Id = id,
@@ -628,7 +638,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     PageNumber = section.PageNumber,
                     ChunkId = id,
                     DocumentId = source.ArchivePath ?? source.SourcePath,
-                    Text = chunk,
+                    Text = chunk.Text,
                     LastModifiedAt = source.LastModifiedAt,
                     SourceUpdatedAt = source.LastModifiedAt,
                     SourceType = "Manual",
@@ -640,6 +650,33 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                     Extension = source.Extension,
                     UncompressedSize = source.UncompressedSize,
                     CompressedSize = source.CompressedSize,
+                    LogicalSourceId = source.LogicalSourceId,
+                    LogicalSourceLocator = source.LogicalSourceLocator,
+                    ParsedSourceAddress = source.LogicalSourceId is null || source.ParsedArtifactKey is null
+                        ? null
+                        : new ParsedSourceAddress
+                        {
+                            LogicalSourceId = source.LogicalSourceId,
+                            ArtifactKey = source.ParsedArtifactKey,
+                            PageNumber = section.PageNumber,
+                            ContentHash = parsedPageHash,
+                        },
+                    ChunkLocator = source.LogicalSourceId is null
+                        ? null
+                        : new ChunkLocator
+                        {
+                            LogicalSourceId = source.LogicalSourceId,
+                            ChunkOrdinal = chunkIndex,
+                            PageNumber = section.PageNumber,
+                            SectionTitle = string.IsNullOrWhiteSpace(section.SectionTitle) ? null : section.SectionTitle,
+                            OffsetBasis = section.PageNumber is not null
+                                ? "ParsedPageTextUtf16"
+                                : string.IsNullOrWhiteSpace(section.SectionTitle) ? "ParsedSourceTextUtf16" : "ParsedSectionTextUtf16",
+                            StartOffset = chunk.StartOffset,
+                            Length = chunk.Text.Length,
+                            ContentHash = HashText(chunk.Text),
+                        },
+                    IndexLookupKey = ReadOnlyIndexRecordResolver.CreateIndexLookupKey("Manual", id),
                 };
                 chunkIndex += 1;
             }
@@ -687,7 +724,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         }
     }
 
-    private static IEnumerable<string> SplitIntoChunks(string text)
+    private static IEnumerable<ChunkSlice> SplitIntoChunks(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -701,7 +738,7 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
             var chunk = text.Substring(start, length);
             if (!string.IsNullOrWhiteSpace(chunk))
             {
-                yield return chunk;
+                yield return new ChunkSlice(chunk, start);
             }
 
             if (start + length >= text.Length)
@@ -728,6 +765,68 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         return Convert.ToHexString(hash)[..24].ToLowerInvariant();
     }
 
+    private static string HashText(string value) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static string FindCorpusRoot(string sourcePath, IReadOnlyList<string> roots) =>
+        roots.FirstOrDefault(root => IsUnderRoot(sourcePath, root)) ?? Path.GetDirectoryName(sourcePath) ?? sourcePath;
+
+    private static bool IsUnderRoot(string sourcePath, string root)
+    {
+        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fullSource = Path.GetFullPath(sourcePath);
+        return fullSource.StartsWith(fullRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(fullSource, fullRoot, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AddProvenance(
+        ManualSourceDescriptor source,
+        ManualDocumentContent content,
+        string productName,
+        ICollection<SourceRegistryEntry> entries,
+        ICollection<ParsedSourceArtifact> artifacts)
+    {
+        if (source.LogicalSourceLocator is null || source.LogicalSourceId is null || source.ParsedArtifactKey is null)
+        {
+            return;
+        }
+
+        entries.Add(new SourceRegistryEntry
+        {
+            LogicalSourceId = source.LogicalSourceId,
+            ProductName = productName,
+            SourceType = "Manual",
+            LogicalLocator = source.LogicalSourceLocator,
+            ContentHash = source.Sha256,
+            ParsedArtifactKey = source.ParsedArtifactKey,
+            ParserVersion = $"ManualDocumentTextExtractor:{content.DocumentType}",
+        });
+        var pages = content.Pages is { Count: > 0 }
+            ? content.Pages.Select(static page => new ParsedSourcePage
+            {
+                PageNumber = page.PageNumber,
+                Text = page.Text,
+                ContentHash = HashText(page.Text),
+            }).ToList()
+            : [new ParsedSourcePage { Text = content.Text, ContentHash = HashText(content.Text) }];
+        artifacts.Add(new ParsedSourceArtifact
+        {
+            LogicalSourceId = source.LogicalSourceId,
+            ArtifactKey = source.ParsedArtifactKey,
+            ContentHash = HashText(content.Text),
+            ParserVersion = $"ManualDocumentTextExtractor:{content.DocumentType}",
+            Pages = pages,
+        });
+    }
+
+    private static string GetProductNameHint(string indexFolder)
+    {
+        var folder = new DirectoryInfo(Path.GetFullPath(indexFolder));
+        return string.Equals(folder.Parent?.Name, "products", StringComparison.OrdinalIgnoreCase)
+            ? folder.Name
+            : string.Empty;
+    }
+
     private sealed record ManualSourceDescriptor(
         string SourcePath,
         string FileName,
@@ -738,12 +837,19 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
         string? EntryPath,
         string? OriginalFileName,
         long? UncompressedSize,
-        long? CompressedSize)
+        long? CompressedSize,
+        LogicalSourceLocator? LogicalSourceLocator,
+        string? LogicalSourceId,
+        string? ParsedArtifactKey)
     {
-        public static ManualSourceDescriptor ForFile(string filePath, string sha256)
+        public static ManualSourceDescriptor ForFile(string filePath, string sha256, string corpusRoot)
         {
             var fullPath = Path.GetFullPath(filePath);
             var fileInfo = new FileInfo(fullPath);
+            global::SupportCaseManager.Ai.Core.Indexing.LogicalSourceLocator.TryCreateManual(corpusRoot, fullPath, out var locator);
+            var logicalSourceId = locator.Value.Length == 0
+                ? null
+                : global::SupportCaseManager.Ai.Core.Indexing.LogicalSourceLocator.CreateLogicalSourceId(string.Empty, "Manual", locator);
             return new ManualSourceDescriptor(
                 fullPath,
                 fileInfo.Name,
@@ -754,11 +860,19 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 null,
                 fileInfo.Name,
                 fileInfo.Length,
-                null);
+                null,
+                locator.Value.Length == 0 ? null : locator,
+                logicalSourceId,
+                logicalSourceId is null ? null : $"parsed:{logicalSourceId}:{sha256[..16]}");
         }
 
-        public static ManualSourceDescriptor ForArchiveEntry(SafeZipManualEntry entry, string sourcePath) =>
-            new(
+        public static ManualSourceDescriptor ForArchiveEntry(SafeZipManualEntry entry, string sourcePath, string corpusRoot)
+        {
+            global::SupportCaseManager.Ai.Core.Indexing.LogicalSourceLocator.TryCreateArchiveEntry(corpusRoot, entry.ArchivePath, entry.EntryPath, out var locator);
+            var logicalSourceId = locator.Value.Length == 0
+                ? null
+                : global::SupportCaseManager.Ai.Core.Indexing.LogicalSourceLocator.CreateLogicalSourceId(string.Empty, "Manual", locator);
+            return new(
                 sourcePath,
                 entry.OriginalFileName,
                 entry.Extension,
@@ -768,8 +882,13 @@ public sealed class AiManualIndexBuilder : IAiManualIndexBuilder
                 entry.EntryPath,
                 entry.OriginalFileName,
                 entry.UncompressedSize,
-                entry.CompressedSize);
+                entry.CompressedSize,
+                locator.Value.Length == 0 ? null : locator,
+                logicalSourceId,
+                logicalSourceId is null ? null : $"parsed:{logicalSourceId}:{entry.Sha256[..16]}");
+        }
     }
 
     private sealed record ManualSection(string SectionTitle, string Text, int? PageNumber);
+    private sealed record ChunkSlice(string Text, int StartOffset);
 }
