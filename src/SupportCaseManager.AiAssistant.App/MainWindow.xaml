@@ -848,6 +848,11 @@
                                         <Button Content="{DynamicResource ToggleSelectedButton}" Command="{Binding ToggleSelectedSourceCommand}" />
                                         <Button Content="{DynamicResource OpenSelectedFileButton}" Command="{Binding OpenSelectedSourceFileCommand}" />
                                         <Button Content="{DynamicResource OpenSelectedFolderButton}" Command="{Binding OpenSelectedSourceFolderCommand}" />
+                                         <TextBlock Text="{Binding CurrentCaseEvidenceSummaryText}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                         <TextBlock Text="{Binding CurrentCaseSearchCount, StringFormat=CurrentCase検索: {0}}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                         <TextBlock Text="{Binding CurrentCaseSelectedCount, StringFormat=選択: {0}}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                         <TextBlock Text="{Binding CurrentCaseSendCount, StringFormat=送信予定: {0}}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                                         <TextBlock Text="{Binding CurrentCaseReadinessText, StringFormat=Readiness: {0}}" Margin="8,0,0,0" VerticalAlignment="Center" />
                                     </StackPanel>
                                 </StackPanel>
                                 <DataGrid ItemsSource="{Binding FilteredSearchResults}"
@@ -863,6 +868,7 @@
                                         <DataGridTextColumn Header="{DynamicResource MatchedTermsColumnHeader}" Binding="{Binding MatchedTermsText, Mode=OneWay}" IsReadOnly="True" Width="180" />
                                         <DataGridTextColumn Header="{DynamicResource TypeColumnHeader}" Binding="{Binding SourceType, Mode=OneWay}" IsReadOnly="True" />
                                         <DataGridTextColumn Header="製品" Binding="{Binding ProductName, Mode=OneWay}" IsReadOnly="True" />
+                                        <DataGridTextColumn Header="Locator" Binding="{Binding Locator, Mode=OneWay}" IsReadOnly="True" Width="180" />
                                         <DataGridTextColumn Header="{DynamicResource TitleColumnHeader}" Binding="{Binding Title, Mode=OneWay}" IsReadOnly="True" Width="220" />
                                         <DataGridTextColumn Header="{DynamicResource SupportNumberColumnHeader}" Binding="{Binding SupportNumber, Mode=OneWay}" IsReadOnly="True" />
                                         <DataGridTextColumn Header="{DynamicResource ExcerptColumnHeader}" Binding="{Binding Excerpt, Mode=OneWay}" IsReadOnly="True" Width="360" />
@@ -931,6 +937,9 @@
 
                                 <TextBlock Grid.Row="4" Text="{DynamicResource MatchedTermsLabel}" />
                                 <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.MatchedTermsText, Mode=OneWay}" TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="9" Text="Evidence locator" />
+                                <TextBlock Grid.Row="9" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.Locator, Mode=OneWay}" TextWrapping="Wrap" />
 
                                 <TextBlock Grid.Row="5" Text="URL" />
                                 <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding SelectedSearchResult.Url, Mode=OneWay}" TextWrapping="Wrap" />

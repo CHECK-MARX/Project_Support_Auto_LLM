@@ -85,6 +85,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly IAppAppearanceService appearanceService;
     private readonly ILlmClientFactory llmClientFactory;
     private readonly IRustEvidenceSelectorWorkerClient persistentRustEvidenceSelectorWorkerClient;
+    private readonly CurrentCaseEvidenceService currentCaseEvidenceService;
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
@@ -180,6 +181,8 @@ public sealed class MainViewModel : ObservableObject
     private IReadOnlyList<SearchSource> lastSearchSources = [];
     private IReadOnlyList<SearchSource> lastManualSearchSources = [];
     private IReadOnlyList<SearchSource> lastOfficialDocumentSearchSources = [];
+    private IReadOnlyList<SearchSource> lastCurrentCaseSources = [];
+    private string currentCaseSessionId = Guid.NewGuid().ToString("N");
     private SearchSource? selectedPastAnswerCandidate;
     private bool allowPastAnswerAutoSelection;
     private bool pastAnswerPolishRequested;
@@ -193,6 +196,7 @@ public sealed class MainViewModel : ObservableObject
     private double minimumDisplayScore;
     private int searchResultCount;
     private int filteredSearchResultCount;
+    private string currentCaseEvidenceSummaryText = "CurrentCase: 未解析";
     private int selectedEvidenceCount;
     private int pastCaseNoteSelectedCount;
     private int manualSelectedCount;
@@ -201,6 +205,9 @@ public sealed class MainViewModel : ObservableObject
     private int manualSendCount;
     private int officialDocSendCount;
     private int evidenceToSendCount;
+    private int currentCaseSearchCount;
+    private int currentCaseSelectedCount;
+    private int currentCaseSendCount;
     private int excludedByLimitCount;
     private int usedEvidenceCount;
     private string usedSourcesText = "No draft has been generated.";
@@ -250,7 +257,8 @@ public sealed class MainViewModel : ObservableObject
         Func<string, IAiDiagnosticLogger> loggerFactory,
         IAppAppearanceService appearanceService,
         ILlmClientFactory? llmClientFactory = null,
-        IRustEvidenceSelectorWorkerClient? persistentRustEvidenceSelectorWorkerClient = null)
+        IRustEvidenceSelectorWorkerClient? persistentRustEvidenceSelectorWorkerClient = null,
+        CurrentCaseEvidenceService? currentCaseEvidenceService = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -273,6 +281,7 @@ public sealed class MainViewModel : ObservableObject
         this.llmClientFactory = llmClientFactory ?? new LlmClientFactory();
         this.persistentRustEvidenceSelectorWorkerClient = persistentRustEvidenceSelectorWorkerClient ??
             new RustEvidenceSelectorWorkerClient();
+        this.currentCaseEvidenceService = currentCaseEvidenceService ?? new CurrentCaseEvidenceService();
 
         LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
@@ -1123,7 +1132,13 @@ public sealed class MainViewModel : ObservableObject
     public string AnswerReadinessText
     {
         get => answerReadinessText;
-        private set => SetProperty(ref answerReadinessText, value);
+        private set
+        {
+            if (SetProperty(ref answerReadinessText, value))
+            {
+                OnPropertyChanged(nameof(CurrentCaseReadinessText));
+            }
+        }
     }
 
     public string ResolvedFactsText
@@ -1275,6 +1290,32 @@ public sealed class MainViewModel : ObservableObject
         get => filteredSearchResultCount;
         private set => SetProperty(ref filteredSearchResultCount, value);
     }
+
+    public string CurrentCaseEvidenceSummaryText
+    {
+        get => currentCaseEvidenceSummaryText;
+        private set => SetProperty(ref currentCaseEvidenceSummaryText, value);
+    }
+
+    public int CurrentCaseSearchCount
+    {
+        get => currentCaseSearchCount;
+        private set => SetProperty(ref currentCaseSearchCount, value);
+    }
+
+    public int CurrentCaseSelectedCount
+    {
+        get => currentCaseSelectedCount;
+        private set => SetProperty(ref currentCaseSelectedCount, value);
+    }
+
+    public int CurrentCaseSendCount
+    {
+        get => currentCaseSendCount;
+        private set => SetProperty(ref currentCaseSendCount, value);
+    }
+
+    public string CurrentCaseReadinessText => AnswerReadinessText;
 
     public int SelectedEvidenceCount
     {
@@ -2137,6 +2178,8 @@ public sealed class MainViewModel : ObservableObject
                 ProductName,
                 BaseFolder,
                 CloseFolder);
+            currentCaseSessionId = Guid.NewGuid().ToString("N");
+            lastCurrentCaseSources = [];
             inquiryManuallyEdited = false;
             ApplyCaseContext(currentCaseContext);
             ApplyPreferredCustomerInquiry(currentCaseContext.Notes);
@@ -2358,6 +2401,17 @@ public sealed class MainViewModel : ObservableObject
                 }
             }
 
+            var currentCaseResult = await currentCaseEvidenceService.BuildAsync(
+                CaseFolderPath,
+                currentCaseSessionId,
+                lastInquiryFocus.FocusText);
+            lastCurrentCaseSources = currentCaseResult.Evidence;
+            CurrentCaseEvidenceSummaryText = FormatCurrentCaseEvidenceSummary(currentCaseResult);
+            if (currentCaseResult.Warnings.Count > 0)
+            {
+                StatusMessage = $"CurrentCase添付解析: {currentCaseResult.Warnings.Count}件の警告";
+            }
+
             SetOperationProgress(80, "検索結果を整理しています");
             var combined = BuildCombinedSearchSources();
             ReplaceSearchResults(combined);
@@ -2488,6 +2542,18 @@ public sealed class MainViewModel : ObservableObject
                     SkipGeneration("NeedsConfiguration", "ModelUnresolved", BuildUnresolvedModelMessage());
                     return;
                 }
+            }
+
+            var currentCaseResult = await currentCaseEvidenceService.BuildAsync(
+                CaseFolderPath,
+                currentCaseSessionId,
+                InquiryText);
+            lastCurrentCaseSources = currentCaseResult.Evidence;
+            CurrentCaseEvidenceSummaryText = FormatCurrentCaseEvidenceSummary(currentCaseResult);
+            if (lastCurrentCaseSources.Count > 0)
+            {
+                ReplaceSearchResults(BuildCombinedSearchSources());
+                SearchResultsText = FormatSearchResults(BuildCombinedSearchSources());
             }
 
             if (!HasKnowledgeForProduct(resolvedProduct) && SearchResults.Count == 0)
@@ -3928,7 +3994,8 @@ public sealed class MainViewModel : ObservableObject
 
     private IReadOnlyList<SearchSource> BuildCombinedSearchSources()
     {
-        return lastOfficialDocumentSearchSources
+        return lastCurrentCaseSources
+            .Concat(lastOfficialDocumentSearchSources)
             .Concat(lastManualSearchSources)
             .Concat(lastSearchSources)
             .OrderByDescending(static source => source.Score ?? 0)
@@ -4015,6 +4082,15 @@ public sealed class MainViewModel : ObservableObject
         {
             return [];
         }
+    }
+
+    private static string FormatCurrentCaseEvidenceSummary(CurrentCaseEvidenceResult result)
+    {
+        var parsed = result.Manifest.Count(item => item.ParseStatus == "PARSED");
+        var partial = result.Manifest.Count(item => item.ParseStatus == "PARTIAL");
+        var ocr = result.Manifest.Count(item => item.ParseStatus == "OCR_REQUIRED");
+        var unsupported = result.Manifest.Count(item => item.ParseStatus is "UNSUPPORTED" or "UNREADABLE" or "UNSAFE_REJECTED");
+        return $"CurrentCase: Evidence {result.Evidence.Count}; Parsed {parsed}; Partial {partial}; OCR Required {ocr}; Unsupported/Rejected {unsupported}";
     }
 
     private AiAssistantSettings ApplyAutomaticGenerationRoute(
@@ -4279,6 +4355,11 @@ public sealed class MainViewModel : ObservableObject
         SearchResultCount = selection.SearchResultCount;
         FilteredSearchResultCount = summary.FilteredCount;
         SelectedEvidenceCount = selection.SelectedCount;
+        CurrentCaseSearchCount = SearchResults.Count(static item => string.Equals(item.SourceType, "CurrentCase", StringComparison.OrdinalIgnoreCase));
+        CurrentCaseSelectedCount = SearchResults.Count(static item =>
+            string.Equals(item.SourceType, "CurrentCase", StringComparison.OrdinalIgnoreCase) && item.IsSelected);
+        CurrentCaseSendCount = SearchResults.Count(static item =>
+            string.Equals(item.SourceType, "CurrentCase", StringComparison.OrdinalIgnoreCase) && item.WillBeSentToLlm);
         PastCaseNoteSelectedCount = selection.PastCaseNoteSelectedCount;
         ManualSelectedCount = selection.ManualSelectedCount;
         OfficialDocSelectedCount = selection.OfficialDocSelectedCount;

@@ -90,4 +90,19 @@ public sealed record class SearchSource
 
     [JsonPropertyName("entryPath")]
     public string? EntryPath { get; init; }
+
+    [JsonPropertyName("caseSessionId")]
+    public string? CaseSessionId { get; init; }
+
+    [JsonPropertyName("logicalFileId")]
+    public string? LogicalFileId { get; init; }
+
+    [JsonPropertyName("locator")]
+    public string? Locator { get; init; }
+
+    [JsonPropertyName("evidenceKind")]
+    public string? EvidenceKind { get; init; }
+
+    [JsonPropertyName("parseStatus")]
+    public string? ParseStatus { get; init; }
 }
