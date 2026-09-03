@@ -125,6 +125,10 @@ public sealed class SearchSourceViewModel : ObservableObject
 
     public string? FilePath => Source.FilePath;
 
+    public string Locator => Source.Locator ?? "-";
+
+    public string EvidenceKind => Source.EvidenceKind ?? "-";
+
     public string? Url => Source.Url;
 
     public DateTimeOffset? RetrievedAt => Source.RetrievedAt;

@@ -230,6 +230,7 @@ public sealed class ExcelArtifactTests
             SupportId = "00018290",
             InquiryText = "確認依頼",
             UserInstruction = "英訳してメーカーへ確認",
+            CurrentCaseEvidenceReferences = "- EvidenceId: current:session:file:1\n  File: attachment.pdf\n  Locator: page:3\n  Kind: PdfPage\n  ContentHash: abc123\n  Excerpt: Sanitizer evidence",
         };
         var composer = new ArtifactPromptComposer();
 
@@ -255,6 +256,9 @@ public sealed class ExcelArtifactTests
         Assert.Contains("Hello Support Team,", mailPrompt);
         Assert.Contains("Best regards,", mailPrompt);
         Assert.Contains("自動送信はしません", mailPrompt);
+        Assert.Contains("CurrentCase Evidence", mailPrompt);
+        Assert.Contains("attachment.pdf", mailPrompt);
+        Assert.Contains("page:3", mailPrompt);
     }
 
     [Fact]

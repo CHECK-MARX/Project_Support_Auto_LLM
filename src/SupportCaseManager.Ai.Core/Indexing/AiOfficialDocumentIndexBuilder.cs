@@ -115,6 +115,8 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         var now = nowProvider();
         var warnings = new List<string>();
         var documents = new List<AiIndexedOfficialDocument>();
+        var provenanceEntries = new List<SourceRegistryEntry>();
+        var parsedArtifacts = new List<ParsedSourceArtifact>();
         var retrievedUrls = new List<string>();
         var seenHashes = new HashSet<string>(StringComparer.Ordinal);
         var successCount = 0;
@@ -157,20 +159,63 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
                     continue;
                 }
 
+                var logicalLocator = LogicalSourceLocator.CreateOfficial(page.Url);
+                var logicalSourceId = LogicalSourceLocator.CreateLogicalSourceId(product.ProductName, "OfficialDoc", logicalLocator);
+                var artifactKey = $"parsed:{logicalSourceId}:{contentHash[..16]}";
+                provenanceEntries.Add(new SourceRegistryEntry
+                {
+                    LogicalSourceId = logicalSourceId,
+                    ProductName = product.ProductName,
+                    SourceType = "OfficialDoc",
+                    LogicalLocator = logicalLocator,
+                    ContentHash = contentHash,
+                    ParsedArtifactKey = artifactKey,
+                    ParserVersion = "AiOfficialDocumentIndexBuilder:Html",
+                });
+                parsedArtifacts.Add(new ParsedSourceArtifact
+                {
+                    LogicalSourceId = logicalSourceId,
+                    ArtifactKey = artifactKey,
+                    ContentHash = contentHash,
+                    ParserVersion = "AiOfficialDocumentIndexBuilder:Html",
+                    Pages = [new ParsedSourcePage { Text = extracted.Text, ContentHash = contentHash }],
+                });
+
                 var chunkIndex = 0;
                 foreach (var chunk in SplitIntoChunks(extracted.Text))
                 {
-                    var chunkHash = BuildHash($"{page.Url}|{chunkIndex}|{chunk}");
+                    var chunkHash = BuildHash($"{page.Url}|{chunkIndex}|{chunk.Text}");
+                    var id = $"official:{chunkHash[..24]}";
                     documents.Add(new AiIndexedOfficialDocument
                     {
-                        Id = $"official:{chunkHash[..24]}",
+                        Id = id,
                         ProductName = product.ProductName,
                         Url = page.Url,
                         Title = string.IsNullOrWhiteSpace(extracted.Title) ? page.Uri.Host : extracted.Title,
                         SectionTitle = extracted.SectionTitle,
-                        Text = chunk,
+                        Text = chunk.Text,
                         RetrievedAt = now,
                         ContentHash = chunkHash,
+                        LogicalSourceId = logicalSourceId,
+                        LogicalSourceLocator = logicalLocator,
+                        ParsedSourceAddress = new ParsedSourceAddress
+                        {
+                            LogicalSourceId = logicalSourceId,
+                            ArtifactKey = artifactKey,
+                            ContentHash = contentHash,
+                        },
+                        ChunkId = id,
+                        ChunkLocator = new ChunkLocator
+                        {
+                            LogicalSourceId = logicalSourceId,
+                            ChunkOrdinal = chunkIndex,
+                            SectionTitle = string.IsNullOrWhiteSpace(extracted.SectionTitle) ? null : extracted.SectionTitle,
+                            OffsetBasis = "ParsedSourceTextUtf16",
+                            StartOffset = chunk.StartOffset,
+                            Length = chunk.Text.Length,
+                            ContentHash = BuildHash(chunk.Text),
+                        },
+                        IndexLookupKey = ReadOnlyIndexRecordResolver.CreateIndexLookupKey("OfficialDoc", id),
                     });
                     chunkIndex++;
                 }
@@ -236,6 +281,12 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             var candidateFacts = new OfficialDocumentFactExtractor().Extract(document);
             var factCatalog = FactCatalogStore.BuildCatalog(product.ProductName, candidateFacts, now);
             await FactCatalogStore.SaveAsync(productIndexFolder, factCatalog, cancellationToken);
+            await ProvenanceRegistryStore.SaveAsync(
+                productIndexFolder,
+                provenanceEntries,
+                parsedArtifacts,
+                cancellationToken,
+                GenerationManifest.CreateOfficial());
         }
 
         if (documents.Count == 0 && sourceUrls.Count > 0)
@@ -694,7 +745,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         return string.IsNullOrWhiteSpace(value) ? string.Empty : WebUtility.HtmlDecode(HtmlTagRegex().Replace(value, " ")).Trim();
     }
 
-    private static IEnumerable<string> SplitIntoChunks(string text)
+    private static IEnumerable<ChunkSlice> SplitIntoChunks(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -705,10 +756,12 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         while (start < text.Length)
         {
             var length = Math.Min(ChunkMaxLength, text.Length - start);
-            var chunk = text.Substring(start, length).Trim();
+            var rawChunk = text.Substring(start, length);
+            var leadingWhitespace = rawChunk.Length - rawChunk.TrimStart().Length;
+            var chunk = rawChunk.Trim();
             if (!string.IsNullOrWhiteSpace(chunk))
             {
-                yield return chunk;
+                yield return new ChunkSlice(chunk, start + leadingWhitespace);
             }
 
             if (start + length >= text.Length)
@@ -753,6 +806,8 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
     private sealed record CrawlCandidate(Uri Uri, string NormalizedUrl, string RootHost, int Depth, int Priority);
 
     private sealed record DiscoveredLink(Uri Uri, string NormalizedUrl, int Priority);
+
+    private sealed record ChunkSlice(string Text, int StartOffset);
 
     private sealed record CrawledPage(Uri Uri, string Url, string Html);
 

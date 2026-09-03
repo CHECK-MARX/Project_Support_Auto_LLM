@@ -16,6 +16,7 @@ public static partial class TechnicalQueryExtractor
         var technical = new List<string>();
         var signatures = new List<string>();
         var quotedMessage = false;
+        var signatureBlock = false;
         foreach (var line in lines)
         {
             if (QuotedMessageSeparatorRegex().IsMatch(line))
@@ -25,8 +26,15 @@ public static partial class TechnicalQueryExtractor
                 continue;
             }
 
-            if (quotedMessage || line.StartsWith('>'))
+            if (quotedMessage || signatureBlock || line.StartsWith('>'))
             {
+                signatures.Add(line);
+                continue;
+            }
+
+            if (IsSignatureBoundary(line))
+            {
+                signatureBlock = true;
                 signatures.Add(line);
                 continue;
             }
@@ -41,7 +49,7 @@ public static partial class TechnicalQueryExtractor
         }
 
         var email = EmailRegex().Match(inquiryText).Value;
-        var phone = PhoneRegex().Match(inquiryText).Value;
+        var phone = PhoneNumberRegex().Match(inquiryText).Value;
         var support = SupportRegex().Match(inquiryText).Value;
         return (
             string.Join(Environment.NewLine, technical.Where(static line => !string.IsNullOrWhiteSpace(line))).Trim(),
@@ -100,11 +108,15 @@ public static partial class TechnicalQueryExtractor
         .Where(entity => entity.Kind == kind).Select(entity => entity.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static bool IsRecipientOnlyLine(string line) =>
-        !ContainsTechnicalSignal(line) && (EmailRegex().IsMatch(line) || PhoneRegex().IsMatch(line) || SupportRegex().IsMatch(line) ||
+        !ContainsTechnicalSignal(line) && (EmailRegex().IsMatch(line) || PhoneNumberRegex().IsMatch(line) || SupportRegex().IsMatch(line) ||
         PostalCodeRegex().IsMatch(line) || AddressRegex().IsMatch(line) || DateTimeRegex().IsMatch(line) ||
         line.EndsWith("株式会社", StringComparison.Ordinal) || line.EndsWith("御中", StringComparison.Ordinal) ||
         line.EndsWith("様", StringComparison.Ordinal) || line.Contains("いつもお世話になっております", StringComparison.Ordinal) ||
+        BusinessClosingRegex().IsMatch(line) ||
         line.Contains('|') || CompanyIntroductionRegex().IsMatch(line) || SignatureSeparatorRegex().IsMatch(line));
+
+    private static bool IsSignatureBoundary(string line) =>
+        !ContainsTechnicalSignal(line) && BusinessClosingRegex().IsMatch(line);
 
     private static bool ContainsTechnicalSignal(string line) =>
         line.Contains('？') || line.Contains('?') || line.Contains("ですか", StringComparison.Ordinal) ||
@@ -116,7 +128,7 @@ public static partial class TechnicalQueryExtractor
     private static string RemoveInlineRecipientData(string line, CaseContext? context)
     {
         var cleaned = EmailRegex().Replace(line, string.Empty);
-        cleaned = PhoneRegex().Replace(cleaned, string.Empty);
+        cleaned = PhoneNumberRegex().Replace(cleaned, string.Empty);
         cleaned = PostalCodeRegex().Replace(cleaned, string.Empty);
         cleaned = AddressRegex().Replace(cleaned, string.Empty);
         cleaned = DateTimeRegex().Replace(cleaned, string.Empty);
@@ -136,8 +148,8 @@ public static partial class TechnicalQueryExtractor
 
     [GeneratedRegex(@"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", RegexOptions.CultureInvariant)]
     private static partial Regex EmailRegex();
-    [GeneratedRegex(@"(?<!\d)(?:0\d{1,4}[- ]?)?\d{2,4}[- ]?\d{3,4}(?!\d)|内線\s*\d{3,}", RegexOptions.CultureInvariant)]
-    private static partial Regex PhoneRegex();
+    [GeneratedRegex(@"(?<!\d)0\d{1,4}[- ]\d{2,4}[- ]\d{3,4}(?!\d)|内線\s*\d{3,}", RegexOptions.CultureInvariant)]
+    private static partial Regex PhoneNumberRegex();
     [GeneratedRegex(@"(?<![A-Za-z0-9])(?:SO|SR|T)\s*/?\s*\d{3,10}(?![A-Za-z0-9])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SupportRegex();
     [GeneratedRegex(@"^(?:from|to|cc|bcc|subject|date|件名|差出人|宛先)\s*[:：]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -148,7 +160,7 @@ public static partial class TechnicalQueryExtractor
     private static partial Regex CompanyNameRegex();
     [GeneratedRegex(@"(?:担当者(?:名)?|ご担当者|氏名|お名前)\s*[:：]\s*(?:[一-龯々ぁ-んァ-ヶー]{1,16}(?:\s+[一-龯々ぁ-んァ-ヶー]{1,16})?|[A-Za-z][A-Za-z .'-]{1,48})", RegexOptions.CultureInvariant)]
     private static partial Regex LabeledRecipientRegex();
-    [GeneratedRegex(@"〒?\d{3}-?\d{4}", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?:〒\s*)?\d{3}-\d{4}", RegexOptions.CultureInvariant)]
     private static partial Regex PostalCodeRegex();
     [GeneratedRegex(@"(?:都|道|府|県)[^\n]{0,64}(?:市|区|町|村|丁目|番地|号)", RegexOptions.CultureInvariant)]
     private static partial Regex AddressRegex();
@@ -158,4 +170,6 @@ public static partial class TechnicalQueryExtractor
     private static partial Regex QuotedMessageSeparatorRegex();
     [GeneratedRegex(@"^(?:[-_]{3,}|以上[、。]?$|よろしくお願いいたします[。]*$)", RegexOptions.CultureInvariant)]
     private static partial Regex SignatureSeparatorRegex();
+    [GeneratedRegex(@"(?:お忙しいところ恐縮ですが|何卒よろしく(?:お願いいたします|お願いします)|よろしく(?:お願いいたします|お願いします|お願い申し上げます))。?$", RegexOptions.CultureInvariant)]
+    private static partial Regex BusinessClosingRegex();
 }

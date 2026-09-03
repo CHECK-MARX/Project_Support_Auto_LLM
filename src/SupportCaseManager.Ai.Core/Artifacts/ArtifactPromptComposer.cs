@@ -27,6 +27,7 @@ public sealed record ArtifactPromptContext
     public string CompanyName { get; init; } = string.Empty;
     public string InquiryText { get; init; } = string.Empty;
     public string UserInstruction { get; init; } = string.Empty;
+    public string CurrentCaseEvidenceReferences { get; init; } = string.Empty;
 }
 
 public sealed class ArtifactPromptComposer : IArtifactPromptComposer
@@ -137,6 +138,9 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
 
             ### 今回メーカーへ確認したい論点
             {context.UserInstruction}
+
+            ### CurrentCase Evidence（選択済み根拠のみ）
+            {ValueOrFallback(context.CurrentCaseEvidenceReferences, "(CurrentCase根拠なし。案件フォルダの自由探索は禁止)")}
 
             ### メール規則
             - 宛名は不明のため「Hello Support Team,」で開始する。

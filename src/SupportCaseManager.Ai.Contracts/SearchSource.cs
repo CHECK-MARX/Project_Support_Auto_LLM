@@ -90,4 +90,40 @@ public sealed record class SearchSource
 
     [JsonPropertyName("entryPath")]
     public string? EntryPath { get; init; }
+
+    [JsonPropertyName("caseSessionId")]
+    public string? CaseSessionId { get; init; }
+
+    [JsonPropertyName("logicalFileId")]
+    public string? LogicalFileId { get; init; }
+
+    [JsonPropertyName("locator")]
+    public string? Locator { get; init; }
+
+    [JsonPropertyName("evidenceKind")]
+    public string? EvidenceKind { get; init; }
+
+    [JsonPropertyName("parseStatus")]
+    public string? ParseStatus { get; init; }
+
+    [JsonPropertyName("scanEvidenceId")]
+    public string? ScanEvidenceId { get; init; }
+
+    [JsonPropertyName("reportedLine")]
+    public int? ReportedLine { get; init; }
+
+    [JsonPropertyName("contextStartLine")]
+    public int? ContextStartLine { get; init; }
+
+    [JsonPropertyName("contextEndLine")]
+    public int? ContextEndLine { get; init; }
+
+    [JsonPropertyName("sourceRole")]
+    public string? SourceRole { get; init; }
+
+    [JsonPropertyName("sinkRole")]
+    public string? SinkRole { get; init; }
+
+    [JsonPropertyName("resultPath")]
+    public string? ResultPath { get; init; }
 }

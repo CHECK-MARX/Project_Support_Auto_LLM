@@ -30,6 +30,7 @@ public sealed record SafeZipManualEntry
     public long CompressedSize { get; init; }
     public string Sha256 { get; init; } = string.Empty;
     public DateTimeOffset? LastModifiedAt { get; init; }
+    public int LineCount { get; init; }
     internal ManualDocumentContent Content { get; init; } = new(string.Empty, string.Empty);
 }
 
@@ -148,7 +149,7 @@ public sealed class SafeZipManualReader
                 }
 
                 var classification = ManualDocumentFilter.ClassifyFile(normalizedEntryPath);
-                if (classification.Category != ManualDocumentCategory.ImportCandidate)
+                if (classification.Category != ManualDocumentCategory.ImportCandidate && !IsSourceEntry(normalizedEntryPath))
                 {
                     skippedEntryCount += 1;
                     continue;
@@ -197,6 +198,7 @@ public sealed class SafeZipManualReader
                         CompressedSize = entry.CompressedLength,
                         Sha256 = sha256,
                         LastModifiedAt = entry.LastWriteTime == default ? null : entry.LastWriteTime,
+                        LineCount = content.Text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n').Length,
                         Content = content,
                     });
                 }
@@ -275,6 +277,11 @@ public sealed class SafeZipManualReader
 
     private static bool IsDirectory(ZipArchiveEntry entry) =>
         entry.FullName.EndsWith("/", StringComparison.Ordinal) || string.IsNullOrEmpty(entry.Name);
+
+    private static bool IsSourceEntry(string path) => new[]
+    {
+        ".asp", ".aspx", ".cs", ".vb", ".c", ".h", ".hpp", ".cpp", ".cxx", ".java", ".py", ".js", ".ts", ".sql", ".ps1", ".sh",
+    }.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
 
     private static double CompressionRatio(ZipArchiveEntry entry)
     {

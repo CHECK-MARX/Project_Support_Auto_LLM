@@ -194,13 +194,21 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
     private static string ExtractFocusText(string inquiryText)
     {
         var normalized = inquiryText.Replace("\r\n", "\n").Replace('\r', '\n');
-        foreach (var marker in SectionMarkers)
+        var lines = normalized.Split('\n');
+        var offset = 0;
+        foreach (var line in lines)
         {
-            var index = normalized.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
-            if (index >= 0)
+            var trimmed = line.TrimStart();
+            foreach (var marker in SectionMarkers)
             {
-                return normalized[(index + marker.Length)..].Trim();
+                if (trimmed.StartsWith(marker, StringComparison.OrdinalIgnoreCase))
+                {
+                    var markerOffset = line.Length - trimmed.Length;
+                    return normalized[(offset + markerOffset + marker.Length)..].Trim();
+                }
             }
+
+            offset += line.Length + 1;
         }
 
         var meaningfulLines = normalized
@@ -434,6 +442,7 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
     private static bool LooksLikeMeaningfulRequestLine(string line)
     {
         return AsciiProductOrVersionRegex().IsMatch(line) ||
+            TechnicalBodySignalRegex().IsMatch(line) ||
             line.Contains("手順書", StringComparison.Ordinal) ||
             line.Contains("利用方法", StringComparison.Ordinal) ||
             line.Contains("設定手順", StringComparison.Ordinal) ||
@@ -501,6 +510,9 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
 
     [GeneratedRegex(@"(?<![\d.])\d{1,4}(?:\.\d{1,4}){1,3}(?![\d.])", RegexOptions.CultureInvariant)]
     private static partial Regex VersionNumberRegex();
+
+    [GeneratedRegex(@"SQL\s*Injection|脆弱性|過検知|Sanitizer|False\s*Positive|Source|Sink|Query|Classic\s*ASP|Framework|Preset|解析|検出|クエリ|フレームワーク|添付", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TechnicalBodySignalRegex();
 
     [GeneratedRegex(@"(?i)(?:^|\b)(?:tel|e-?mail|fax)\b|〒|\d{2,4}-\d{2,4}-\d{3,4}", RegexOptions.CultureInvariant)]
     private static partial Regex ContactTokenRegex();

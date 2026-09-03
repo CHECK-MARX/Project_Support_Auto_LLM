@@ -27,4 +27,28 @@ public sealed record class AiIndexedOfficialDocument
 
     [JsonPropertyName("contentHash")]
     public string ContentHash { get; init; } = string.Empty;
+
+    [JsonPropertyName("logicalSourceId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? LogicalSourceId { get; init; }
+
+    [JsonPropertyName("logicalSourceLocator")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public LogicalSourceLocator? LogicalSourceLocator { get; init; }
+
+    [JsonPropertyName("parsedSourceAddress")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ParsedSourceAddress? ParsedSourceAddress { get; init; }
+
+    [JsonPropertyName("chunkId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ChunkId { get; init; }
+
+    [JsonPropertyName("chunkLocator")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ChunkLocator? ChunkLocator { get; init; }
+
+    [JsonPropertyName("indexLookupKey")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? IndexLookupKey { get; init; }
 }
