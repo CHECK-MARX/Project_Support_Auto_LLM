@@ -121,6 +121,8 @@ public sealed class CurrentCaseEvidenceService
             }
         }
 
+        await AddScanSourceContextAsync(scan.Files, sessionId, evidence, warnings, cancellationToken).ConfigureAwait(false);
+
         var filtered = evidence
             .Select((source, index) => (source, index, score: Score(source, query)))
             .Where(item => item.score > 0 || string.IsNullOrWhiteSpace(query))
@@ -129,6 +131,55 @@ public sealed class CurrentCaseEvidenceService
             .Select(item => item.source with { Score = Math.Clamp(item.score, 0, 1) })
             .ToList();
         return new CurrentCaseEvidenceResult(sessionId, manifest, filtered, warnings);
+    }
+
+    private static async Task AddScanSourceContextAsync(
+        IReadOnlyList<CodexCaseFileInfo> files,
+        string sessionId,
+        List<SearchSource> evidence,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
+        var findings = new List<ScanResultFinding>();
+        foreach (var file in files.Where(static file => file.CanSendToCodex &&
+            (Path.GetExtension(file.FileName).Equals(".csv", StringComparison.OrdinalIgnoreCase) ||
+             Path.GetExtension(file.FileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase))))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var content = await ManualDocumentTextExtractor.ReadAsync(file.FullPath, cancellationToken).ConfigureAwait(false);
+                var parsed = Path.GetExtension(file.FileName).Equals(".csv", StringComparison.OrdinalIgnoreCase)
+                    ? ScanResultParser.ParseCsv(content.Text, file.RelativePath)
+                    : ScanResultParser.ParseText(content.Text, file.RelativePath);
+                findings.AddRange(parsed);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+            {
+                warnings.Add($"Scan Resultを解析できませんでした: {file.RelativePath} ({exception.Message})");
+            }
+        }
+
+        if (findings.Count == 0) return;
+        foreach (var archive in files.Where(static file => file.CanSendToCodex &&
+            Path.GetExtension(file.FileName).Equals(".zip", StringComparison.OrdinalIgnoreCase)))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var linked = await new ScanSourceLinker().LinkAsync(findings, archive.FullPath, sessionId, cancellationToken).ConfigureAwait(false);
+                foreach (var source in linked.SourceContextEvidence.Take(Math.Max(0, MaximumTotalEvidence - evidence.Count)))
+                {
+                    if (evidence.Any(existing => string.Equals(existing.SourceId, source.SourceId, StringComparison.Ordinal))) continue;
+                    evidence.Add(source);
+                }
+                warnings.AddRange(linked.Warnings);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+            {
+                warnings.Add($"Scan ResultとSource ZIPを関連付けできませんでした: {archive.RelativePath} ({exception.Message})");
+            }
+        }
     }
 
     private static async Task<IReadOnlyList<SearchSource>> ParseFileAsync(
