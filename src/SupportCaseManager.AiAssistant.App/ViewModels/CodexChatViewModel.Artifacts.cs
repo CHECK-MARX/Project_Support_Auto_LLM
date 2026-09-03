@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
+using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using FormsDialogResult = System.Windows.Forms.DialogResult;
 using FormsFolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
@@ -548,7 +550,40 @@ public sealed partial class CodexChatViewModel
             CompanyName = snapshot.CompanyName,
             InquiryText = snapshot.InquiryText,
             UserInstruction = artifactRequestInstruction,
+            CurrentCaseEvidenceReferences = BuildCurrentCaseEvidenceReferences(snapshot.Evidence),
         };
+    }
+
+    private static string BuildCurrentCaseEvidenceReferences(IReadOnlyList<SearchSource> sources)
+    {
+        var currentCaseSources = sources
+            .Where(static source => string.Equals(source.SourceType, "CurrentCase", StringComparison.OrdinalIgnoreCase))
+            .Take(12)
+            .ToList();
+        if (currentCaseSources.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder();
+        foreach (var source in currentCaseSources)
+        {
+            var excerpt = string.Join(" ", (source.Text ?? string.Empty)
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            if (excerpt.Length > 240)
+            {
+                excerpt = excerpt[..240] + "...";
+            }
+
+            builder.AppendLine($"- EvidenceId: {source.SourceId}");
+            builder.AppendLine($"  File: {source.Title}");
+            builder.AppendLine($"  Locator: {source.Locator ?? "(unknown)"}");
+            builder.AppendLine($"  Kind: {source.EvidenceKind ?? "(unknown)"}");
+            builder.AppendLine($"  ContentHash: {source.ContentHash ?? "(unknown)"}");
+            builder.AppendLine($"  Excerpt: {excerpt}");
+        }
+
+        return builder.ToString().TrimEnd();
     }
 
     private void ApplyTranslationPreview(IReadOnlyList<ExcelTranslationValue> translations)
