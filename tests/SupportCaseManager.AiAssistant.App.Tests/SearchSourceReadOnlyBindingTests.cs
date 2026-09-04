@@ -35,6 +35,42 @@ public sealed class SearchSourceReadOnlyBindingTests
         Assert.Contains("Binding=\"{Binding SendStatusText, Mode=OneWay}\"", xaml);
     }
 
+    [Fact]
+    public void CodexChatViewModel_TechnicalAnswerIsWritableForEditing()
+    {
+        var property = typeof(CodexChatViewModel).GetProperty(nameof(CodexChatViewModel.TechnicalAnswer));
+
+        Assert.NotNull(property);
+        Assert.True(property.CanWrite);
+    }
+
+    [Fact]
+    public void MainWindow_TechnicalAnswerUsesEditableTwoWayBinding()
+    {
+        var xaml = ReadMainWindowXaml();
+
+        Assert.Contains(
+            "Text=\"{Binding Codex.TechnicalAnswer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}\"",
+            xaml);
+        Assert.Contains("<GroupBox Header=\"Codex技術回答案（編集可能）\">", xaml);
+        Assert.Contains("IsReadOnly=\"False\"", xaml);
+    }
+
+    [Fact]
+    public void MainWindow_ReviewAnswerRemainsReadOnly()
+    {
+        var xaml = ReadMainWindowXaml();
+        var sectionStart = xaml.IndexOf("<GroupBox Header=\"レビュー後の回答案\">", StringComparison.Ordinal);
+        var sectionEnd = xaml.IndexOf("</GroupBox>", sectionStart, StringComparison.Ordinal);
+
+        Assert.True(sectionStart >= 0);
+        Assert.True(sectionEnd > sectionStart);
+
+        var section = xaml[sectionStart..sectionEnd];
+        Assert.Contains("Text=\"{Binding Codex.ReviewAnswer, Mode=OneWay}\"", section);
+        Assert.Contains("IsReadOnly=\"True\"", section);
+    }
+
     private static string ReadMainWindowXaml(
         [System.Runtime.CompilerServices.CallerFilePath] string testFilePath = "")
     {

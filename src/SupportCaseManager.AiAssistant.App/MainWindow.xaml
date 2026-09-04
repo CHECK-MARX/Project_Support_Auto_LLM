@@ -1335,9 +1335,13 @@
                             </StackPanel>
                         </Expander>
 
-                        <GroupBox Header="Codex技術回答案">
-                            <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=OneWay}"
-                                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="140" />
+                        <GroupBox Header="Codex技術回答案（編集可能）">
+                            <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     IsReadOnly="False"
+                                     AcceptsReturn="True"
+                                     TextWrapping="Wrap"
+                                     VerticalScrollBarVisibility="Auto"
+                                     MinHeight="140" />
                         </GroupBox>
                         <GroupBox Header="レビュー後の回答案">
                             <TextBox Text="{Binding Codex.ReviewAnswer, Mode=OneWay}"

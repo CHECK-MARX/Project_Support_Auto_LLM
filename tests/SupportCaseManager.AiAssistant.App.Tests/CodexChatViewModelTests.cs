@@ -62,6 +62,47 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
+    public async Task EditedTechnicalAnswer_IsUsedByReplyAndFinalReview()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        string? applied = null;
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "SyntheticProduct",
+                SupportId = "SYN-EDIT-001",
+                CaseFolder = temp.Path,
+                InquiryText = "人工fixtureの問い合わせ",
+            },
+            () => "fake.exe",
+            text => { applied = text; return true; },
+            _ => true,
+            _ => { });
+        viewModel.PromptInput = "初回回答を生成してください";
+        await viewModel.InitializeAsync();
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        viewModel.TechnicalAnswer += Environment.NewLine + "[manual-edit-test]";
+        viewModel.ApplyReplyCommand.Execute(null);
+
+        Assert.Contains("[manual-edit-test]", applied, StringComparison.Ordinal);
+
+        viewModel.FinalReviewCommand.Execute(null);
+        await WaitUntilAsync(
+            () => fakeClient.LastTurnText.Contains("[manual-edit-test]", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public async Task SendCommand_NormalizesLegacyLogAndSendsImageInput()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

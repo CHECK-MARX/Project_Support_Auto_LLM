@@ -277,7 +277,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     public string TechnicalAnswer
     {
         get => technicalAnswer;
-        private set
+        set
         {
             if (SetProperty(ref technicalAnswer, value))
             {
