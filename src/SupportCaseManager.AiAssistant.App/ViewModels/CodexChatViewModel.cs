@@ -35,6 +35,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private readonly Func<string> executablePathProvider;
     private readonly Func<string, bool> applyReply;
     private readonly Func<string, bool> applyMemo;
+    private readonly Func<string, Task<bool>>? sendToWpfNoteEditor;
     private readonly Action<bool> undoApplication;
     private readonly IExcelTranslationService excelTranslationService;
     private readonly IArtifactPromptComposer artifactPromptComposer;
@@ -100,7 +101,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         ExcelTranslationJsonParser? translationJsonParser = null,
         CaseArtifactPathPolicy? artifactPathPolicy = null,
         IRagLabEvidenceLoader? ragLabEvidenceLoader = null,
-        ICodexEvidenceAbComparisonService? abComparisonService = null)
+        ICodexEvidenceAbComparisonService? abComparisonService = null,
+        Func<bool, bool>? canUndoApplication = null,
+        Func<string, Task<bool>>? sendToWpfNoteEditor = null)
     {
         this.client = client;
         this.fileScanner = fileScanner;
@@ -115,7 +118,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         this.executablePathProvider = executablePathProvider;
         this.applyReply = applyReply;
         this.applyMemo = applyMemo;
+        this.sendToWpfNoteEditor = sendToWpfNoteEditor;
         this.undoApplication = undoApplication;
+        this.canUndoApplication = canUndoApplication ?? (_ => false);
         this.excelTranslationService = excelTranslationService ?? new ExcelTranslationService();
         this.artifactPromptComposer = artifactPromptComposer ?? new ArtifactPromptComposer();
         this.artifactRequestDetector = artifactRequestDetector ?? new ArtifactRequestDetector();
@@ -131,10 +136,19 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         RefreshFilesCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(RefreshFilesAsync), () => !turnActive);
         ApplyReplyCommand = new RelayCommand(ApplyLatestReply, HasLatestAnswer);
         ApplyMemoCommand = new RelayCommand(ApplyLatestMemo, HasLatestAnswer);
-        UndoReplyCommand = new RelayCommand(() => undoApplication(true));
-        UndoMemoCommand = new RelayCommand(() => undoApplication(false));
+        SendToWpfNoteCommand = new AsyncRelayCommand(SendLatestAnswerToWpfNoteAsync, CanSendToWpfNote);
+        UndoReplyCommand = new RelayCommand(() =>
+        {
+            undoApplication(true);
+            RaiseCommandStates();
+        }, () => this.canUndoApplication(true));
+        UndoMemoCommand = new RelayCommand(() =>
+        {
+            undoApplication(false);
+            RaiseCommandStates();
+        }, () => this.canUndoApplication(false));
         CopyAnswerCommand = new RelayCommand(CopyLatestAnswer, HasLatestAnswer);
-        FinalReviewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(FinalReviewAsync), () => !turnActive && HasLatestAnswer());
+        FinalReviewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(FinalReviewAsync), CanFinalReview);
         CaptureAbBaselineCommand = new RelayCommand(CaptureAbBaseline, CanCaptureAbBaseline);
         CaptureAbEvidenceCommand = new RelayCommand(CaptureAbEvidence, CanCaptureAbEvidence);
         CompareAbCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(CompareAbAsync), CanCompareAb);
@@ -161,6 +175,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     public AsyncRelayCommand StopCommand { get; }
     public AsyncRelayCommand RefreshFilesCommand { get; }
     public RelayCommand ApplyReplyCommand { get; }
+    public AsyncRelayCommand SendToWpfNoteCommand { get; }
     public RelayCommand ApplyMemoCommand { get; }
     public RelayCommand UndoReplyCommand { get; }
     public RelayCommand UndoMemoCommand { get; }
@@ -1067,6 +1082,40 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
     }
 
+    private async Task SendLatestAnswerToWpfNoteAsync()
+    {
+        var value = LatestAnswer();
+        if (currentSnapshot?.UseRagLabEvidence == true && ContainsRagLabInternalMarker(value))
+        {
+            WarningText = "WPFノート編集へのコピーを中止しました。RAG Labの内部処理用語が含まれているため、Codexで最終レビューしてください。";
+            ConnectionDetails = "WPFノート編集へコピーしていません。内部処理用語を除去してから再確認してください。";
+            return;
+        }
+
+        var pipeName = currentSnapshot?.NoteEditorTransferPipeName;
+        if (string.IsNullOrWhiteSpace(pipeName) || sendToWpfNoteEditor is null)
+        {
+            ConnectionDetails = "親WPFとの接続情報がありません。親WPFからAI回答支援を起動してください。";
+            WarningText = "WPFノート編集へ送信できません。";
+            return;
+        }
+
+        var sent = await sendToWpfNoteEditor(value).ConfigureAwait(false);
+        RunOnUi(() =>
+        {
+            if (sent)
+            {
+                WarningText = string.Empty;
+                ConnectionDetails = "回答をWPFノート編集へコピーしました。プレビューは解除され、案件ファイルはまだ変更していません。";
+            }
+            else
+            {
+                WarningText = "WPFノート編集へ送信できませんでした。親WPFが起動中か確認してください。";
+                ConnectionDetails = "WPFノート編集へコピーしていません。";
+            }
+        });
+    }
+
     private static bool ContainsRagLabInternalMarker(string value)
     {
         return RagLabInternalMarkers.Any(marker => value.Contains(marker, StringComparison.OrdinalIgnoreCase));
@@ -1230,6 +1279,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private bool CanSend() => CanStartThread() && !string.IsNullOrWhiteSpace(PromptInput);
     private bool CanStartThread() => !turnActive && caseFolderReady;
     private bool HasLatestAnswer() => !string.IsNullOrWhiteSpace(LatestAnswer());
+    private bool CanSendToWpfNote() => !turnActive
+        && HasLatestAnswer()
+        && !string.IsNullOrWhiteSpace(currentSnapshot?.NoteEditorTransferPipeName)
+        && sendToWpfNoteEditor is not null;
+    private bool CanFinalReview() => !turnActive && HasLatestAnswer() && !string.IsNullOrWhiteSpace(client.CurrentThreadId);
     private string LatestAnswer() => string.IsNullOrWhiteSpace(ReviewAnswer) ? TechnicalAnswer : ReviewAnswer;
 
     private void RaiseCommandStates()
@@ -1242,7 +1296,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         ReconnectCommand.RaiseCanExecuteChanged();
         RefreshFilesCommand.RaiseCanExecuteChanged();
         ApplyReplyCommand.RaiseCanExecuteChanged();
+        SendToWpfNoteCommand.RaiseCanExecuteChanged();
         ApplyMemoCommand.RaiseCanExecuteChanged();
+        UndoReplyCommand.RaiseCanExecuteChanged();
+        UndoMemoCommand.RaiseCanExecuteChanged();
         CopyAnswerCommand.RaiseCanExecuteChanged();
         FinalReviewCommand.RaiseCanExecuteChanged();
         CaptureAbBaselineCommand.RaiseCanExecuteChanged();

@@ -20,6 +20,7 @@ using SupportCaseManager.App.AiHandoff;
 using SupportCaseManager.App.Theme;
 using SupportCaseManager.App.Dialogs;
 using SupportCaseManager.App.ViewModels;
+using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Config;
@@ -39,6 +40,7 @@ public partial class MainWindow : Window
     private readonly IAiAssistantLaunchContextBuilder _aiLaunchContextBuilder = new AiAssistantLaunchContextBuilder();
     private readonly IAiAssistantHandoffFileWriter _aiHandoffFileWriter = new AiAssistantHandoffFileWriter();
     private readonly IAiAssistantProcessLauncher _aiProcessLauncher = new AiAssistantProcessLauncher();
+    private AiAssistantNoteEditorTransferServer? _aiNoteEditorTransferServer;
     private readonly Dictionary<string, CaseRecord> _caseCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _categoryPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly ObservableCollection<ProductEntry> _productEntries = new();
@@ -121,6 +123,7 @@ public partial class MainWindow : Window
 
         DataContext = _viewModel;
         InitializeComponent();
+        Closed += OnClosed;
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -5269,6 +5272,14 @@ public partial class MainWindow : Window
 
         try
         {
+            _aiNoteEditorTransferServer?.Dispose();
+            var pipeName = AiAssistantNoteEditorTransfer.CreatePipeName();
+            var transferServer = new AiAssistantNoteEditorTransferServer(
+                pipeName,
+                OnAiAssistantNoteEditorTextReceived);
+            transferServer.Start();
+            _aiNoteEditorTransferServer = transferServer;
+
             var promptLoad = SupportPromptFileLoader.Load(
                 _activeProduct?.ProductPromptFilePath,
                 _config.SettingsPath,
@@ -5283,7 +5294,10 @@ public partial class MainWindow : Window
                     MessageBoxImage.Warning);
             }
 
-            var context = _aiLaunchContextBuilder.BuildFromCurrentState(BuildAiAssistantCurrentState());
+            var context = _aiLaunchContextBuilder.BuildFromCurrentState(BuildAiAssistantCurrentState()) with
+            {
+                NoteEditorTransferPipeName = pipeName,
+            };
             var contextFilePath = await _aiHandoffFileWriter.WriteAsync(context);
             await _aiProcessLauncher.LaunchAsync(contextFilePath);
 
@@ -5292,11 +5306,37 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            _aiNoteEditorTransferServer?.Dispose();
+            _aiNoteEditorTransferServer = null;
             var message = BuildSafeAiAssistantErrorMessage(ex);
             _logger.Error("AI回答支援の起動に失敗しました。", ex);
             _viewModel.StatusMessage = $"AI回答支援の起動に失敗しました: {message}";
             MessageBox.Show(this, $"AI回答支援の起動に失敗しました。\n{message}", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void OnAiAssistantNoteEditorTextReceived(string text)
+    {
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            if (_currentCase is null || string.IsNullOrWhiteSpace(text))
+            {
+                return;
+            }
+
+            _isNotePreviewActive = false;
+            _notePreviewBody = string.Empty;
+            NoteEditorTextBox.Text = text;
+            NoteEditorTextBox.CaretIndex = NoteEditorTextBox.Text.Length;
+            NoteEditorTextBox.Focus();
+            _viewModel.StatusMessage = "AI回答をWPFノート編集へコピーしました。プレビューは解除済みです。保存するまで案件ファイルは変更していません。";
+        });
+    }
+
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        _aiNoteEditorTransferServer?.Dispose();
+        _aiNoteEditorTransferServer = null;
     }
 
     private AiAssistantCurrentState BuildAiAssistantCurrentState()

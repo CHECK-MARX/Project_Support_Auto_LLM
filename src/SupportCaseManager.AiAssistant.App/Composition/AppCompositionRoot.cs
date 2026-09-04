@@ -100,7 +100,9 @@ public static class AppCompositionRoot
             viewModel.UndoCodexApplication,
             excelTranslationService: new ExcelTranslationService(),
             artifactPromptComposer: new ArtifactPromptComposer(),
-            ragLabEvidenceLoader: new RagLabEvidenceLoader());
+            ragLabEvidenceLoader: new RagLabEvidenceLoader(),
+            canUndoApplication: viewModel.CanUndoCodexApplication,
+            sendToWpfNoteEditor: text => viewModel.SendToWpfNoteEditorAsync(text));
         viewModel.AttachCodex(codexViewModel);
 
         return new MainWindow(viewModel);

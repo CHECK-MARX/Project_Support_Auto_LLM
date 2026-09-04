@@ -158,7 +158,9 @@ public sealed class MainViewModel : ObservableObject
     private string inquiryText = "エラーの原因と対応方針を確認したいです。";
     private bool isSettingInquiryInternally;
     private bool inquiryManuallyEdited;
-    private string additionalInstruction = "丁寧で簡潔に回答してください。";
+    private const string DefaultAdditionalInstruction = "丁寧で簡潔に回答してください。";
+    private string additionalInstruction = DefaultAdditionalInstruction;
+    private string noteEditorTransferPipeName = string.Empty;
     private int evidenceCount;
     private int promptApproxChars;
     private string customerReplyDraft = "まだ生成されていません。";
@@ -423,6 +425,7 @@ public sealed class MainViewModel : ObservableObject
             InquiryText = InquiryText,
             CustomerReplyDraft = CustomerReplyDraft,
             InternalMemo = InternalMemo,
+            NoteEditorTransferPipeName = noteEditorTransferPipeName,
             Evidence = selectedEvidence,
             UseRagLabEvidence = UseRagLabEvidence,
             RagLabEvidenceFilePath = RagLabEvidenceFilePath,
@@ -439,21 +442,36 @@ public sealed class MainViewModel : ObservableObject
         return ApplyCodexText(text, isReply: true);
     }
 
+    public Task<bool> SendToWpfNoteEditorAsync(string text, CancellationToken cancellationToken = default)
+    {
+        return AiAssistantNoteEditorTransfer.SendAsync(
+            noteEditorTransferPipeName,
+            text,
+            cancellationToken);
+    }
+
     public bool ApplyCodexMemo(string text)
     {
         return ApplyCodexText(text, isReply: false);
+    }
+
+    public bool CanUndoCodexApplication(bool isReply)
+    {
+        return isReply ? codexReplyUndo is not null : codexMemoUndo is not null;
     }
 
     public void UndoCodexApplication(bool isReply)
     {
         if (isReply && codexReplyUndo is not null)
         {
-            (CustomerReplyDraft, codexReplyUndo) = (codexReplyUndo, CustomerReplyDraft);
+            CustomerReplyDraft = codexReplyUndo;
+            codexReplyUndo = null;
             StatusMessage = "返信案へのCodex反映を元に戻しました。ファイルは変更していません。";
         }
         else if (!isReply && codexMemoUndo is not null)
         {
-            (InternalMemo, codexMemoUndo) = (codexMemoUndo, InternalMemo);
+            InternalMemo = codexMemoUndo;
+            codexMemoUndo = null;
             StatusMessage = "調査メモへのCodex反映を元に戻しました。ファイルは変更していません。";
         }
     }
@@ -1603,6 +1621,8 @@ public sealed class MainViewModel : ObservableObject
         {
             SupportToolSettingsFilePath = context.SupportToolSettingsFilePath;
         }
+
+        noteEditorTransferPipeName = context.NoteEditorTransferPipeName?.Trim() ?? string.Empty;
 
         if (!string.IsNullOrWhiteSpace(context.ProductName))
         {

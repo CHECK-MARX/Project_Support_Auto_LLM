@@ -1150,11 +1150,10 @@
                                     <Button Content="送信" Command="{Binding Codex.SendCommand}" />
                                     <Button Content="中止" Command="{Binding Codex.StopCommand}" />
                                     <Button Content="回答をコピー" Command="{Binding Codex.CopyAnswerCommand}" />
-                                    <Button Content="この回答を返信案へ反映" Command="{Binding Codex.ApplyReplyCommand}" />
-                                    <Button Content="この回答を調査メモへ反映" Command="{Binding Codex.ApplyMemoCommand}" />
-                                    <Button Content="返信案反映を元に戻す" Command="{Binding Codex.UndoReplyCommand}" />
-                                    <Button Content="メモ反映を元に戻す" Command="{Binding Codex.UndoMemoCommand}" />
-                                    <Button Content="Codexで最終レビュー" Command="{Binding Codex.FinalReviewCommand}" />
+                                    <Button Content="WPFノート編集に送る（コピー）" Command="{Binding Codex.SendToWpfNoteCommand}" />
+                                    <Button Content="Codexで最終レビュー"
+                                            Command="{Binding Codex.FinalReviewCommand}"
+                                            ToolTip="先にCodex調査タブでこの案件の調査を開始してください" />
                                 </WrapPanel>
                             </Grid>
                         </GroupBox>

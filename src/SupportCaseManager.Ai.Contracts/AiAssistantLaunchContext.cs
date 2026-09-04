@@ -60,4 +60,7 @@ public sealed record class AiAssistantLaunchContext
 
     [JsonPropertyName("additionalInstruction")]
     public string AdditionalInstruction { get; init; } = string.Empty;
+
+    [JsonPropertyName("noteEditorTransferPipeName")]
+    public string NoteEditorTransferPipeName { get; init; } = string.Empty;
 }

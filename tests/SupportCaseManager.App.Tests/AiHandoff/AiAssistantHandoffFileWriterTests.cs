@@ -29,6 +29,7 @@ public class AiAssistantHandoffFileWriterTests
         Assert.Equal("SupportCaseManager.App", restored.Source);
         Assert.Equal("Klocwork", restored.ProductName);
         Assert.Equal("株式会社サンプル", restored.CompanyName);
+        Assert.Equal("SupportCaseManager.NoteEditor.synthetic", restored.NoteEditorTransferPipeName);
         Assert.Equal("ライセンス認証エラーです。", restored.CurrentNoteText);
     }
 
@@ -102,6 +103,7 @@ public class AiAssistantHandoffFileWriterTests
             ReceptionDate = new DateOnly(2026, 6, 3),
             NoteKind = "お客様ご相談内容",
             NoteFilePath = @"D:\Support\Open\00017581\note.txt",
+            NoteEditorTransferPipeName = "SupportCaseManager.NoteEditor.synthetic",
             SelectedText = "ライセンス認証エラー",
             CurrentNoteText = "ライセンス認証エラーです。",
             InquiryText = "ライセンス認証エラー",

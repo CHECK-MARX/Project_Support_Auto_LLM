@@ -103,6 +103,52 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
+    public async Task SendToWpfNoteCommand_SendsEditedAnswerToParentNoteEditor()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        string? sentText = null;
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "SyntheticProduct",
+                SupportId = "SYN-NOTE-001",
+                CaseFolder = temp.Path,
+                InquiryText = "人工fixtureの問い合わせ",
+                NoteEditorTransferPipeName = "synthetic-pipe",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            sendToWpfNoteEditor: text =>
+            {
+                sentText = text;
+                return Task.FromResult(true);
+            });
+        await viewModel.InitializeAsync();
+
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(
+            () => viewModel.ThreadId == "thread-1" && viewModel.StartNewCommand.CanExecute(null),
+            TimeSpan.FromSeconds(5));
+
+        viewModel.TechnicalAnswer = "編集済みTechnicalAnswer";
+        Assert.True(viewModel.SendToWpfNoteCommand.CanExecute(null));
+        viewModel.SendToWpfNoteCommand.Execute(null);
+        await WaitUntilAsync(() => sentText is not null, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("編集済みTechnicalAnswer", sentText);
+        Assert.Contains("WPFノート編集へコピーしました", viewModel.ConnectionDetails, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SendCommand_NormalizesLegacyLogAndSendsImageInput()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

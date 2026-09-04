@@ -18,6 +18,7 @@ public sealed record CodexCaseSnapshot
     public string InquiryText { get; init; } = string.Empty;
     public string CustomerReplyDraft { get; init; } = string.Empty;
     public string InternalMemo { get; init; } = string.Empty;
+    public string NoteEditorTransferPipeName { get; init; } = string.Empty;
     public IReadOnlyList<SearchSource> Evidence { get; init; } = [];
     public bool UseRagLabEvidence { get; init; }
     public string RagLabEvidenceFilePath { get; init; } = string.Empty;
