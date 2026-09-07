@@ -56,7 +56,7 @@ public sealed class ModelResolutionTests
     }
 
     [Fact]
-    public void Resolve_WhenRequestedModelIsUnavailable_ReportsExplicitFallback()
+    public void Resolve_WhenRequestedModelIsUnavailable_ReportsExplicitErrorWithoutFallback()
     {
         var result = OllamaModelResolver.Resolve(
             "qwen3.8:27b",
@@ -64,10 +64,14 @@ public sealed class ModelResolutionTests
             ["qwen3:8b", "gemma4:31b"]);
 
         Assert.Equal("qwen3.8:27b", result.RequestedModel);
-        Assert.Equal("gemma4:31b", result.EffectiveModel);
-        Assert.Equal("gemma4:31b", result.FallbackModel);
+        Assert.False(result.IsResolved);
+        Assert.Empty(result.Model);
+        Assert.Empty(result.EffectiveModel);
+        Assert.Empty(result.FallbackModel);
         Assert.Equal(ModelFallbackReasons.RequestedModelUnavailable, result.FallbackReason);
-        Assert.Equal(ModelResolutionSources.Fallback, result.Source);
+        Assert.Equal(ModelResolutionSources.Unresolved, result.Source);
+        Assert.Contains("保存済みOllamaモデル", result.Message, StringComparison.Ordinal);
+        Assert.Contains("別のモデルを選択", result.Message, StringComparison.Ordinal);
     }
 
     [Fact]

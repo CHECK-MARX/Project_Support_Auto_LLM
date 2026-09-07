@@ -7,7 +7,13 @@ public static class SupportTopicCatalog
         var products = new List<TopicAliasDefinition>();
         if (!string.IsNullOrWhiteSpace(productName))
         {
-            products.Add(new TopicAliasDefinition { CanonicalName = productName.Trim() });
+            var isCheckmarx = productName.Contains("checkmarx", StringComparison.OrdinalIgnoreCase) ||
+                productName.Contains("cxsast", StringComparison.OrdinalIgnoreCase);
+            products.Add(new TopicAliasDefinition
+            {
+                CanonicalName = productName.Trim(),
+                Aliases = isCheckmarx ? ["Checkmarx SAST", "CxSAST", "SAST"] : [],
+            });
         }
         products.Add(new TopicAliasDefinition { CanonicalName = "Validate", Aliases = ["Perforce Validate"] });
         return new TopicEntityCatalog
@@ -16,6 +22,7 @@ public static class SupportTopicCatalog
             Components =
             [
                 new TopicAliasDefinition { CanonicalName = "Validate", Aliases = ["Perforce Validate"] },
+                new TopicAliasDefinition { CanonicalName = "CxSAST", Aliases = ["Checkmarx SAST", "SAST"] },
             ],
             Features =
             [
@@ -36,6 +43,14 @@ public static class SupportTopicCatalog
                 {
                     CanonicalName = "Supported Languages",
                     Aliases = ["対応言語", "解析対象", "supported languages", "language support"],
+                },
+                new TopicAliasDefinition
+                {
+                    CanonicalName = "Release Notes",
+                    Aliases = [
+                        "リリースノート", "リリース内容", "変更内容", "変更点", "追加機能", "新機能", "修正内容", "対応内容", "バージョン情報",
+                        "release notes", "release note", "released", "enhancement", "resolved issues", "what's new", "engine pack",
+                    ],
                 },
             ],
             Objects =

@@ -30,18 +30,21 @@ public sealed class CodexExecutableResolver : ICodexExecutableResolver
     private readonly Func<string> localAppDataProvider;
     private readonly Func<string, CancellationToken, Task<IReadOnlyList<string>>> whereProvider;
     private readonly Func<string, CancellationToken, Task<string?>> versionProvider;
+    private readonly Func<string, IReadOnlyList<string>> desktopRuntimeProvider;
 
     public CodexExecutableResolver(
         Func<string, bool>? fileExists = null,
         Func<string>? localAppDataProvider = null,
         Func<string, CancellationToken, Task<IReadOnlyList<string>>>? whereProvider = null,
-        Func<string, CancellationToken, Task<string?>>? versionProvider = null)
+        Func<string, CancellationToken, Task<string?>>? versionProvider = null,
+        Func<string, IReadOnlyList<string>>? desktopRuntimeProvider = null)
     {
         this.fileExists = fileExists ?? File.Exists;
         this.localAppDataProvider = localAppDataProvider
             ?? (() => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
         this.whereProvider = whereProvider ?? FindWithWhereAsync;
         this.versionProvider = versionProvider ?? ReadVersionAsync;
+        this.desktopRuntimeProvider = desktopRuntimeProvider ?? EnumerateDesktopRuntimeCandidates;
     }
 
     public async Task<CodexExecutableResolution> ResolveAsync(
@@ -54,6 +57,15 @@ public sealed class CodexExecutableResolver : ICodexExecutableResolver
             if (configured is not null && fileExists(configured))
             {
                 return Found(configured, CodexExecutableSource.UserSetting, "設定されたCodex実行ファイルを使用します。");
+            }
+        }
+
+        foreach (var candidate in GetDesktopRuntimeCandidates())
+        {
+            var normalized = NormalizeCandidate(candidate);
+            if (normalized is not null && fileExists(normalized))
+            {
+                return Found(normalized, CodexExecutableSource.StandardLocation, "Codex Desktopの最新runtimeからCodex実行ファイルを検出しました。");
             }
         }
 
@@ -84,6 +96,20 @@ public sealed class CodexExecutableResolver : ICodexExecutableResolver
             Source = CodexExecutableSource.NotFound,
             Message = "Codex実行ファイルが見つかりません。設定画面の「Codex実行ファイル」でcodex.exeを選択してください。",
         };
+    }
+
+    private IReadOnlyList<string> GetDesktopRuntimeCandidates()
+    {
+        try
+        {
+            return desktopRuntimeProvider(localAppDataProvider())
+                .Where(static path => !string.IsNullOrWhiteSpace(path))
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return [];
+        }
     }
 
     public Task<string?> GetVersionAsync(string executablePath, CancellationToken cancellationToken = default)
@@ -192,6 +218,26 @@ public sealed class CodexExecutableResolver : ICodexExecutableResolver
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
             return null;
+        }
+    }
+
+    private static IReadOnlyList<string> EnumerateDesktopRuntimeCandidates(string localAppData)
+    {
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            return [];
+        }
+
+        var runtimeRoot = Path.Combine(localAppData, "OpenAI", "Codex", "bin");
+        try
+        {
+            return Directory.EnumerateFiles(runtimeRoot, "codex.exe", SearchOption.AllDirectories)
+                .OrderByDescending(File.GetLastWriteTimeUtc)
+                .ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return [];
         }
     }
 }

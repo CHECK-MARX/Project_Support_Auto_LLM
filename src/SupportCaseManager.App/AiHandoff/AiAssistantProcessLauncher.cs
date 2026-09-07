@@ -43,12 +43,21 @@ public sealed class AiAssistantProcessLauncher : IAiAssistantProcessLauncher
         }
 
         var executablePath = executableResolver.Resolve();
+        var isManagedAssembly = string.Equals(
+            Path.GetExtension(executablePath),
+            ".dll",
+            StringComparison.OrdinalIgnoreCase);
         var startInfo = new ProcessStartInfo
         {
-            FileName = executablePath,
+            FileName = isManagedAssembly ? "dotnet" : executablePath,
             UseShellExecute = false,
             WorkingDirectory = Path.GetDirectoryName(executablePath) ?? string.Empty,
         };
+        if (isManagedAssembly)
+        {
+            startInfo.ArgumentList.Add(executablePath);
+        }
+
         startInfo.ArgumentList.Add("--context-file");
         startInfo.ArgumentList.Add(normalizedContextFilePath);
 

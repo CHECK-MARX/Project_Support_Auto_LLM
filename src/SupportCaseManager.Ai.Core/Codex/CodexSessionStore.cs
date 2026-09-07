@@ -21,6 +21,7 @@ public sealed record CodexSession
     public DateTimeOffset LastUsedAt { get; init; }
     public string CodexVersion { get; init; } = string.Empty;
     public string Model { get; init; } = string.Empty;
+    public string ReasoningEffort { get; init; } = string.Empty;
     public string SessionStatus { get; init; } = string.Empty;
     public IReadOnlyList<CodexSessionMessage> Messages { get; init; } = [];
 }

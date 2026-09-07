@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Windows;
+using SupportCaseManager.App.Diagnostics;
 using SupportCaseManager.App.Theme;
 using SupportCaseManager.App.ViewModels;
 using SupportCaseManager.Core.Config;
@@ -45,9 +46,23 @@ public partial class App : System.Windows.Application
 
     protected override void OnExit(ExitEventArgs e)
     {
-        _trayIcon?.Dispose();
-        _trayIcon = null;
-        base.OnExit(e);
+        ParentCloseTrace.Write("APP_ONEXIT_ENTER");
+
+        try
+        {
+            _trayIcon?.Dispose();
+            _trayIcon = null;
+            base.OnExit(e);
+        }
+        catch (Exception exception)
+        {
+            ParentCloseTrace.WriteException("APP_ONEXIT", exception);
+            throw;
+        }
+        finally
+        {
+            ParentCloseTrace.Write("APP_ONEXIT_EXIT");
+        }
     }
 
     private static IAppLogger CreateLogger()

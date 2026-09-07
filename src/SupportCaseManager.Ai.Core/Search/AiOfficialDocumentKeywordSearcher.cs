@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Core.Ranking;
@@ -45,12 +46,19 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
         }
 
         var query = BuildQuery(inquiryFocus);
+        var hasExplicitTargetVersion = inquiryFocus.TargetVersions.Count > 0;
         return document.Documents
-            .Select(doc => new ScoredOfficialDocument(
-                doc,
-                Score(doc, query, inquiryFocus),
-                ProcedureSearchBoost.Calculate(query, doc.Title, doc.SectionTitle, doc.Url, doc.Text)))
+            .Select(doc =>
+            {
+                var score = Score(doc, query, inquiryFocus);
+                return new ScoredOfficialDocument(
+                    doc,
+                    score,
+                    ProcedureSearchBoost.Calculate(query, doc.Title, doc.SectionTitle, doc.Url, doc.Text),
+                    HasTargetVersion(doc, inquiryFocus.TargetVersions));
+            })
             .Where(item => item.Score.Score > 0)
+            .Where(item => !hasExplicitTargetVersion || item.TargetVersionMatched)
             .OrderByDescending(item => item.ProcedureSpecificity)
             .ThenByDescending(item => item.Score.Score)
             .ThenByDescending(item => item.Document.RetrievedAt)
@@ -78,6 +86,23 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
                 "Engine Pack",
                 "Hotfix",
                 "CxSAST",
+            ]);
+        }
+
+        if (IsReleaseNotesQuery(inquiryFocus))
+        {
+            parts.AddRange(
+            [
+                "Release Notes",
+                "release note",
+                "released",
+                "enhancement",
+                "resolved issues",
+                "what's new",
+                "Engine Pack",
+                "CxSAST",
+                "SAST",
+                "Checkmarx",
             ]);
         }
 
@@ -124,9 +149,73 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             };
         }
 
-        if (score.Score <= 0 || inquiryFocus.TargetVersions.Count == 0)
+        var matchedVersions = FindMatchedTargetVersions(document, inquiryFocus.TargetVersions);
+        if (score.Score <= 0 && matchedVersions.Count == 0)
         {
             return score;
+        }
+
+        if (score.Score <= 0)
+        {
+            score = new SearchScoreDetails(
+                0.48,
+                matchedVersions,
+                $"{matchedVersions.Count}/{Math.Max(1, inquiryFocus.TargetVersions.Count)} target versions",
+                "version-only-match=true");
+        }
+
+        var exactVersionHeading = HasVersionMatch(
+            string.Join(" ", document.Title, document.SectionTitle),
+            matchedVersions);
+        var releasePage = IsReleasePage(document);
+        var boost = exactVersionHeading
+            ? (IsReleaseNotesQuery(inquiryFocus) ? 0.34 : 0.22)
+            : releasePage && IsReleaseNotesQuery(inquiryFocus)
+                ? 0.18
+                : 0.08;
+        var breakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
+            ? $"targetVersion={string.Join(",", matchedVersions)}"
+            : $"{score.ScoreBreakdown}; targetVersion={string.Join(",", matchedVersions)}";
+        if (exactVersionHeading)
+        {
+            breakdown += "; exactVersionHeading=true";
+        }
+
+        return score with
+        {
+            Score = Math.Round(ApplyBoundedBoost(score.Score, boost), 3),
+            MatchedTerms = matchedVersions
+                .Concat(score.MatchedTerms)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(12)
+                .ToList(),
+            ScoreBreakdown = breakdown,
+        };
+    }
+
+    private static bool IsReleaseNotesQuery(InquiryFocus inquiryFocus)
+    {
+        return inquiryFocus.TechnicalQuery.Intent.Contains("ReleaseNotes", StringComparer.OrdinalIgnoreCase) ||
+            ContainsAny(
+                inquiryFocus.FocusText,
+                "リリースノート", "リリース内容", "変更内容", "変更点", "追加機能", "新機能", "修正内容", "対応内容", "バージョン情報",
+                "release notes", "release note", "released", "enhancement", "resolved issues", "what's new", "engine pack");
+    }
+
+    private static bool HasTargetVersion(
+        AiIndexedOfficialDocument document,
+        IReadOnlyList<string> targetVersions)
+    {
+        return FindMatchedTargetVersions(document, targetVersions).Count > 0;
+    }
+
+    private static IReadOnlyList<string> FindMatchedTargetVersions(
+        AiIndexedOfficialDocument document,
+        IReadOnlyList<string> targetVersions)
+    {
+        if (targetVersions.Count == 0)
+        {
+            return [];
         }
 
         var searchableText = string.Join(
@@ -135,27 +224,41 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
             document.SectionTitle,
             document.Url,
             document.Text);
-        var matchedVersions = inquiryFocus.TargetVersions
-            .Where(version => searchableText.Contains(version, StringComparison.OrdinalIgnoreCase))
+        return targetVersions
+            .Where(version => HasVersionMatch(searchableText, version))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (matchedVersions.Count == 0)
+    }
+
+    private static bool HasVersionMatch(string text, IEnumerable<string> versions)
+    {
+        return versions.Any(version => HasVersionMatch(text, version));
+    }
+
+    private static bool HasVersionMatch(string text, string version)
+    {
+        var parts = version
+            .Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2 || parts.Any(part => !part.All(char.IsDigit)))
         {
-            return score;
+            return false;
         }
 
-        return score with
-        {
-            Score = Math.Round(ApplyBoundedBoost(score.Score, 0.18), 3),
-            MatchedTerms = matchedVersions
-                .Concat(score.MatchedTerms)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(12)
-                .ToList(),
-            ScoreBreakdown = string.IsNullOrWhiteSpace(score.ScoreBreakdown)
-                ? $"targetVersion={string.Join(",", matchedVersions)}"
-                : $"{score.ScoreBreakdown}; targetVersion={string.Join(",", matchedVersions)}",
-        };
+        var optionalPatch = parts.Length == 2 ? @"(?:[.\-]\d+)?" : string.Empty;
+        var pattern = $"(?<![\\d.]){string.Join(@"[.\\-_/\\s]+", parts.Select(Regex.Escape))}{optionalPatch}(?!\\d)(?!\\.\\d)";
+        return Regex.IsMatch(text, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    }
+
+    private static bool IsReleasePage(AiIndexedOfficialDocument document)
+    {
+        return ContainsAny(
+            string.Join(" ", document.Title, document.SectionTitle, document.Url),
+            "release notes", "release-note", "resolved issues", "what's new", "engine pack", "hotfix");
+    }
+
+    private static bool ContainsAny(string value, params string[] terms)
+    {
+        return terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
     private static SearchSource ToSearchSource(
@@ -252,5 +355,6 @@ public sealed class AiOfficialDocumentKeywordSearcher : IAiOfficialDocumentKeywo
     private sealed record ScoredOfficialDocument(
         AiIndexedOfficialDocument Document,
         SearchScoreDetails Score,
-        double ProcedureSpecificity);
+        double ProcedureSpecificity,
+        bool TargetVersionMatched);
 }

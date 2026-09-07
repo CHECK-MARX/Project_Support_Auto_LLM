@@ -102,7 +102,15 @@ public static class AppCompositionRoot
             artifactPromptComposer: new ArtifactPromptComposer(),
             ragLabEvidenceLoader: new RagLabEvidenceLoader(),
             canUndoApplication: viewModel.CanUndoCodexApplication,
-            sendToWpfNoteEditor: text => viewModel.SendToWpfNoteEditorAsync(text));
+            sendToWpfNoteEditor: text => viewModel.SendToWpfNoteEditorAsync(text),
+            codexSelectionProvider: () => (viewModel.CodexModel, viewModel.CodexReasoningEffort),
+            codexSelectionUpdated: (model, reasoningEffort) =>
+            {
+                viewModel.CodexModel = model ?? string.Empty;
+                viewModel.CodexReasoningEffort = reasoningEffort ?? string.Empty;
+            },
+            caseCodexSelectionProvider: viewModel.GetCaseCodexSelection,
+            caseCodexSelectionUpdated: viewModel.UpdateCaseCodexSelection);
         viewModel.AttachCodex(codexViewModel);
 
         return new MainWindow(viewModel);

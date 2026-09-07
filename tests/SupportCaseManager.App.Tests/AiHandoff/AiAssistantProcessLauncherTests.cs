@@ -27,6 +27,26 @@ public class AiAssistantProcessLauncherTests
     }
 
     [Fact]
+    public async Task LaunchAsync_StartsManagedAssistantThroughDotnet()
+    {
+        using var temp = new TempDirectory();
+        var contextPath = System.IO.Path.Combine(temp.Path, "ai-context-test.json");
+        await File.WriteAllTextAsync(contextPath, "{}");
+        var assemblyPath = System.IO.Path.Combine(temp.Path, AiAssistantExecutableResolver.AssemblyName);
+        await File.WriteAllTextAsync(assemblyPath, string.Empty);
+        var starter = new CapturingProcessStarter();
+        var launcher = new AiAssistantProcessLauncher(new FixedExecutableResolver(assemblyPath), starter, temp.Path);
+
+        await launcher.LaunchAsync(contextPath);
+
+        Assert.NotNull(starter.StartInfo);
+        Assert.Equal("dotnet", starter.StartInfo.FileName);
+        Assert.False(starter.StartInfo.UseShellExecute);
+        Assert.Equal(temp.Path, starter.StartInfo.WorkingDirectory);
+        Assert.Equal([assemblyPath, "--context-file", contextPath], starter.StartInfo.ArgumentList.ToArray());
+    }
+
+    [Fact]
     public async Task LaunchAsync_MissingContextFileDoesNotStartProcess()
     {
         using var temp = new TempDirectory();
@@ -141,18 +161,54 @@ public class AiAssistantProcessLauncherTests
         Directory.CreateDirectory(System.IO.Path.GetDirectoryName(debugAssistant)!);
         File.WriteAllText(releaseAssistant, string.Empty);
         File.WriteAllText(debugAssistant, string.Empty);
+        var expected = string.Equals(configuration, "Release", StringComparison.Ordinal)
+            ? releaseAssistant
+            : debugAssistant;
+        var expectedTime = DateTime.UtcNow.AddMinutes(1);
+        Func<string, DateTime> getLastWriteTimeUtc = path => string.Equals(path, expected, StringComparison.OrdinalIgnoreCase)
+            ? expectedTime
+            : expectedTime.AddMinutes(-1);
         var resolver = new AiAssistantExecutableResolver(
             _ => null,
             File.Exists,
             appBaseDirectory: mainOutput,
-            currentDirectory: temp.Path);
+            currentDirectory: temp.Path,
+            getLastWriteTimeUtc: getLastWriteTimeUtc);
 
         var resolved = resolver.Resolve();
 
-        var expected = string.Equals(configuration, "Release", StringComparison.Ordinal)
-            ? releaseAssistant
-            : debugAssistant;
         Assert.Equal(System.IO.Path.GetFullPath(expected), resolved);
+    }
+
+    [Fact]
+    public void ExecutableResolver_UsesMostRecentlyBuiltConfiguration()
+    {
+        using var temp = new TempDirectory();
+        var mainOutput = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.App", "bin", "Debug", "net10.0-windows");
+        var releaseAssembly = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.AiAssistant.App", "bin", "Release", "net10.0-windows",
+            AiAssistantExecutableResolver.AssemblyName);
+        var debugExecutable = System.IO.Path.Combine(
+            temp.Path, "src", "SupportCaseManager.AiAssistant.App", "bin", "Debug", "net10.0-windows",
+            AiAssistantExecutableResolver.ExecutableName);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(releaseAssembly)!);
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(debugExecutable)!);
+        File.WriteAllText(releaseAssembly, string.Empty);
+        File.WriteAllText(debugExecutable, string.Empty);
+
+        var resolver = new AiAssistantExecutableResolver(
+            _ => null,
+            File.Exists,
+            appBaseDirectory: mainOutput,
+            currentDirectory: temp.Path,
+            getLastWriteTimeUtc: path => string.Equals(path, releaseAssembly, StringComparison.OrdinalIgnoreCase)
+                ? new DateTime(2026, 9, 4, 14, 7, 20, DateTimeKind.Utc)
+                : new DateTime(2026, 9, 4, 11, 24, 3, DateTimeKind.Utc));
+
+        var resolved = resolver.Resolve();
+
+        Assert.Equal(System.IO.Path.GetFullPath(releaseAssembly), resolved);
     }
 
     private sealed class FixedExecutableResolver(string executablePath) : IAiAssistantExecutableResolver

@@ -12,6 +12,7 @@ public static class FactKeys
 public static class QuestionTypes
 {
     public const string LatestVersionQuestion = "LatestVersionQuestion";
+    public const string ReleaseNotesQuestion = "ReleaseNotesQuestion";
     public const string FeatureAvailabilityQuestion = "FeatureAvailabilityQuestion";
     public const string HowToQuestion = "HowToQuestion";
     public const string UpgradePossibilityQuestion = "UpgradePossibilityQuestion";

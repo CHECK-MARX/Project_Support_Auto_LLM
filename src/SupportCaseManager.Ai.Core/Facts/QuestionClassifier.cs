@@ -54,6 +54,24 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
             Regex.IsMatch(text, @"--[A-Za-z0-9][A-Za-z0-9_-]*", RegexOptions.CultureInvariant);
         var asksConfiguration = ContainsAny(normalized, "設定", "configuration", "configure", "config");
         var asksVersion = ContainsAny(normalized, "バージョン", "version");
+        var asksReleaseNotes = ContainsAny(
+            normalized,
+            "リリースノート",
+            "リリース内容",
+            "変更内容",
+            "変更点",
+            "追加機能",
+            "新機能",
+            "修正内容",
+            "対応内容",
+            "バージョン情報",
+            "releasenotes",
+            "releasenote",
+            "released",
+            "enhancement",
+            "resolvedissues",
+            "whatsnew",
+            "enginepack");
         var asksPermission = ContainsAny(normalized, "権限", "permission", "accessdenied", "unauthorized", "forbidden");
         var asksErrorMessage = ContainsAny(normalized, "エラーメッセージ", "エラーコード", "errormessage", "errorcode");
 
@@ -78,6 +96,11 @@ public sealed partial class QuestionClassifier : IQuestionClassifier
         {
             questionTypes.Add(QuestionTypes.UpgradePossibilityQuestion);
             requestedFacts.Add(FactKeys.UpgradePossibility);
+        }
+
+        if (asksReleaseNotes)
+        {
+            questionTypes.Add(QuestionTypes.ReleaseNotesQuestion);
         }
 
         if (asksHowTo && !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase))

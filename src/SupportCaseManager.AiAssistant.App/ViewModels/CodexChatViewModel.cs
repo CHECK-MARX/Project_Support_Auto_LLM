@@ -36,7 +36,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private readonly Func<string, bool> applyReply;
     private readonly Func<string, bool> applyMemo;
     private readonly Func<string, Task<bool>>? sendToWpfNoteEditor;
+    private readonly Func<(string? Model, string? ReasoningEffort)>? codexSelectionProvider;
+    private readonly Action<string?, string?>? codexSelectionUpdated;
+    private readonly Func<(string? Model, string? ReasoningEffort)>? caseCodexSelectionProvider;
+    private readonly Action<string?, string?>? caseCodexSelectionUpdated;
     private readonly Action<bool> undoApplication;
+    private readonly Func<bool, bool> canUndoApplication;
     private readonly IExcelTranslationService excelTranslationService;
     private readonly IArtifactPromptComposer artifactPromptComposer;
     private readonly ArtifactRequestDetector artifactRequestDetector;
@@ -46,6 +51,15 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private string connectionDetails = "Codexへ接続してください。";
     private string version = "-";
     private string model = "Codex側の既定モデル";
+    private string selectedModel = string.Empty;
+    private string selectedReasoningEffort = string.Empty;
+    private string caseSelectedModel = string.Empty;
+    private string caseSelectedReasoningEffort = string.Empty;
+    private string newThreadModel = string.Empty;
+    private string newThreadReasoningEffort = string.Empty;
+    private bool caseSelectionUpdating;
+    private string actualModel = "-";
+    private string actualReasoningEffort = "-";
     private string accountStatus = "未確認";
     private string threadId = "-";
     private string promptInput = string.Empty;
@@ -103,7 +117,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         IRagLabEvidenceLoader? ragLabEvidenceLoader = null,
         ICodexEvidenceAbComparisonService? abComparisonService = null,
         Func<bool, bool>? canUndoApplication = null,
-        Func<string, Task<bool>>? sendToWpfNoteEditor = null)
+        Func<string, Task<bool>>? sendToWpfNoteEditor = null,
+        Func<(string? Model, string? ReasoningEffort)>? codexSelectionProvider = null,
+        Action<string?, string?>? codexSelectionUpdated = null,
+        Func<(string? Model, string? ReasoningEffort)>? caseCodexSelectionProvider = null,
+        Action<string?, string?>? caseCodexSelectionUpdated = null)
     {
         this.client = client;
         this.fileScanner = fileScanner;
@@ -121,6 +139,13 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         this.sendToWpfNoteEditor = sendToWpfNoteEditor;
         this.undoApplication = undoApplication;
         this.canUndoApplication = canUndoApplication ?? (_ => false);
+        this.codexSelectionProvider = codexSelectionProvider;
+        this.codexSelectionUpdated = codexSelectionUpdated;
+        this.caseCodexSelectionProvider = caseCodexSelectionProvider;
+        this.caseCodexSelectionUpdated = caseCodexSelectionUpdated;
+        var savedSelection = codexSelectionProvider?.Invoke() ?? (null, null);
+        selectedModel = savedSelection.Model?.Trim() ?? string.Empty;
+        selectedReasoningEffort = savedSelection.ReasoningEffort?.Trim() ?? string.Empty;
         this.excelTranslationService = excelTranslationService ?? new ExcelTranslationService();
         this.artifactPromptComposer = artifactPromptComposer ?? new ArtifactPromptComposer();
         this.artifactRequestDetector = artifactRequestDetector ?? new ArtifactRequestDetector();
@@ -165,6 +190,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     public ObservableCollection<CodexChatMessageViewModel> Messages { get; } = [];
     public ObservableCollection<CodexCaseFileViewModel> Files { get; } = [];
+    public ObservableCollection<CodexModelInfo> AvailableModels { get; } = [];
+    public ObservableCollection<CodexReasoningEffortInfo> AvailableReasoningEfforts { get; } = [];
+    public ObservableCollection<CodexCaseModelOption> AvailableCaseModels { get; } = [];
+    public ObservableCollection<CodexCaseReasoningEffortOption> AvailableCaseReasoningEfforts { get; } = [];
     public IReadOnlyList<CodexPromptPreset> PromptPresets { get; } = CodexPromptPreset.Defaults;
 
     public AsyncRelayCommand ConnectCommand { get; }
@@ -240,6 +269,132 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         get => model;
         private set => SetProperty(ref model, value);
     }
+
+    public string SelectedModel
+    {
+        get => selectedModel;
+        set => SetModelSelection(value, persist: true);
+    }
+
+    public string SelectedReasoningEffort
+    {
+        get => selectedReasoningEffort;
+        set => SetReasoningSelection(value, persist: true);
+    }
+
+    public string CaseSelectedModel
+    {
+        get => caseSelectedModel;
+        set => SetCaseModelSelection(value, persist: true);
+    }
+
+    public string CaseSelectedReasoningEffort
+    {
+        get => caseSelectedReasoningEffort;
+        set => SetCaseReasoningSelection(value, persist: true);
+    }
+
+    public string GlobalCodexSelectionSummary =>
+        $"{ValueOrDash(SelectedModel)} / {FormatReasoningDisplay(SelectedReasoningEffort)}";
+
+    public string CaseCodexSelectionSummary =>
+        $"{FormatCaseModelDisplay(CaseSelectedModel)} / {FormatCaseReasoningDisplay(CaseSelectedReasoningEffort)}";
+
+    public string CaseCodexSelectionStatus => BuildCaseSelectionStatus();
+
+    public string EffectiveCodexModel => EffectiveNewThreadModel();
+    public string EffectiveCodexReasoning => EffectiveNewThreadReasoningEffort();
+    public string GlobalSettingsDisplay => DisplaySettings(SelectedModel, SelectedReasoningEffort);
+    public string CaseSettingsDisplay =>
+        $"{(string.IsNullOrWhiteSpace(CaseSelectedModel) ? "全体設定を使用" : DisplayModel(CaseSelectedModel))} / {(string.IsNullOrWhiteSpace(CaseSelectedReasoningEffort) ? "全体設定を使用" : DisplayReasoning(CaseSelectedReasoningEffort))}";
+    public string EffectiveSettingsDisplay => DisplaySettings(EffectiveCodexModel, EffectiveCodexReasoning);
+    public string ActualThreadSettingsDisplay => IsActualThreadForCurrentCase
+        ? DisplaySettings(ActualModel, ActualReasoningEffort) : "不明 / 不明";
+
+    private bool IsActualThreadForCurrentCase
+    {
+        get
+        {
+            var snapshot = caseProvider();
+            return currentSnapshot is not null
+                && string.Equals(currentSnapshot.SupportId, snapshot.SupportId, StringComparison.OrdinalIgnoreCase)
+                && currentSnapshot.ProductId == snapshot.ProductId
+                && PathEquals(currentSnapshot.CaseFolder, snapshot.CaseFolder);
+        }
+    }
+
+    public string CaseSettingsDiagnostics
+    {
+        get
+        {
+            var snapshot = caseProvider();
+            var identity = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                snapshot.SupportId, snapshot.ProductId,
+                CaseFolder = snapshot.CaseFolder?.Trim().TrimEnd('\\', '/').ToUpperInvariant(),
+            });
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(identity)));
+            return $"CaseCodexSettings:\nGlobalModel: {SelectedModel}\nGlobalReasoning: {SelectedReasoningEffort}\nCaseOverrideModel: {CaseSelectedModel}\nCaseOverrideReasoning: {CaseSelectedReasoningEffort}\nEffectiveModel: {EffectiveCodexModel}\nEffectiveReasoning: {EffectiveCodexReasoning}\nActualThreadModel: {(IsActualThreadForCurrentCase ? ActualModel : "-")}\nActualThreadReasoning: {(IsActualThreadForCurrentCase ? ActualReasoningEffort : "-")}\nCaseIdentity: SHA256:{hash}";
+        }
+    }
+
+    public static string DisplayModel(string? value) => value switch
+    {
+        "gpt-6-astra" => "Astra", "gpt-5.6-sol" => "Sol",
+        "gpt-5.6-terra" => "Terra", "gpt-5.6-luna" => "Luna",
+        null or "" or "-" => "不明", _ => value,
+    };
+
+    public static string DisplayReasoning(string? value) => value switch
+    {
+        "low" => "低", "medium" => "中", "high" => "高", "xhigh" => "超高",
+        "max" => "最大", "ultra" => "最上位", null or "" or "-" => "不明", _ => value,
+    };
+
+    private static string DisplaySettings(string? model, string? reasoning) =>
+        $"{DisplayModel(model)} / {DisplayReasoning(reasoning)}";
+
+    protected override void OnPropertyChanged([System.Runtime.CompilerServices.CallerMemberName] string? propertyName = null)
+    {
+        base.OnPropertyChanged(propertyName);
+        if (propertyName is nameof(SelectedModel) or nameof(SelectedReasoningEffort)
+            or nameof(CaseSelectedModel) or nameof(CaseSelectedReasoningEffort)
+            or nameof(ActualModel) or nameof(ActualReasoningEffort) or nameof(CaseCodexSelectionStatus))
+        {
+            foreach (var name in new[] { nameof(EffectiveCodexModel), nameof(EffectiveCodexReasoning),
+                nameof(GlobalSettingsDisplay), nameof(CaseSettingsDisplay), nameof(EffectiveSettingsDisplay),
+                nameof(ActualThreadSettingsDisplay), nameof(CaseSettingsDiagnostics) })
+                base.OnPropertyChanged(name);
+        }
+    }
+
+    public string ActualModel
+    {
+        get => actualModel;
+        private set
+        {
+            if (SetProperty(ref actualModel, value))
+            {
+                OnPropertyChanged(nameof(ActualModelAndReasoning));
+            }
+        }
+    }
+
+    public string ActualReasoningEffort
+    {
+        get => actualReasoningEffort;
+        private set
+        {
+            if (SetProperty(ref actualReasoningEffort, value))
+            {
+                OnPropertyChanged(nameof(ActualModelAndReasoning));
+            }
+        }
+    }
+
+    public string ActualModelAndReasoning => $"{ValueOrDash(ActualModel)} / {ValueOrDash(ActualReasoningEffort)}";
+
+    public string CodexSelectionStatus => BuildSelectionStatus();
 
     public string AccountStatus
     {
@@ -366,8 +521,29 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     public async Task InitializeAsync()
     {
+        var savedSelection = codexSelectionProvider?.Invoke();
+        RunOnUi(() =>
+        {
+            if (savedSelection is { } selection)
+            {
+                SetModelSelection(selection.Model, persist: false);
+                SetReasoningSelection(selection.ReasoningEffort, persist: false);
+            }
+        });
+        RefreshCaseSelection();
         await RefreshFilesAsync().ConfigureAwait(false);
         await FindPreviousSessionAsync().ConfigureAwait(false);
+    }
+
+    public void RefreshCaseSelection()
+    {
+        var savedSelection = caseCodexSelectionProvider?.Invoke() ?? (null, null);
+        RunOnUi(() =>
+        {
+            SetCaseModelSelection(savedSelection.Model, persist: false);
+            SetCaseReasoningSelection(savedSelection.ReasoningEffort, persist: false);
+            RebuildCaseSelectionOptions();
+        });
     }
 
     public async Task ShutdownAsync()
@@ -414,6 +590,386 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
     }
 
+    private void SetModelSelection(string? value, bool persist)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (persist && string.IsNullOrWhiteSpace(normalized)
+            && !string.IsNullOrWhiteSpace(selectedModel)
+            && AvailableModels.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(selectedModel, normalized, StringComparison.Ordinal))
+        {
+            selectedModel = normalized;
+            OnPropertyChanged(nameof(SelectedModel));
+            OnPropertyChanged(nameof(GlobalCodexSelectionSummary));
+            OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+        }
+
+        UpdateReasoningEfforts();
+        RebuildCaseReasoningEfforts();
+        if (persist)
+        {
+            codexSelectionUpdated?.Invoke(SelectedModel, SelectedReasoningEffort);
+        }
+    }
+
+    private void SetReasoningSelection(string? value, bool persist)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (persist && string.IsNullOrWhiteSpace(normalized)
+            && !string.IsNullOrWhiteSpace(selectedReasoningEffort)
+            && AvailableModels.Count == 0)
+        {
+            return;
+        }
+
+        if (!string.Equals(selectedReasoningEffort, normalized, StringComparison.Ordinal))
+        {
+            selectedReasoningEffort = normalized;
+            OnPropertyChanged(nameof(SelectedReasoningEffort));
+            OnPropertyChanged(nameof(GlobalCodexSelectionSummary));
+            OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+        }
+
+        OnPropertyChanged(nameof(CodexSelectionStatus));
+        RebuildCaseReasoningEfforts();
+        if (persist)
+        {
+            codexSelectionUpdated?.Invoke(SelectedModel, SelectedReasoningEffort);
+        }
+    }
+
+    private void SetCaseModelSelection(string? value, bool persist)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (caseSelectionUpdating && string.IsNullOrWhiteSpace(normalized)
+            && !string.IsNullOrWhiteSpace(caseSelectedModel))
+        {
+            return;
+        }
+
+        if (!string.Equals(caseSelectedModel, normalized, StringComparison.Ordinal))
+        {
+            caseSelectedModel = normalized;
+            OnPropertyChanged(nameof(CaseSelectedModel));
+            OnPropertyChanged(nameof(CaseCodexSelectionSummary));
+        }
+
+        RebuildCaseReasoningEfforts();
+        OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+        if (persist)
+        {
+            caseCodexSelectionUpdated?.Invoke(
+                NullIfWhiteSpace(CaseSelectedModel),
+                NullIfWhiteSpace(CaseSelectedReasoningEffort));
+        }
+    }
+
+    private void SetCaseReasoningSelection(string? value, bool persist)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (caseSelectionUpdating && string.IsNullOrWhiteSpace(normalized)
+            && !string.IsNullOrWhiteSpace(caseSelectedReasoningEffort))
+        {
+            return;
+        }
+
+        if (!string.Equals(caseSelectedReasoningEffort, normalized, StringComparison.Ordinal))
+        {
+            caseSelectedReasoningEffort = normalized;
+            OnPropertyChanged(nameof(CaseSelectedReasoningEffort));
+            OnPropertyChanged(nameof(CaseCodexSelectionSummary));
+        }
+
+        OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+        if (persist)
+        {
+            caseCodexSelectionUpdated?.Invoke(
+                NullIfWhiteSpace(CaseSelectedModel),
+                NullIfWhiteSpace(CaseSelectedReasoningEffort));
+        }
+    }
+
+    private void UpdateReasoningEfforts()
+    {
+        var selected = FindSelectedModel();
+        AvailableReasoningEfforts.Clear();
+        if (selected is not null)
+        {
+            foreach (var effort in EffectiveReasoningEfforts(selected))
+            {
+                AvailableReasoningEfforts.Add(effort);
+            }
+        }
+
+        OnPropertyChanged(nameof(CodexSelectionStatus));
+    }
+
+    private void RebuildCaseSelectionOptions()
+    {
+        caseSelectionUpdating = true;
+        try
+        {
+            AvailableCaseModels.Clear();
+            AvailableCaseModels.Add(new CodexCaseModelOption(string.Empty, "全体設定を使用", IsInherit: true));
+            foreach (var availableModel in AvailableModels)
+            {
+                if (AvailableCaseModels.Any(item => string.Equals(item.Id, availableModel.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                AvailableCaseModels.Add(new CodexCaseModelOption(availableModel.Id, availableModel.SelectionDisplayName));
+            }
+
+        }
+        finally
+        {
+            caseSelectionUpdating = false;
+        }
+
+        RebuildCaseReasoningEfforts();
+        OnPropertyChanged(nameof(CaseCodexSelectionSummary));
+        OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+    }
+
+    private void RebuildCaseReasoningEfforts()
+    {
+        caseSelectionUpdating = true;
+        try
+        {
+            AvailableCaseReasoningEfforts.Clear();
+            AvailableCaseReasoningEfforts.Add(new CodexCaseReasoningEffortOption(string.Empty, "全体設定を使用", IsInherit: true));
+
+            var selectedModel = string.IsNullOrWhiteSpace(CaseSelectedModel)
+                ? FindSelectedModel()
+                : FindAvailableModel(CaseSelectedModel);
+            if (selectedModel is not null)
+            {
+                foreach (var effort in EffectiveReasoningEfforts(selectedModel))
+                {
+                    AvailableCaseReasoningEfforts.Add(new CodexCaseReasoningEffortOption(
+                        effort.Value,
+                        CodexReasoningEffortDisplay.Format(effort.Value, effort.Description)));
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(CaseSelectedReasoningEffort)
+                && !AvailableCaseReasoningEfforts.Any(item =>
+                    string.Equals(item.Id, CaseSelectedReasoningEffort, StringComparison.OrdinalIgnoreCase)))
+            {
+                AvailableCaseReasoningEfforts.Add(new CodexCaseReasoningEffortOption(
+                    CaseSelectedReasoningEffort,
+                    $"{CodexReasoningEffortDisplay.Format(CaseSelectedReasoningEffort)} (現在のruntimeでは未提供)"));
+            }
+        }
+        finally
+        {
+            caseSelectionUpdating = false;
+        }
+
+        OnPropertyChanged(nameof(CaseCodexSelectionSummary));
+        OnPropertyChanged(nameof(CaseCodexSelectionStatus));
+    }
+
+    private CodexModelInfo? FindSelectedModel()
+    {
+        return FindAvailableModel(SelectedModel);
+    }
+
+    private CodexModelInfo? FindAvailableModel(string? model)
+    {
+        return AvailableModels.FirstOrDefault(item =>
+            string.Equals(item.Id, model, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private CodexModelInfo ValidateNewThreadSelection()
+    {
+        var requestedModel = EffectiveNewThreadModel();
+        var selected = FindAvailableModel(requestedModel);
+        if (selected is null)
+        {
+            throw new InvalidOperationException(
+                $"選択したCodexモデルは現在のApp Serverで利用できません。Requested Model: {ValueOrDash(requestedModel)}。接続後に利用可能なモデルを選択してください。");
+        }
+
+        var efforts = EffectiveReasoningEfforts(selected);
+        var requestedReasoningEffort = EffectiveNewThreadReasoningEffort();
+        if (efforts.Count == 0 && !string.IsNullOrWhiteSpace(requestedReasoningEffort))
+        {
+            throw new InvalidOperationException(
+                $"選択した推論レベルはこのモデルでは広告されていません: {requestedReasoningEffort}。推論レベルを空欄にしてサーバー既定値を使用してください。");
+        }
+
+        if (efforts.Count > 0 && string.IsNullOrWhiteSpace(requestedReasoningEffort))
+        {
+            throw new InvalidOperationException(
+                $"推論レベルが未選択です。モデル {selected.Id} の利用可能な値: {FormatReasoningEfforts(efforts)}");
+        }
+
+        if (efforts.Count > 0 && !efforts.Any(item =>
+                string.Equals(item.Value, requestedReasoningEffort, StringComparison.OrdinalIgnoreCase)))
+        {
+            throw new InvalidOperationException(
+                $"選択した推論レベルはこのモデルでは利用できません: {requestedReasoningEffort}。利用可能な値: {FormatReasoningEfforts(efforts)}");
+        }
+
+        return selected;
+    }
+
+    private string EffectiveNewThreadModel() =>
+        string.IsNullOrWhiteSpace(CaseSelectedModel) ? SelectedModel : CaseSelectedModel;
+
+    private string EffectiveNewThreadReasoningEffort() =>
+        string.IsNullOrWhiteSpace(CaseSelectedReasoningEffort)
+            ? SelectedReasoningEffort
+            : CaseSelectedReasoningEffort;
+
+    private string BuildSelectionStatus()
+    {
+        if (AvailableModels.Count == 0)
+        {
+            return "Codexへ接続すると、利用可能なモデルと推論レベルを取得します。";
+        }
+
+        var selected = FindSelectedModel();
+        if (selected is null)
+        {
+            return $"Requested Model: {ValueOrDash(SelectedModel)} は利用できません。利用可能: {string.Join(", ", AvailableModels.Select(static item => item.Id))}";
+        }
+
+        var efforts = EffectiveReasoningEfforts(selected);
+        if (efforts.Count == 0 && !string.IsNullOrWhiteSpace(SelectedReasoningEffort))
+        {
+            return $"選択した推論レベルはこのモデルでは広告されていません: {SelectedReasoningEffort}。空欄にしてください。";
+        }
+
+        if (efforts.Count > 0 && string.IsNullOrWhiteSpace(SelectedReasoningEffort))
+        {
+            return $"推論レベルを選択してください。利用可能: {FormatReasoningEfforts(efforts)}";
+        }
+
+        if (efforts.Count == 0)
+        {
+            return string.IsNullOrWhiteSpace(client.CurrentThreadId)
+                ? "このモデルは推論レベルを広告していません。サーバー既定値で次の新しい調査を開始します。"
+                : "現在のThreadは変更せず、このモデルの推論レベルはサーバー既定値で次の新しい調査から適用されます。";
+        }
+
+        if (efforts.Count > 0 && !efforts.Any(item =>
+                string.Equals(item.Value, SelectedReasoningEffort, StringComparison.OrdinalIgnoreCase)))
+        {
+            return $"選択した推論レベルはこのモデルでは利用できません: {SelectedReasoningEffort}。利用可能: {FormatReasoningEfforts(efforts)}";
+        }
+
+        return string.IsNullOrWhiteSpace(client.CurrentThreadId)
+            ? "この設定は次の新しい調査から適用されます。"
+            : "現在のThreadは変更せず、この設定は次の新しい調査から適用されます。";
+    }
+
+    private string BuildCaseSelectionStatus()
+    {
+        var effectiveModel = EffectiveNewThreadModel();
+        var effectiveReasoningEffort = EffectiveNewThreadReasoningEffort();
+        var selected = FindAvailableModel(effectiveModel);
+        var prefix = $"全体既定: {GlobalCodexSelectionSummary}{Environment.NewLine}"
+            + $"案件設定: {CaseCodexSelectionSummary}{Environment.NewLine}";
+
+        if (AvailableModels.Count == 0)
+        {
+            return prefix + "App Serverへ接続すると、案件設定の候補を確認できます。";
+        }
+
+        if (selected is null)
+        {
+            return prefix + $"新しい調査: Requested Model {ValueOrDash(effectiveModel)} はruntimeで利用できません。";
+        }
+
+        var efforts = EffectiveReasoningEfforts(selected);
+        if (efforts.Count > 0 && string.IsNullOrWhiteSpace(effectiveReasoningEffort))
+        {
+            return prefix + $"新しい調査: 推論レベルを選択してください。利用可能: {FormatReasoningEfforts(efforts)}";
+        }
+
+        if (efforts.Count > 0 && !efforts.Any(item =>
+                string.Equals(item.Value, effectiveReasoningEffort, StringComparison.OrdinalIgnoreCase)))
+        {
+            return prefix + $"新しい調査: 推論レベル {ValueOrDash(effectiveReasoningEffort)} はruntimeで利用できません。";
+        }
+
+        return prefix + $"新しい調査: {FormatCaseModelDisplay(effectiveModel)} / {FormatReasoningDisplay(effectiveReasoningEffort)}"
+            + "（既存Threadは変更しません）";
+    }
+
+    private static IReadOnlyList<CodexReasoningEffortInfo> EffectiveReasoningEfforts(CodexModelInfo model)
+    {
+        if (model.ReasoningEfforts.Count > 0)
+        {
+            return model.ReasoningEfforts;
+        }
+
+        return string.IsNullOrWhiteSpace(model.DefaultReasoningEffort)
+            ? []
+            : [new CodexReasoningEffortInfo(model.DefaultReasoningEffort, "モデル既定")];
+    }
+
+    private static string? FindDefaultReasoningEffort(CodexModelInfo? model)
+    {
+        if (model is null)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(model.DefaultReasoningEffort)
+            ? model.ReasoningEfforts.FirstOrDefault()?.Value
+            : model.DefaultReasoningEffort;
+    }
+
+    private static CodexModelInfo? FindRecommendedModel(IEnumerable<CodexModelInfo> models)
+    {
+        var available = models.Where(static item => !item.Hidden).ToArray();
+        return available.FirstOrDefault(item =>
+                item.Id.Contains("luna", StringComparison.OrdinalIgnoreCase)
+                || item.DisplayName.Contains("luna", StringComparison.OrdinalIgnoreCase))
+            ?? available.FirstOrDefault(static item => item.IsDefault)
+            ?? available.FirstOrDefault();
+    }
+
+    private static string FormatReasoningEfforts(IEnumerable<CodexReasoningEffortInfo> efforts)
+    {
+        var values = efforts.Select(static item => item.Value).Where(static value => !string.IsNullOrWhiteSpace(value)).ToArray();
+        return values.Length == 0 ? "App Serverから取得できません" : string.Join(", ", values);
+    }
+
+    private string FormatCaseModelDisplay(string? model)
+    {
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            return "全体設定を使用";
+        }
+
+        return FindAvailableModel(model)?.SelectionDisplayName ?? model.Trim();
+    }
+
+    private static string FormatCaseReasoningDisplay(string? reasoningEffort)
+    {
+        return string.IsNullOrWhiteSpace(reasoningEffort)
+            ? "全体設定を使用"
+            : CodexReasoningEffortDisplay.Format(reasoningEffort);
+    }
+
+    private static string FormatReasoningDisplay(string? reasoningEffort)
+    {
+        return string.IsNullOrWhiteSpace(reasoningEffort)
+            ? "-"
+            : CodexReasoningEffortDisplay.Format(reasoningEffort);
+    }
+
+    private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     private async Task ConnectAsync()
     {
         ErrorText = string.Empty;
@@ -422,12 +978,42 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         {
             Version = info.Version;
             AccountStatus = $"ChatGPT認証済み / プラン: {ValueOrDash(info.Account.PlanType)}";
-            var defaultModel = info.Models.FirstOrDefault(static item => item.IsDefault && !item.Hidden)
-                ?? info.Models.FirstOrDefault(static item => !item.Hidden);
-            Model = defaultModel is null
-                ? "Codex側の既定モデル"
-                : $"{defaultModel.DisplayName} ({defaultModel.Id})";
-            ConnectionDetails = $"App Server利用可 / {info.UserAgent}";
+            AvailableModels.Clear();
+            foreach (var availableModel in info.Models.Where(static item => !item.Hidden))
+            {
+                AvailableModels.Add(availableModel);
+            }
+
+            var recommendedModel = FindRecommendedModel(AvailableModels);
+            if (string.IsNullOrWhiteSpace(SelectedModel))
+            {
+                SetModelSelection(recommendedModel?.Id, persist: true);
+            }
+            else
+            {
+                UpdateReasoningEfforts();
+            }
+
+            if (string.IsNullOrWhiteSpace(SelectedReasoningEffort))
+            {
+                SetReasoningSelection(FindDefaultReasoningEffort(FindSelectedModel()), persist: true);
+            }
+
+            Model = string.IsNullOrWhiteSpace(SelectedModel)
+                ? "Codex側のモデル一覧を取得できません"
+                : SelectedModel;
+            RebuildCaseSelectionOptions();
+            ActualModel = "-";
+            ActualReasoningEffort = "-";
+            var selectionStatus = BuildSelectionStatus();
+            ErrorText = selectionStatus.Contains("利用できません", StringComparison.Ordinal)
+                || selectionStatus.Contains("広告されていません", StringComparison.Ordinal)
+                ? selectionStatus
+                : string.Empty;
+            ConnectionDetails = string.IsNullOrWhiteSpace(ErrorText)
+                ? $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件"
+                : $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件 / {ErrorText}";
+            OnPropertyChanged(nameof(CodexSelectionStatus));
         });
     }
 
@@ -447,9 +1033,26 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             throw new InvalidOperationException("案件フォルダが見つかりません。案件を読み直すか、案件フォルダを選択してください。");
         }
 
-        var result = await client.StartThreadAsync(snapshot.CaseFolder, model: null).ConfigureAwait(false);
+        var selected = ValidateNewThreadSelection();
+        newThreadModel = selected.Id;
+        newThreadReasoningEffort = EffectiveNewThreadReasoningEffort();
+        var result = await client.StartThreadAsync(snapshot.CaseFolder, selected.Id).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(result.Model)
+            && !string.Equals(result.Model, selected.Id, StringComparison.OrdinalIgnoreCase))
+        {
+            RunOnUi(() =>
+            {
+                ActualModel = result.Model;
+                ActualReasoningEffort = string.IsNullOrWhiteSpace(result.ReasoningEffort)
+                    ? newThreadReasoningEffort
+                    : result.ReasoningEffort;
+            });
+            throw new InvalidOperationException(
+                $"Requested Model: {selected.Id}{Environment.NewLine}Actual Model: {result.Model}{Environment.NewLine}モデルが要求値と異なるため、回答生成を継続しません。");
+        }
+
         currentSnapshot = snapshot;
-        currentSession = CreateSession(snapshot, result);
+        currentSession = CreateSession(snapshot, result, newThreadReasoningEffort);
         RunOnUi(() =>
         {
             Messages.Clear();
@@ -462,7 +1065,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             activeRagLabEvidence = [];
             ThreadId = result.ThreadId;
             Model = string.IsNullOrWhiteSpace(result.Model) ? Model : result.Model;
+            ActualModel = string.IsNullOrWhiteSpace(result.Model) ? selected.Id : result.Model;
+            ActualReasoningEffort = string.IsNullOrWhiteSpace(result.ReasoningEffort)
+                ? newThreadReasoningEffort
+                : result.ReasoningEffort;
             ConnectionDetails = "新しい読み取り専用Threadを開始しました。指示を送信できます。";
+            OnPropertyChanged(nameof(CodexSelectionStatus));
         });
         await PersistSessionAsync("ready").ConfigureAwait(false);
     }
@@ -510,7 +1118,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 hasSentInitialContext = true;
                 ThreadId = result.ThreadId;
                 Model = string.IsNullOrWhiteSpace(result.Model) ? previous.Model : result.Model;
+                ActualModel = string.IsNullOrWhiteSpace(result.Model) ? previous.Model : result.Model;
+                ActualReasoningEffort = string.IsNullOrWhiteSpace(result.ReasoningEffort)
+                    ? ValueOrDash(previous.ReasoningEffort)
+                    : result.ReasoningEffort;
                 ConnectionDetails = "前回のCodex Threadを再開しました。追加質問を送信できます。";
+                OnPropertyChanged(nameof(CodexSelectionStatus));
             });
             await PersistSessionAsync("resumed").ConfigureAwait(false);
         }
@@ -549,6 +1162,14 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
 
         var firstTurn = !hasSentInitialContext;
+        var requestedModel = firstTurn
+            ? (string.IsNullOrWhiteSpace(newThreadModel) ? EffectiveNewThreadModel() : newThreadModel)
+            : string.Empty;
+        var requestedReasoningEffort = firstTurn
+            ? (string.IsNullOrWhiteSpace(newThreadModel)
+                ? EffectiveNewThreadReasoningEffort()
+                : newThreadReasoningEffort)
+            : string.Empty;
         var selectedFiles = Files.Where(static file => file.IsSelected && file.CanSendToCodex).ToArray();
         RunOnUi(() => ConnectionDetails = "選択した添付ファイルを読み取り、文字コード変換と本文抽出を行っています。");
         var attachmentRead = await attachmentContentReader.ReadAsync(
@@ -645,7 +1266,37 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         activeTurnStartedTimestamp = Stopwatch.GetTimestamp();
         try
         {
-            var turn = await client.StartTurnAsync(prompt, imagePaths).ConfigureAwait(false);
+            var turn = await client.StartTurnAsync(
+                prompt,
+                imagePaths,
+                model: firstTurn ? requestedModel : null,
+                reasoningEffort: firstTurn ? requestedReasoningEffort : null).ConfigureAwait(false);
+            if (firstTurn
+                && !string.IsNullOrWhiteSpace(turn.Model)
+                && !string.Equals(turn.Model, requestedModel, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Requested Model: {requestedModel}{Environment.NewLine}Actual Model: {turn.Model}{Environment.NewLine}モデルが要求値と異なるため、回答生成を継続しません。");
+            }
+
+            if (firstTurn
+                && !string.IsNullOrWhiteSpace(turn.ReasoningEffort)
+                && !string.Equals(turn.ReasoningEffort, requestedReasoningEffort, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"Requested Reasoning: {requestedReasoningEffort}{Environment.NewLine}Actual Reasoning: {turn.ReasoningEffort}{Environment.NewLine}推論レベルが要求値と異なるため、回答生成を継続しません。");
+            }
+
+            if (firstTurn)
+            {
+                RunOnUi(() =>
+                {
+                    ActualModel = string.IsNullOrWhiteSpace(turn.Model) ? requestedModel : turn.Model;
+                    ActualReasoningEffort = string.IsNullOrWhiteSpace(turn.ReasoningEffort)
+                        ? requestedReasoningEffort
+                        : turn.ReasoningEffort;
+                });
+            }
             hasSentInitialContext = true;
             if (currentSession is not null && turnActive)
             {
@@ -1005,6 +1656,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 TechnicalAnswer = Messages.LastOrDefault(static item => item.Role == "assistant")?.Text ?? string.Empty;
                 ReviewAnswer = string.Empty;
                 ThreadId = previous.CodexThreadId;
+                ActualModel = previous.Model;
+                ActualReasoningEffort = ValueOrDash(previous.ReasoningEffort);
                 if (!string.IsNullOrWhiteSpace(previous.Model))
                 {
                     Model = previous.Model;
@@ -1021,7 +1674,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         });
     }
 
-    private CodexSession CreateSession(CodexCaseSnapshot snapshot, CodexThreadStartResult thread)
+    private CodexSession CreateSession(
+        CodexCaseSnapshot snapshot,
+        CodexThreadStartResult thread,
+        string requestedReasoningEffort)
     {
         return new CodexSession
         {
@@ -1034,6 +1690,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             LastUsedAt = DateTimeOffset.Now,
             CodexVersion = Version,
             Model = thread.Model,
+            ReasoningEffort = string.IsNullOrWhiteSpace(thread.ReasoningEffort)
+                ? requestedReasoningEffort
+                : thread.ReasoningEffort,
             SessionStatus = "ready",
         };
     }
@@ -1060,7 +1719,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             LastUsedAt = DateTimeOffset.Now,
             LastTurnId = client.CurrentTurnId ?? currentSession.LastTurnId,
             CodexVersion = Version,
-            Model = Model,
+            Model = string.IsNullOrWhiteSpace(ActualModel) || ActualModel == "-" ? Model : ActualModel,
+            ReasoningEffort = string.IsNullOrWhiteSpace(ActualReasoningEffort) || ActualReasoningEffort == "-"
+                ? currentSession.ReasoningEffort
+                : ActualReasoningEffort,
             SessionStatus = status,
             Messages = messages,
         };
@@ -1079,6 +1741,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         if (applyReply(value))
         {
             ConnectionDetails = "回答を返信案編集欄へ反映しました。案件ファイルはまだ変更していません。";
+            RaiseCommandStates();
         }
     }
 
@@ -1127,6 +1790,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         if (applyMemo(value))
         {
             ConnectionDetails = "回答を調査メモ編集欄へ反映しました。案件ファイルはまだ変更していません。";
+            RaiseCommandStates();
         }
     }
 

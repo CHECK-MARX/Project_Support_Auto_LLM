@@ -121,6 +121,15 @@ public sealed record class AiAssistantSettings
     [JsonPropertyName("codexExecutablePath")]
     public string CodexExecutablePath { get; init; } = string.Empty;
 
+    [JsonPropertyName("codexModel")]
+    public string CodexModel { get; init; } = string.Empty;
+
+    [JsonPropertyName("codexReasoningEffort")]
+    public string CodexReasoningEffort { get; init; } = string.Empty;
+
+    [JsonPropertyName("caseCodexOverrides")]
+    public IReadOnlyList<CaseCodexOverride> CaseCodexOverrides { get; init; } = [];
+
     [JsonPropertyName("useRagLabEvidence")]
     public bool UseRagLabEvidence { get; init; }
 

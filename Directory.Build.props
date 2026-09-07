@@ -1,0 +1,6 @@
+<Project>
+  <PropertyGroup>
+    <!-- Exclude legacy literal $temp outputs from SDK source/resource globs. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/$temp/**</DefaultItemExcludes>
+  </PropertyGroup>
+</Project>

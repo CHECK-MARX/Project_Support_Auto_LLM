@@ -290,6 +290,7 @@ public sealed class FactResolver : IFactResolver
                     or QuestionTypes.ConfigurationQuestion
                     or QuestionTypes.CommandQuestion
                     or QuestionTypes.FeatureAvailabilityQuestion
+                    or QuestionTypes.ReleaseNotesQuestion
                     or QuestionTypes.GeneralSupportQuestion))
         {
             // Procedural questions are grounded by selected documents rather than

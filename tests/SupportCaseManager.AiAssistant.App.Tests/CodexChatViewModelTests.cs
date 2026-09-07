@@ -9,6 +9,17 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 public sealed class CodexChatViewModelTests
 {
     [Fact]
+    public void FinalReviewCommand_IsDisabledUntilCurrentCaseThreadExists()
+    {
+        using var temp = new TempDirectory();
+        var viewModel = CreateViewModel(temp, new FakeClient());
+
+        viewModel.TechnicalAnswer = "技術回答案";
+
+        Assert.False(viewModel.FinalReviewCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task ConnectCommand_WhenIdle_DoesNotShowFalseProgress()
     {
         using var temp = new TempDirectory();
@@ -21,6 +32,269 @@ public sealed class CodexChatViewModelTests
         Assert.Equal(0, viewModel.ProgressPercent);
         Assert.Equal("接続済み・調査待ち", viewModel.ProgressText);
     }
+
+    [Fact]
+    public async Task NewThread_UsesPersistedModelAndReasoningAndDisplaysActualValues()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var savedModel = string.Empty;
+        var savedReasoning = string.Empty;
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "SyntheticProduct",
+                SupportId = "SYN-CODEX-SETTINGS",
+                CaseFolder = temp.Path,
+                InquiryText = "設定確認",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            codexSelectionProvider: () => (savedModel, savedReasoning),
+            codexSelectionUpdated: (model, reasoning) =>
+            {
+                savedModel = model ?? string.Empty;
+                savedReasoning = reasoning ?? string.Empty;
+            });
+
+        savedModel = "fake";
+        savedReasoning = "medium";
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("fake", viewModel.SelectedModel);
+        Assert.Equal("medium", viewModel.SelectedReasoningEffort);
+        Assert.Contains(viewModel.AvailableReasoningEfforts, item => item.Value == "medium");
+
+        viewModel.PromptInput = "設定された値で調査してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal("fake", fakeClient.LastRequestedModel);
+        Assert.Equal("medium", fakeClient.LastRequestedReasoningEffort);
+        Assert.Equal("fake", viewModel.ActualModel);
+        Assert.Equal("medium", viewModel.ActualReasoningEffort);
+        Assert.Contains("fake / medium", viewModel.ActualModelAndReasoning, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Connect_UsesRuntimeDiscoveredLunaAsRecommendedModel()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient
+        {
+            Models =
+            [
+                new CodexModelInfo(
+                    "gpt-5.6-sol",
+                    "GPT-5.6-Sol",
+                    true,
+                    false,
+                    "medium",
+                    [new CodexReasoningEffortInfo("medium", "通常利用向け")]),
+                new CodexModelInfo(
+                    "gpt-5.6-luna",
+                    "GPT-5.6-Luna",
+                    false,
+                    false,
+                    "medium",
+                    [new CodexReasoningEffortInfo("medium", "通常利用向け")]),
+            ],
+        };
+        var viewModel = CreateViewModel(temp, fakeClient);
+
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("gpt-5.6-luna", viewModel.SelectedModel);
+        Assert.Equal("medium", viewModel.SelectedReasoningEffort);
+    }
+
+    [Fact]
+    public async Task Connect_PreservesSavedModelAndReasoningWhenRuntimeListsDifferentModel()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient
+        {
+            Models =
+            [
+                new CodexModelInfo(
+                    "gpt-6-astra",
+                    "GPT-6 Astra",
+                    false,
+                    false,
+                    "ultra",
+                    [new CodexReasoningEffortInfo("ultra", "Maximum")]),
+                new CodexModelInfo(
+                    "gpt-5.6-luna",
+                    "GPT-5.6 Luna",
+                    true,
+                    false,
+                    "medium",
+                    [new CodexReasoningEffortInfo("medium", "Normal")]),
+            ],
+        };
+        var viewModel = CreateViewModelWithSelection(temp, fakeClient, "gpt-6-astra", "ultra");
+
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("gpt-6-astra", viewModel.SelectedModel);
+        Assert.Equal("ultra", viewModel.SelectedReasoningEffort);
+        Assert.Equal("gpt-6-astra", viewModel.Model);
+        Assert.Contains("次の新しい調査", viewModel.CodexSelectionStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Connect_PreservesUnavailableSavedModelAndReportsExplicitState()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient
+        {
+            Models =
+            [new CodexModelInfo(
+                "gpt-5.6-luna",
+                "GPT-5.6 Luna",
+                true,
+                false,
+                "medium",
+                [new CodexReasoningEffortInfo("medium", "Normal")])],
+        };
+        var viewModel = CreateViewModelWithSelection(temp, fakeClient, "gpt-6-astra", "ultra");
+
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("gpt-6-astra", viewModel.SelectedModel);
+        Assert.Equal("ultra", viewModel.SelectedReasoningEffort);
+        Assert.Contains("Requested Model", viewModel.CodexSelectionStatus, StringComparison.Ordinal);
+        Assert.Contains("利用できません", viewModel.CodexSelectionStatus, StringComparison.Ordinal);
+        Assert.Contains("利用できません", viewModel.ErrorText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CaseOverride_UsesRuntimeSelectionForNextNewThread_WithoutChangingGlobalSelection()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient
+        {
+            Models =
+            [
+                new CodexModelInfo(
+                    "gpt-6-astra",
+                    "GPT-6 Astra",
+                    true,
+                    false,
+                    "xhigh",
+                    [new CodexReasoningEffortInfo("xhigh", "高度")]),
+                new CodexModelInfo(
+                    "gpt-5.6-luna",
+                    "GPT-5.6 Luna",
+                    false,
+                    false,
+                    "medium",
+                    [new CodexReasoningEffortInfo("medium", "標準")]),
+            ],
+        };
+        string? caseModel = null;
+        string? caseReasoning = null;
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "SyntheticProduct",
+                SupportId = "SYN-CASE-OVERRIDE",
+                CaseFolder = temp.Path,
+                InquiryText = "案件別設定確認",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            codexSelectionProvider: () => ("gpt-6-astra", "xhigh"),
+            caseCodexSelectionProvider: () => (caseModel, caseReasoning),
+            caseCodexSelectionUpdated: (model, reasoning) =>
+            {
+                caseModel = model;
+                caseReasoning = reasoning;
+            });
+
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("全体設定を使用", viewModel.AvailableCaseModels[0].DisplayName);
+        Assert.Equal("Astra / 超高", viewModel.EffectiveSettingsDisplay);
+        Assert.Equal("gpt-6-astra", viewModel.EffectiveCodexModel);
+        Assert.Equal("xhigh", viewModel.EffectiveCodexReasoning);
+        var notifications = new List<string?>();
+        viewModel.PropertyChanged += (_, e) => notifications.Add(e.PropertyName);
+        Assert.Equal("", viewModel.CaseSelectedModel);
+        Assert.Equal("gpt-6-astra", viewModel.SelectedModel);
+        Assert.Equal("xhigh", viewModel.SelectedReasoningEffort);
+
+        viewModel.CaseSelectedModel = "gpt-5.6-luna";
+        Assert.Contains(viewModel.AvailableCaseReasoningEfforts, item => item.Id == "medium");
+        viewModel.CaseSelectedReasoningEffort = "medium";
+        Assert.Equal("Luna / 中", viewModel.EffectiveSettingsDisplay);
+        Assert.Contains(nameof(viewModel.EffectiveSettingsDisplay), notifications);
+        Assert.DoesNotContain(temp.Path, viewModel.CaseSettingsDiagnostics);
+        viewModel.PromptInput = "案件別設定で調査してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal("gpt-5.6-luna", caseModel);
+        Assert.Equal("medium", caseReasoning);
+        Assert.Equal("gpt-5.6-luna", fakeClient.LastRequestedModel);
+        Assert.Equal("medium", fakeClient.LastRequestedReasoningEffort);
+        Assert.Equal("gpt-6-astra", viewModel.SelectedModel);
+        Assert.Equal("xhigh", viewModel.SelectedReasoningEffort);
+        Assert.Equal("gpt-5.6-luna", viewModel.ActualModel);
+        Assert.Equal("medium", viewModel.ActualReasoningEffort);
+        caseModel = null;
+        caseReasoning = null;
+        viewModel.RefreshCaseSelection();
+        Assert.Equal("Astra / 超高", viewModel.EffectiveSettingsDisplay);
+        Assert.Equal("Luna / 中", viewModel.ActualThreadSettingsDisplay);
+    }
+
+    [Theory]
+    [InlineData("low", "低")]
+    [InlineData("medium", "中")]
+    [InlineData("high", "高")]
+    [InlineData("xhigh", "超高")]
+    [InlineData("max", "最大")]
+    [InlineData("ultra", "最上位")]
+    [InlineData("future-effort", "future-effort")]
+    [InlineData("-", "不明")]
+    public void ReasoningDisplay_PreservesUnknownValues(string raw, string expected)
+        => Assert.Equal(expected, CodexChatViewModel.DisplayReasoning(raw));
+
+    [Theory]
+    [InlineData("gpt-6-astra", "Astra")]
+    [InlineData("gpt-5.6-sol", "Sol")]
+    [InlineData("gpt-5.6-terra", "Terra")]
+    [InlineData("gpt-5.6-luna", "Luna")]
+    [InlineData("future-model", "future-model")]
+    public void ModelDisplay_PreservesUnknownValues(string raw, string expected)
+        => Assert.Equal(expected, CodexChatViewModel.DisplayModel(raw));
 
     [Fact]
     public async Task SendCommand_JoinsStreamingDeltasAndApplyDoesNotWriteFiles()
@@ -576,6 +850,40 @@ public sealed class CodexChatViewModelTests
             _ => { });
     }
 
+    private static CodexChatViewModel CreateViewModelWithSelection(
+        TempDirectory temp,
+        FakeClient fakeClient,
+        string model,
+        string reasoningEffort)
+    {
+        var savedModel = model;
+        var savedReasoningEffort = reasoningEffort;
+        return new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "HelixQAC",
+                SupportId = "0001",
+                CaseFolder = temp.Path,
+                InquiryText = "確認してください。",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            codexSelectionProvider: () => (savedModel, savedReasoningEffort),
+            codexSelectionUpdated: (updatedModel, updatedReasoningEffort) =>
+            {
+                savedModel = updatedModel ?? string.Empty;
+                savedReasoningEffort = updatedReasoningEffort ?? string.Empty;
+            });
+    }
+
     private static CodexChatViewModel CreateViewModel(
         TempDirectory temp,
         FakeClient fakeClient,
@@ -640,6 +948,10 @@ public sealed class CodexChatViewModelTests
         public string LastTurnText { get; private set; } = string.Empty;
         public IReadOnlyList<string> LastImagePaths { get; private set; } = [];
         public int TurnCount { get; private set; }
+        public string LastRequestedModel { get; private set; } = string.Empty;
+        public string LastRequestedReasoningEffort { get; private set; } = string.Empty;
+        public IReadOnlyList<CodexModelInfo> Models { get; set; } =
+            [new CodexModelInfo("fake", "Fake", true, false, "medium")];
 
         public void EnqueueResponse(string response)
         {
@@ -653,7 +965,7 @@ public sealed class CodexChatViewModelTests
                 "0.145.0",
                 "fake",
                 new CodexAccountInfo { AccountType = "chatgpt", PlanType = "plus" },
-                [new CodexModelInfo("fake", "Fake", true, false)]);
+                Models);
             State = CodexConnectionState.Connected;
             StateChanged?.Invoke(this, State);
             return Task.FromResult(ConnectionInfo);
@@ -668,9 +980,10 @@ public sealed class CodexChatViewModelTests
 
         public Task<CodexThreadStartResult> StartThreadAsync(string workingDirectory, string? model, CancellationToken cancellationToken = default)
         {
+            LastRequestedModel = model ?? string.Empty;
             CurrentThreadId = "thread-1";
             WorkingDirectory = workingDirectory;
-            return Task.FromResult(new CodexThreadStartResult("thread-1", "fake", workingDirectory, "read-only"));
+            return Task.FromResult(new CodexThreadStartResult("thread-1", model ?? "fake", workingDirectory, "read-only"));
         }
 
         public Task<CodexThreadStartResult> ResumeThreadAsync(string threadId, string workingDirectory, string? model, CancellationToken cancellationToken = default)
@@ -680,9 +993,16 @@ public sealed class CodexChatViewModelTests
             return Task.FromResult(new CodexThreadStartResult(threadId, "fake", workingDirectory, "read-only"));
         }
 
-        public Task<CodexTurnStartResult> StartTurnAsync(string text, IReadOnlyList<string>? localImagePaths = null, CancellationToken cancellationToken = default)
+        public Task<CodexTurnStartResult> StartTurnAsync(
+            string text,
+            IReadOnlyList<string>? localImagePaths = null,
+            string? model = null,
+            string? reasoningEffort = null,
+            CancellationToken cancellationToken = default)
         {
             TurnCount++;
+            LastRequestedModel = model ?? LastRequestedModel;
+            LastRequestedReasoningEffort = reasoningEffort ?? string.Empty;
             LastTurnText = text;
             LastImagePaths = localImagePaths?.ToArray() ?? [];
             CurrentTurnId = "turn-1";
@@ -690,7 +1010,7 @@ public sealed class CodexChatViewModelTests
             AgentMessageDelta?.Invoke(this, new CodexAgentMessageDeltaEventArgs("thread-1", "turn-1", "item-1", response));
             CurrentTurnId = null;
             TurnCompleted?.Invoke(this, new CodexTurnCompletedEventArgs("thread-1", "turn-1", "completed", null));
-            return Task.FromResult(new CodexTurnStartResult("turn-1"));
+            return Task.FromResult(new CodexTurnStartResult("turn-1", model ?? "fake", reasoningEffort ?? "medium"));
         }
 
         public Task InterruptTurnAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;

@@ -29,7 +29,12 @@ public interface ICodexAppServerClient : IAsyncDisposable
     Task DisconnectAsync(CancellationToken cancellationToken = default);
     Task<CodexThreadStartResult> StartThreadAsync(string workingDirectory, string? model, CancellationToken cancellationToken = default);
     Task<CodexThreadStartResult> ResumeThreadAsync(string threadId, string workingDirectory, string? model, CancellationToken cancellationToken = default);
-    Task<CodexTurnStartResult> StartTurnAsync(string text, IReadOnlyList<string>? localImagePaths = null, CancellationToken cancellationToken = default);
+    Task<CodexTurnStartResult> StartTurnAsync(
+        string text,
+        IReadOnlyList<string>? localImagePaths = null,
+        string? model = null,
+        string? reasoningEffort = null,
+        CancellationToken cancellationToken = default);
     Task InterruptTurnAsync(CancellationToken cancellationToken = default);
 }
 
@@ -239,6 +244,8 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
     public async Task<CodexTurnStartResult> StartTurnAsync(
         string text,
         IReadOnlyList<string>? localImagePaths = null,
+        string? model = null,
+        string? reasoningEffort = null,
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
@@ -282,6 +289,8 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
                     input = inputs,
                     approvalPolicy = "never",
                     cwd = WorkingDirectory,
+                    model = NullIfWhiteSpace(model),
+                    effort = NullIfWhiteSpace(reasoningEffort),
                     runtimeWorkspaceRoots = new[] { WorkingDirectory },
                     environments = Array.Empty<object>(),
                 },
@@ -292,7 +301,13 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
             ?? throw new JsonException("turn/start応答にturn.idがありません。");
         CurrentTurnId = string.Equals(lastCompletedTurnId, turnId, StringComparison.Ordinal) ? null : turnId;
         await logger.WriteAsync("turn", $"Turn started. threadId={CurrentThreadId}, turnId={turnId}", cancellationToken: cancellationToken).ConfigureAwait(false);
-        return new CodexTurnStartResult(turnId);
+        return new CodexTurnStartResult(
+            turnId,
+            GetString(response, "model") ?? GetNestedString(response, "turn", "model") ?? string.Empty,
+            GetString(response, "reasoningEffort")
+                ?? GetString(response, "effort")
+                ?? GetNestedString(response, "turn", "reasoningEffort")
+                ?? string.Empty);
     }
 
     public async Task InterruptTurnAsync(CancellationToken cancellationToken = default)
@@ -333,6 +348,7 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
         {
             cwd = root,
             model = NullIfWhiteSpace(model),
+            allowProviderModelFallback = false,
             approvalPolicy = "never",
             sandbox = "read-only",
             developerInstructions = SafetyInstructions,
@@ -490,8 +506,27 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
                 GetString(item, "id") ?? GetString(item, "model") ?? string.Empty,
                 GetString(item, "displayName") ?? GetString(item, "model") ?? string.Empty,
                 GetBoolean(item, "isDefault"),
-                GetBoolean(item, "hidden")))
+                GetBoolean(item, "hidden"),
+                GetString(item, "defaultReasoningEffort") ?? string.Empty,
+                ParseReasoningEfforts(item)))
             .Where(model => !string.IsNullOrWhiteSpace(model.Id))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<CodexReasoningEffortInfo> ParseReasoningEfforts(JsonElement model)
+    {
+        if (!model.TryGetProperty("supportedReasoningEfforts", out var efforts)
+            || efforts.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return efforts.EnumerateArray()
+            .Where(static item => item.ValueKind == JsonValueKind.Object)
+            .Select(item => new CodexReasoningEffortInfo(
+                GetString(item, "reasoningEffort") ?? string.Empty,
+                GetString(item, "description") ?? string.Empty))
+            .Where(static effort => !string.IsNullOrWhiteSpace(effort.Value))
             .ToArray();
     }
 
@@ -502,7 +537,9 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
                 ?? throw new JsonException("Thread応答にthread.idがありません。"),
             GetString(response, "model") ?? string.Empty,
             GetString(response, "cwd") ?? string.Empty,
-            ReadSandbox(response));
+            ReadSandbox(response),
+            GetString(response, "lastTurnId"),
+            GetString(response, "reasoningEffort") ?? string.Empty);
     }
 
     private static string ReadSandbox(JsonElement response)

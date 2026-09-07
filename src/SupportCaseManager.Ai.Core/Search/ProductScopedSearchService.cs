@@ -11,6 +11,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
     private readonly IAiCaseKeywordSearcher caseKeywordSearcher;
     private readonly IAiManualKeywordSearcher manualKeywordSearcher;
     private readonly IAiOfficialDocumentKeywordSearcher officialDocumentKeywordSearcher;
+    private readonly OfficialDocDirectResolver officialDocDirectResolver;
     private readonly IQuestionClassifier questionClassifier;
     private readonly IOllamaEmbeddingClient embeddingClient;
     private readonly ICaseAnswerPairSearcher answerPairSearcher;
@@ -21,7 +22,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         IAiOfficialDocumentKeywordSearcher? officialDocumentKeywordSearcher = null,
         IQuestionClassifier? questionClassifier = null,
         IOllamaEmbeddingClient? embeddingClient = null,
-        ICaseAnswerPairSearcher? answerPairSearcher = null)
+        ICaseAnswerPairSearcher? answerPairSearcher = null,
+        OfficialDocDirectResolver? officialDocDirectResolver = null)
     {
         this.caseKeywordSearcher = caseKeywordSearcher ?? throw new ArgumentNullException(nameof(caseKeywordSearcher));
         this.manualKeywordSearcher = manualKeywordSearcher ?? throw new ArgumentNullException(nameof(manualKeywordSearcher));
@@ -29,6 +31,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         this.questionClassifier = questionClassifier ?? new QuestionClassifier();
         this.embeddingClient = embeddingClient ?? new OllamaEmbeddingClient();
         this.answerPairSearcher = answerPairSearcher ?? new CaseAnswerPairSearcher();
+        this.officialDocDirectResolver = officialDocDirectResolver ?? new OfficialDocDirectResolver();
     }
 
     public async Task<IReadOnlyList<SearchSource>> SearchPastCasesAsync(
@@ -65,6 +68,17 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(product);
+        var directResults = await officialDocDirectResolver.ResolveAsync(
+            product.ProductName,
+            aiIndexFolder,
+            inquiryFocus,
+            maxResults,
+            cancellationToken);
+        if (directResults.Count > 0)
+        {
+            return AttachProductName(directResults, product.ProductName);
+        }
+
         var results = await officialDocumentKeywordSearcher.SearchAsync(
             product.ProductName,
             aiIndexFolder,
@@ -191,7 +205,27 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var classification = questionClassifier.Classify(query, inquiryFocus);
         var questionTypes = classification.QuestionTypes;
         var latest = questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase);
-        var includePastCases = !latest;
+        var releaseNotes = questionTypes.Contains(QuestionTypes.ReleaseNotesQuestion, StringComparer.OrdinalIgnoreCase) ||
+            inquiryFocus.TechnicalQuery.Intent.Contains("ReleaseNotes", StringComparer.OrdinalIgnoreCase);
+        var officialDocumentationOnly = latest || releaseNotes;
+        var includePastCases = !officialDocumentationOnly;
+
+        // An exact versioned release-note page is authoritative enough to bypass
+        // generic retrieval and prevent customer-case fallback from entering the prompt.
+        if (releaseNotes && inquiryFocus.TargetVersions.Count > 0)
+        {
+            var directResults = await officialDocDirectResolver.ResolveAsync(
+                product.ProductName,
+                aiIndexFolder,
+                inquiryFocus,
+                maxResults,
+                cancellationToken);
+            if (directResults.Count > 0)
+            {
+                return AttachProductName(directResults, product.ProductName);
+            }
+        }
+
         var catalog = SupportTopicCatalog.Create(product.ProductName);
         var topicAnalysis = NegationAwareTopicAnalyzer.Analyze(query, catalog);
         var queryVariants = BuildFeatureQueryVariants(query, catalog, topicAnalysis.PrimaryProfile);
@@ -268,7 +302,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             questionTypes,
             inquiryFocus.IsFreshnessSensitive,
             maxResults,
-            isHybridV2);
+            isHybridV2,
+            officialDocumentationOnly);
     }
 
     private static async Task<IReadOnlyList<SearchSource>> SearchAcrossQueryVariantsAsync(
@@ -356,7 +391,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         IReadOnlyList<string> questionTypes,
         bool freshnessSensitive,
         int maxResults,
-        bool isHybridV2)
+        bool isHybridV2,
+        bool officialDocumentationOnly)
     {
         var ranked = sources
             .Select(source => ApplyTopicScore(
@@ -370,6 +406,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             .ThenBy(static item => item.Source.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var deduplicated = SuppressExactDuplicates(ranked)
+            .Where(item => !officialDocumentationOnly || SourceFamily(item.Source.SourceType) != "PastCase")
             .Where(item => IsEligibleMergedCandidate(item, queryAnalysis.PrimaryProfile))
             .ToList();
         if (isHybridV2)
@@ -436,7 +473,9 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var isHowTo = queryProfile.Intents.Contains("HowTo", StringComparer.OrdinalIgnoreCase) ||
             queryProfile.Operations.Count > 0;
         var isSpecification = queryProfile.Features.Contains("Supported Languages", StringComparer.OrdinalIgnoreCase) ||
-            queryProfile.Intents.Contains("Overview", StringComparer.OrdinalIgnoreCase);
+            queryProfile.Features.Contains("Release Notes", StringComparer.OrdinalIgnoreCase) ||
+            queryProfile.Intents.Contains("Overview", StringComparer.OrdinalIgnoreCase) ||
+            queryProfile.Intents.Contains("ReleaseNotes", StringComparer.OrdinalIgnoreCase);
         if (isTroubleshooting)
         {
             return family == "PastCase" ? 0.12 : family is "OfficialDoc" or "Manual" ? 0.07 : 0;

@@ -23,6 +23,8 @@ public sealed class AiAssistantSettingsAppearanceTests
             UiLanguage = "en-US",
             UseDarkMode = true,
             CodexExecutablePath = @"C:\Tools\Codex\codex.exe",
+            CodexModel = "gpt-5.6-luna",
+            CodexReasoningEffort = "medium",
         };
 
         var json = JsonSerializer.Serialize(settings);
@@ -31,9 +33,13 @@ public sealed class AiAssistantSettingsAppearanceTests
         Assert.Contains("\"uiLanguage\"", json);
         Assert.Contains("\"useDarkMode\"", json);
         Assert.Contains("\"codexExecutablePath\"", json);
+        Assert.Contains("\"codexModel\"", json);
+        Assert.Contains("\"codexReasoningEffort\"", json);
         Assert.NotNull(restored);
         Assert.Equal("en-US", restored.UiLanguage);
         Assert.True(restored.UseDarkMode);
         Assert.Equal(@"C:\Tools\Codex\codex.exe", restored.CodexExecutablePath);
+        Assert.Equal("gpt-5.6-luna", restored.CodexModel);
+        Assert.Equal("medium", restored.CodexReasoningEffort);
     }
 }

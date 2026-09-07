@@ -53,6 +53,17 @@ public static class OfficialDocDiagnosticsBuilder
         builder.AppendLine($"OfficialDoc search results: {officialSearchResults.Count}");
         builder.AppendLine($"OfficialDoc selected: {officialSelected.Count}");
         builder.AppendLine($"OfficialDoc will send: {officialWillSend.Count}");
+        var directSource = officialSearchResults.FirstOrDefault(static source => source.ScoreBreakdown.Contains(
+            "RetrievalMode=OfficialDocDirect",
+            StringComparison.OrdinalIgnoreCase));
+        builder.AppendLine($"Retrieval mode: {(directSource is null ? "Generic" : "OfficialDocDirect")}");
+        if (directSource is not null)
+        {
+            builder.AppendLine($"Resolved document: {ValueOrUnset(directSource.DocumentTitle ?? directSource.Title)}");
+            builder.AppendLine($"Resolved version: {FormatList(inquiryFocus?.TargetVersions)}");
+            builder.AppendLine($"Official URL: {ValueOrUnset(directSource.Url)}");
+        }
+
         var queryFeatures = ExtractQueryFeatures(inquiryFocus, product?.ProductName);
         var indexedFeatureMatches = CountIndexedFeatureMatches(indexDocument, queryFeatures, product?.ProductName);
         builder.AppendLine($"OfficialDoc query features: {FormatList(queryFeatures)}");

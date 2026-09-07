@@ -146,16 +146,75 @@ public sealed record CodexAccountInfo
     public bool IsChatGptAuthenticated => string.Equals(AccountType, "chatgpt", StringComparison.OrdinalIgnoreCase);
 }
 
-public sealed record CodexModelInfo(string Id, string DisplayName, bool IsDefault, bool Hidden);
+public sealed record CodexReasoningEffortInfo(string Value, string Description)
+{
+    public string DisplayName => CodexReasoningEffortDisplay.Format(Value, Description);
+}
+
+public static class CodexReasoningEffortDisplay
+{
+    public static string Format(string value, string? description = null)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        var japanese = normalized.ToLowerInvariant() switch
+        {
+            "low" => "低 ― 高速・軽量",
+            "medium" => "中 ― 標準・バランス重視",
+            "high" => "高 ― 複雑な調査向け",
+            "xhigh" => "超高 ― 高度な推論が必要な問題向け",
+            "max" => "最大 ― 最大限の推論",
+            "ultra" => "最上位 ― 最大推論＋自動タスク委譲",
+            _ => string.Empty,
+        };
+
+        if (!string.IsNullOrWhiteSpace(japanese))
+        {
+            return japanese;
+        }
+
+        return string.IsNullOrWhiteSpace(description)
+            ? normalized
+            : $"{normalized} - {description.Trim()}";
+    }
+}
+
+public sealed record CodexCaseModelOption(
+    string Id,
+    string DisplayName,
+    bool IsInherit = false);
+
+public sealed record CodexCaseReasoningEffortOption(
+    string Id,
+    string DisplayName,
+    bool IsInherit = false);
+
+public sealed record CodexModelInfo(
+    string Id,
+    string DisplayName,
+    bool IsDefault,
+    bool Hidden,
+    string DefaultReasoningEffort = "",
+    IReadOnlyList<CodexReasoningEffortInfo>? SupportedReasoningEfforts = null)
+{
+    public string SelectionDisplayName => string.IsNullOrWhiteSpace(DisplayName) || string.Equals(DisplayName, Id, StringComparison.OrdinalIgnoreCase)
+        ? Id
+        : $"{DisplayName} ({Id})";
+
+    public IReadOnlyList<CodexReasoningEffortInfo> ReasoningEfforts => SupportedReasoningEfforts ?? [];
+}
 
 public sealed record CodexThreadStartResult(
     string ThreadId,
     string Model,
     string WorkingDirectory,
     string Sandbox,
-    string? LastTurnId = null);
+    string? LastTurnId = null,
+    string ReasoningEffort = "");
 
-public sealed record CodexTurnStartResult(string TurnId);
+public sealed record CodexTurnStartResult(
+    string TurnId,
+    string Model = "",
+    string ReasoningEffort = "");
 
 public sealed record CodexAgentMessageDeltaEventArgs(
     string ThreadId,

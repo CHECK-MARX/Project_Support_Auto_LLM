@@ -47,7 +47,8 @@ public sealed class MainViewModel : ObservableObject
         nameof(MaxWorkerRestartsPerMinute), nameof(EnableRustSelectorShadowMode),
         nameof(RustEvidenceSelectorTimeoutMs), nameof(RustEvidenceSelectorExecutablePath),
         nameof(ShadowMinimumRunsForReadiness), nameof(ShadowMaxStoredRecords),
-        nameof(CodexExecutablePath), nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
+        nameof(CodexExecutablePath), nameof(CodexModel), nameof(CodexReasoningEffort),
+        nameof(UseRagLabEvidence), nameof(RagLabEvidenceFilePath),
         nameof(RagLabBaselineReadinessFilePath), nameof(RagLabEvidenceMaxItems),
     ];
     private const int ProductionMiniTestMinTimeoutSeconds = 60;
@@ -86,10 +87,13 @@ public sealed class MainViewModel : ObservableObject
     private readonly ILlmClientFactory llmClientFactory;
     private readonly IRustEvidenceSelectorWorkerClient persistentRustEvidenceSelectorWorkerClient;
     private readonly CurrentCaseEvidenceService currentCaseEvidenceService;
+
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
     private bool isApplyingSettings;
+    private bool isApplyingRuntimeModel;
+    private bool isRefreshingOllamaModels;
     private bool ollamaModelsLoaded;
     private IReadOnlyList<ModelCapabilityProfile> modelCapabilityProfiles = [];
     private RustSelectorShadowStatistics? lastRustShadowStatistics;
@@ -235,6 +239,9 @@ public sealed class MainViewModel : ObservableObject
     private string operationStage = "Ready";
     private bool isUpdatingPromptSummary;
     private string codexExecutablePath = string.Empty;
+    private string codexModel = string.Empty;
+    private string codexReasoningEffort = string.Empty;
+    private IReadOnlyList<CaseCodexOverride> caseCodexOverrides = [];
     private string? codexReplyUndo;
     private string? codexMemoUndo;
     private CodexChatViewModel? codex;
@@ -379,6 +386,18 @@ public sealed class MainViewModel : ObservableObject
         set => SetProperty(ref codexExecutablePath, value?.Trim() ?? string.Empty);
     }
 
+    public string CodexModel
+    {
+        get => codexModel;
+        set => SetProperty(ref codexModel, value?.Trim() ?? string.Empty);
+    }
+
+    public string CodexReasoningEffort
+    {
+        get => codexReasoningEffort;
+        set => SetProperty(ref codexReasoningEffort, value?.Trim() ?? string.Empty);
+    }
+
     public IReadOnlyList<string> QualityModes { get; } =
     [
         SupportCaseManager.Ai.Contracts.AnswerQualityModes.Fast,
@@ -391,6 +410,63 @@ public sealed class MainViewModel : ObservableObject
     {
         codex = codexViewModel ?? throw new ArgumentNullException(nameof(codexViewModel));
         OnPropertyChanged(nameof(Codex));
+        codex.RefreshCaseSelection();
+    }
+
+    public (string? Model, string? ReasoningEffort) GetCaseCodexSelection()
+    {
+        var current = FindCurrentCaseCodexOverride();
+        return current is null
+            ? (null, null)
+            : (NullIfWhiteSpace(current.CaseCodexModel), NullIfWhiteSpace(current.CaseCodexReasoningEffort));
+    }
+
+    public void UpdateCaseCodexSelection(string? model, string? reasoningEffort)
+    {
+        if (!settingsLoaded || isApplyingSettings)
+        {
+            return;
+        }
+
+        var supportId = SupportNumber.Trim();
+        var caseFolder = NormalizeCaseFolder(CaseFolderPath);
+        if (string.IsNullOrWhiteSpace(supportId) && string.IsNullOrWhiteSpace(caseFolder))
+        {
+            return;
+        }
+
+        var normalizedModel = model?.Trim() ?? string.Empty;
+        var normalizedReasoningEffort = reasoningEffort?.Trim() ?? string.Empty;
+        var existing = FindCurrentCaseCodexOverride();
+        var updated = new CaseCodexOverride
+        {
+            SupportId = supportId,
+            ProductId = NormalizeProductId(SelectedProductKnowledge?.ProductId),
+            CaseFolder = caseFolder,
+            CaseCodexModel = normalizedModel,
+            CaseCodexReasoningEffort = normalizedReasoningEffort,
+        };
+
+        var overrides = caseCodexOverrides.ToList();
+        if (existing is not null)
+        {
+            var index = overrides.IndexOf(existing);
+            if (string.IsNullOrWhiteSpace(normalizedModel) && string.IsNullOrWhiteSpace(normalizedReasoningEffort))
+            {
+                overrides.RemoveAt(index);
+            }
+            else
+            {
+                overrides[index] = updated;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(normalizedModel) || !string.IsNullOrWhiteSpace(normalizedReasoningEffort))
+        {
+            overrides.Add(updated);
+        }
+
+        caseCodexOverrides = overrides;
+        ScheduleAutoSave();
     }
 
     public void ShutdownEvidenceSelector()
@@ -502,7 +578,6 @@ public sealed class MainViewModel : ObservableObject
 
             append = result == MessageBoxResult.No;
         }
-
         var next = CodexDraftTextApplicator.Apply(
             current,
             text,
@@ -678,7 +753,13 @@ public sealed class MainViewModel : ObservableObject
         get => chatModel;
         set
         {
-            if (SetProperty(ref chatModel, value?.Trim() ?? string.Empty))
+            var normalized = value?.Trim() ?? string.Empty;
+            if (isRefreshingOllamaModels && string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            if (SetProperty(ref chatModel, normalized))
             {
                 RequestedModel = chatModel;
                 EffectiveModel = chatModel;
@@ -1668,6 +1749,7 @@ public sealed class MainViewModel : ObservableObject
         ApplyLaunchContextNote(context);
         currentCaseContext = BuildCurrentCaseContext();
         RefreshProductContextComputedProperties();
+        codex?.RefreshCaseSelection();
         UpdatePromptSummary();
     }
 
@@ -1835,6 +1917,7 @@ public sealed class MainViewModel : ObservableObject
 
         ApplySelectedProductToCurrentFields();
         RefreshProductContextComputedProperties();
+        codex?.RefreshCaseSelection();
         ProductKnowledgeStatusText = $"現在の検索対象: {SelectedProductKnowledge.ProductName}";
         StatusMessage = ProductKnowledgeStatusText;
     }
@@ -2031,10 +2114,22 @@ public sealed class MainViewModel : ObservableObject
             return;
         }
 
-        AvailableModels.Clear();
-        foreach (var model in normalizedModels)
+        var previousRefreshState = isRefreshingOllamaModels;
+        var previousRuntimeState = isApplyingRuntimeModel;
+        isRefreshingOllamaModels = true;
+        isApplyingRuntimeModel = true;
+        try
         {
-            AvailableModels.Add(model);
+            AvailableModels.Clear();
+            foreach (var model in normalizedModels)
+            {
+                AvailableModels.Add(model);
+            }
+        }
+        finally
+        {
+            isApplyingRuntimeModel = previousRuntimeState;
+            isRefreshingOllamaModels = previousRefreshState;
         }
 
         ollamaModelsLoaded |= confirmedByOllama;
@@ -2079,30 +2174,36 @@ public sealed class MainViewModel : ObservableObject
         var resolution = OllamaModelResolver.Resolve(previousModel, AnswerQualityMode, models);
         if (!resolution.IsResolved)
         {
-            ChatModel = string.Empty;
             ApplyModelResolutionDiagnostics(resolution);
             var list = resolution.AvailableModels.Count == 0
                 ? "- (なし)"
                 : string.Join(Environment.NewLine, resolution.AvailableModels.Select(static model => $"- {model}"));
-            OllamaConnectionResultText = $"回答モデルを解決できませんでした。{Environment.NewLine}利用可能モデル:{Environment.NewLine}{list}";
+            var message = string.IsNullOrWhiteSpace(resolution.Message)
+                ? "回答モデルを解決できませんでした。"
+                : resolution.Message;
+            OllamaConnectionResultText = $"{message}{Environment.NewLine}利用可能モデル:{Environment.NewLine}{list}";
             GenerationState = "NeedsConfiguration";
             GenerationSkippedReason = "ModelUnresolved";
             UpdateRagDiagnostics();
             return false;
         }
 
-        ChatModel = resolution.Model;
-        ApplyModelResolutionDiagnostics(resolution);
-        if (!string.Equals(resolution.Source, ModelResolutionSources.Saved, StringComparison.Ordinal))
+        isApplyingRuntimeModel = true;
+        try
         {
-            ApplyModelProfile(resolution.Model);
+            ChatModel = resolution.Model;
+            ApplyModelResolutionDiagnostics(resolution);
+            if (!string.Equals(resolution.Source, ModelResolutionSources.Saved, StringComparison.Ordinal))
+            {
+                ApplyModelProfile(resolution.Model);
+            }
+        }
+        finally
+        {
+            isApplyingRuntimeModel = false;
         }
 
         OllamaConnectionResultText = $"Ollama接続: Ready / モデル数: {models.Count} / 選択: {ChatModel} / Source: {resolution.Source}";
-        if (persist && settingsLoaded && !string.Equals(previousModel, ChatModel, StringComparison.OrdinalIgnoreCase))
-        {
-            await settingsStore.SaveAsync(BuildSettings());
-        }
 
         UpdateRagDiagnostics();
         return true;
@@ -2982,6 +3083,9 @@ public sealed class MainViewModel : ObservableObject
             ? settings.ModelCapabilityProfiles
             : ModelCapabilityProfiles.GetDefaults();
         CodexExecutablePath = settings.CodexExecutablePath;
+        CodexModel = settings.CodexModel;
+        CodexReasoningEffort = settings.CodexReasoningEffort;
+        caseCodexOverrides = settings.CaseCodexOverrides ?? [];
         UseAnswerQualityGate = settings.UseAnswerQualityGate;
         UsePhase175QualityControls = settings.UsePhase175QualityControls;
         UseCoverageAwareEvidenceSelection = settings.UseCoverageAwareEvidenceSelection;
@@ -2999,6 +3103,7 @@ public sealed class MainViewModel : ObservableObject
         RagLabBaselineReadinessFilePath = settings.RagLabBaselineReadinessFilePath;
         RagLabEvidenceMaxItems = settings.RagLabEvidenceMaxItems;
         RefreshProductContextComputedProperties();
+        codex?.RefreshCaseSelection();
         }
         finally
         {
@@ -3206,6 +3311,9 @@ public sealed class MainViewModel : ObservableObject
                 ? modelCapabilityProfiles
                 : ModelCapabilityProfiles.GetDefaults(),
             CodexExecutablePath = CodexExecutablePath,
+            CodexModel = CodexModel,
+            CodexReasoningEffort = CodexReasoningEffort,
+            CaseCodexOverrides = caseCodexOverrides,
             UseRagLabEvidence = UseRagLabEvidence,
             RagLabEvidenceFilePath = RagLabEvidenceFilePath,
             RagLabBaselineReadinessFilePath = RagLabBaselineReadinessFilePath,
@@ -3227,6 +3335,40 @@ public sealed class MainViewModel : ObservableObject
         };
     }
 
+    private CaseCodexOverride? FindCurrentCaseCodexOverride()
+    {
+        var supportId = SupportNumber.Trim();
+        var caseFolder = NormalizeCaseFolder(CaseFolderPath);
+        var productId = NormalizeProductId(SelectedProductKnowledge?.ProductId);
+        return caseCodexOverrides.FirstOrDefault(item =>
+            string.Equals(item.SupportId?.Trim() ?? string.Empty, supportId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(NormalizeCaseFolder(item.CaseFolder), caseFolder, StringComparison.OrdinalIgnoreCase)
+            && NormalizeProductId(item.ProductId) == productId);
+    }
+
+    private static string NormalizeCaseFolder(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return Path.TrimEndingDirectorySeparator(Path.GetFullPath(value.Trim()));
+        }
+        catch
+        {
+            return value.Trim();
+        }
+    }
+
+    private static string? NullIfWhiteSpace(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static Guid? NormalizeProductId(Guid? value) => value is { } productId && productId != Guid.Empty
+        ? productId
+        : null;
+
     private void ApplyCaseContext(CaseContext context)
     {
         CaseFolderPath = context.CaseFolderPath ?? CaseFolderPath;
@@ -3239,6 +3381,7 @@ public sealed class MainViewModel : ObservableObject
         Status = context.Status ?? string.Empty;
         ReceptionDate = context.ReceptionDate?.ToString("yyyy-MM-dd") ?? string.Empty;
         ReplaceNotes(context.Notes);
+        codex?.RefreshCaseSelection();
     }
 
     private void ApplyPreferredCustomerInquiry(IReadOnlyList<NoteSnapshot> notes)
@@ -3835,8 +3978,8 @@ public sealed class MainViewModel : ObservableObject
             string.Equals(source.SourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase));
         var nearMatches = SearchResults.Count(static source =>
             string.Equals(source.Source.MatchKind, PastAnswerMatchKinds.NearDuplicate, StringComparison.OrdinalIgnoreCase));
-        RagDiagnosticsText = string.Join(Environment.NewLine,
-        [
+        var diagnostics = new List<string>
+        {
             $"RagPipelineMode: {BuildSettings().RagPipelineMode}",
             $"RetrievalMode: {ResolveRetrievalMode()}",
             $"EmbeddingModel: {ValueOrUnset(BuildSettings().LlmProvider.EmbeddingModel)}",
@@ -3870,10 +4013,27 @@ public sealed class MainViewModel : ObservableObject
             $"Rust Shadow fallback/timeout: {lastRustShadowStatistics?.FallbackCount ?? 0}/{lastRustShadowStatistics?.TimeoutCount ?? 0}",
             $"Rust Shadow median/p95: {lastRustShadowStatistics?.RustMedianElapsedMilliseconds ?? 0:0.000}/{lastRustShadowStatistics?.RustP95ElapsedMilliseconds ?? 0:0.000} ms",
             $"Rust Shadow readiness: {lastRustShadowStatistics?.Readiness.ToString() ?? RustAdoptionReadiness.NotEnoughData.ToString()}",
-        ]);
+        };
+        var directSource = SearchResults
+            .Select(static source => source.Source)
+            .FirstOrDefault(static source => source.ScoreBreakdown.Contains(
+                "RetrievalMode=OfficialDocDirect",
+                StringComparison.OrdinalIgnoreCase));
+        if (directSource is not null)
+        {
+            diagnostics.Add($"Resolved document: {ValueOrUnset(directSource.DocumentTitle ?? directSource.Title)}");
+            diagnostics.Add($"Resolved version: {ValueOrUnset(lastInquiryFocus?.TargetVersions.FirstOrDefault())}");
+            diagnostics.Add($"Official URL: {ValueOrUnset(directSource.Url)}");
+        }
+
+        RagDiagnosticsText = string.Join(Environment.NewLine, diagnostics);
     }
 
-    private string ResolveRetrievalMode() => SearchResults.Any(source => source.Source.SemanticScore.HasValue)
+    private string ResolveRetrievalMode() => SearchResults.Any(source => source.Source.ScoreBreakdown.Contains(
+        "RetrievalMode=OfficialDocDirect",
+        StringComparison.OrdinalIgnoreCase))
+        ? "OfficialDocDirect"
+        : SearchResults.Any(source => source.Source.SemanticScore.HasValue)
         ? "Hybrid"
         : "KeywordOnly";
 
@@ -5582,6 +5742,7 @@ public sealed class MainViewModel : ObservableObject
         base.OnPropertyChanged(propertyName);
         if (settingsLoaded &&
             !isApplyingSettings &&
+            !isApplyingRuntimeModel &&
             propertyName is not null &&
             AutoSavedProperties.Contains(propertyName))
         {

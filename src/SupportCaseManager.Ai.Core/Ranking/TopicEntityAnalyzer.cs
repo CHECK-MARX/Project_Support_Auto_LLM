@@ -23,6 +23,10 @@ public static partial class TopicEntityAnalyzer
 
     private static readonly (string Name, string[] Terms)[] IntentTerms =
     [
+        ("ReleaseNotes", [
+            "リリースノート", "リリース内容", "変更内容", "変更点", "追加機能", "新機能", "修正内容", "対応内容", "バージョン情報",
+            "release notes", "release note", "released", "enhancement", "resolved issues", "what's new", "engine pack",
+        ]),
         ("Overview", ["概要", "何ですか", "とは", "what is", "overview"]),
         ("Purpose", ["用途", "目的", "何に使", "purpose", "use case"]),
         ("HowTo", ["方法", "手順", "やり方", "オプションを教えて", "how to", "procedure"]),
@@ -218,7 +222,7 @@ public static partial class TopicEntityAnalyzer
         {
             return Regex.IsMatch(
                 normalizedText,
-                $@"(?<![a-z0-9]){Regex.Escape(normalizedAlias)}(?![a-z0-9])",
+                $@"(?<![a-z0-9]){Regex.Escape(normalizedAlias)}(?![a-z])",
                 RegexOptions.CultureInvariant);
         }
 

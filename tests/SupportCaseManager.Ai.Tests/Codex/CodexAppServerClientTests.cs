@@ -52,6 +52,42 @@ public sealed class CodexAppServerClientTests
     }
 
     [Fact]
+    public async Task ModelCapabilitiesAndSelectedTurnSettings_AreSentUsingAppServerFields()
+    {
+        using var temp = new Helpers.TempDirectory();
+        var transport = new FakeTransport();
+        transport.Enqueue("initialize", """{"codexHome":"C:/codex","platformFamily":"windows","platformOs":"windows","userAgent":"codex/0.146.0"}""");
+        transport.Enqueue("account/read", """{"account":{"type":"chatgpt","planType":"plus"},"requiresOpenaiAuth":true}""");
+        transport.Enqueue("model/list", """{"data":[{"id":"codex-luna","model":"codex-luna","displayName":"Codex Luna","isDefault":false,"hidden":false,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low","description":"Fast"},{"reasoningEffort":"medium","description":"Normal"}]}],"nextCursor":null}""");
+        transport.Enqueue("thread/start", """{"thread":{"id":"thread-settings"},"model":"codex-luna","cwd":"C:/case","sandbox":"read-only","reasoningEffort":"medium"}""");
+        transport.Enqueue("turn/start", """{"turn":{"id":"turn-settings","status":"inProgress","items":[]}}""");
+        var client = CreateClient(transport);
+
+        var connection = await client.ConnectAsync("codex.exe");
+        var thread = await client.StartThreadAsync(temp.Path, "codex-luna");
+        var turn = await client.StartTurnAsync(
+            "調査してください",
+            model: "codex-luna",
+            reasoningEffort: "medium");
+
+        var model = Assert.Single(connection.Models);
+        Assert.Equal("codex-luna", model.Id);
+        Assert.Equal("medium", model.DefaultReasoningEffort);
+        Assert.Equal(["low", "medium"], model.ReasoningEfforts.Select(item => item.Value));
+        Assert.Equal("medium", thread.ReasoningEffort);
+        Assert.Equal("turn-settings", turn.TurnId);
+
+        var threadRequest = transport.Requests.Single(request => request.Method == "thread/start");
+        var turnRequest = transport.Requests.Single(request => request.Method == "turn/start");
+        var threadJson = JsonSerializer.Serialize(threadRequest.Parameters);
+        var turnJson = JsonSerializer.Serialize(turnRequest.Parameters);
+        Assert.Contains("\"model\":\"codex-luna\"", threadJson, StringComparison.Ordinal);
+        Assert.Contains("\"allowProviderModelFallback\":false", threadJson, StringComparison.Ordinal);
+        Assert.Contains("\"model\":\"codex-luna\"", turnJson, StringComparison.Ordinal);
+        Assert.Contains("\"effort\":\"medium\"", turnJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task UnknownNotification_IsReportedWithoutCrashing()
     {
         var transport = CreateConnectedTransport();

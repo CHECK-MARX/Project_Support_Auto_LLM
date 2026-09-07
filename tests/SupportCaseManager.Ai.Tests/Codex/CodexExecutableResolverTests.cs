@@ -35,6 +35,24 @@ public sealed class CodexExecutableResolverTests
     }
 
     [Fact]
+    public async Task ResolveAsync_PrefersCodexDesktopRuntimeOverOlderPathExecutable()
+    {
+        var desktopRuntimePath = Path.GetFullPath("local/OpenAI/Codex/bin/runtime/codex.exe");
+        var pathExecutable = Path.GetFullPath("path/codex.exe");
+        var resolver = new CodexExecutableResolver(
+            fileExists: path => string.Equals(path, desktopRuntimePath, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(path, pathExecutable, StringComparison.OrdinalIgnoreCase),
+            localAppDataProvider: () => Path.GetFullPath("local"),
+            whereProvider: (_, _) => Task.FromResult<IReadOnlyList<string>>([pathExecutable]),
+            desktopRuntimeProvider: _ => [desktopRuntimePath]);
+
+        var result = await resolver.ResolveAsync(null);
+
+        Assert.Equal(CodexExecutableSource.StandardLocation, result.Source);
+        Assert.Equal(desktopRuntimePath, result.ExecutablePath);
+    }
+
+    [Fact]
     public async Task ResolveAsync_ReturnsJapaneseGuidanceWhenNotFound()
     {
         var resolver = new CodexExecutableResolver(

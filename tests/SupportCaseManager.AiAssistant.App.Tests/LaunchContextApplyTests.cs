@@ -302,6 +302,91 @@ public sealed class LaunchContextApplyTests
     }
 
     [Fact]
+    public async Task CodexSelection_IsSavedAutomaticallyAndRestored()
+    {
+        var settings = CreateSettings() with
+        {
+            CodexModel = "gpt-5.6-luna",
+            CodexReasoningEffort = "medium",
+        };
+        var services = CreateViewModel(context: null, settings: settings);
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        services.ViewModel.CodexModel = "gpt-6-astra";
+        services.ViewModel.CodexReasoningEffort = "ultra";
+        await Task.Delay(650);
+
+        Assert.NotNull(services.SettingsStore.SavedSettings);
+        Assert.Equal("gpt-6-astra", services.SettingsStore.SavedSettings!.CodexModel);
+        Assert.Equal("ultra", services.SettingsStore.SavedSettings.CodexReasoningEffort);
+
+        var restored = CreateViewModel(context: null, settings: services.SettingsStore.SavedSettings);
+        await restored.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        Assert.Equal("gpt-6-astra", restored.ViewModel.CodexModel);
+        Assert.Equal("ultra", restored.ViewModel.CodexReasoningEffort);
+    }
+
+    [Fact]
+    public async Task CaseCodexSelection_IsSavedPerCaseAndRestoredWithoutChangingGlobalDefaults()
+    {
+        var context = CreateContext();
+        var settings = CreateSettings() with
+        {
+            CodexModel = "gpt-6-astra",
+            CodexReasoningEffort = "xhigh",
+        };
+        var services = CreateViewModel(context, settings);
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions { ContextFilePath = "ai-context.json" });
+
+        services.ViewModel.UpdateCaseCodexSelection("gpt-5.6-luna", "medium");
+        await Task.Delay(650);
+
+        Assert.NotNull(services.SettingsStore.SavedSettings);
+        var saved = services.SettingsStore.SavedSettings!;
+        var overrideSettings = Assert.Single(saved.CaseCodexOverrides);
+        Assert.Equal(context.SupportNumber, overrideSettings.SupportId);
+        Assert.Equal(context.CaseFolderPath, overrideSettings.CaseFolder);
+        Assert.Equal("gpt-5.6-luna", overrideSettings.CaseCodexModel);
+        Assert.Equal("medium", overrideSettings.CaseCodexReasoningEffort);
+        Assert.Equal("gpt-6-astra", saved.CodexModel);
+        Assert.Equal("xhigh", saved.CodexReasoningEffort);
+
+        var restored = CreateViewModel(context, saved);
+        await restored.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions { ContextFilePath = "ai-context.json" });
+
+        var selection = restored.ViewModel.GetCaseCodexSelection();
+        Assert.Equal("gpt-5.6-luna", selection.Model);
+        Assert.Equal("medium", selection.ReasoningEffort);
+        Assert.Equal("gpt-6-astra", restored.ViewModel.CodexModel);
+        Assert.Equal("xhigh", restored.ViewModel.CodexReasoningEffort);
+
+        var differentCase = CreateContext() with
+        {
+            ProductId = Guid.NewGuid(),
+        };
+        var isolated = CreateViewModel(differentCase, saved);
+        await isolated.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions { ContextFilePath = "ai-context.json" });
+
+        var isolatedSelection = isolated.ViewModel.GetCaseCodexSelection();
+        Assert.Null(isolatedSelection.Model);
+        Assert.Null(isolatedSelection.ReasoningEffort);
+    }
+
+    [Fact]
+    public async Task OllamaModelChange_IsSavedAutomatically()
+    {
+        var services = CreateViewModel(context: null, settings: CreateSettings());
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        services.ViewModel.ChatModel = "qwen3.8:27b";
+        await Task.Delay(650);
+
+        Assert.NotNull(services.SettingsStore.SavedSettings);
+        Assert.Equal("qwen3.8:27b", services.SettingsStore.SavedSettings!.LlmProvider.ChatModel);
+    }
+
+    [Fact]
     public async Task ProductSettingChange_IsSavedAutomaticallyAfterDebounce()
     {
         var services = CreateViewModel(context: null, settings: CreateSettings());
@@ -372,7 +457,7 @@ public sealed class LaunchContextApplyTests
     }
 
     [Fact]
-    public async Task ResolveAvailableModels_FallsBackOnlyWhenRequestedModelIsUnavailable()
+    public async Task ResolveAvailableModels_PreservesUnavailableRequestedModelAndReportsExplicitError()
     {
         var settings = CreateSettings() with
         {
@@ -388,14 +473,37 @@ public sealed class LaunchContextApplyTests
             new[] { "gemma4:31b" },
             false);
 
-        Assert.True(resolved);
-        Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
+        Assert.False(resolved);
+        Assert.Equal("qwen3.8:27b", services.ViewModel.ChatModel);
         Assert.Equal("qwen3.8:27b", services.ViewModel.RequestedModel);
-        Assert.Equal("gemma4:31b", services.ViewModel.EffectiveModel);
-        Assert.Equal("gemma4:31b", services.ViewModel.FallbackModel);
+        Assert.Empty(services.ViewModel.EffectiveModel);
+        Assert.Empty(services.ViewModel.FallbackModel);
         Assert.Equal(ModelFallbackReasons.RequestedModelUnavailable, services.ViewModel.ModelFallbackReason);
-        Assert.Equal(ModelResolutionSources.Fallback, services.ViewModel.ModelResolutionSource);
-        Assert.Contains("選択: gemma4:31b / Source: Fallback", services.ViewModel.OllamaConnectionResultText);
+        Assert.Equal(ModelResolutionSources.Unresolved, services.ViewModel.ModelResolutionSource);
+        Assert.Contains("保存済みOllamaモデル", services.ViewModel.OllamaConnectionResultText, StringComparison.Ordinal);
+        Assert.Contains("別のモデルを選択", services.ViewModel.OllamaConnectionResultText, StringComparison.Ordinal);
+        Assert.Equal(0, services.SettingsStore.SaveCount);
+    }
+
+    [Fact]
+    public async Task RefreshingOllamaModels_PreservesSelectedModelAcrossItemsSourceRebuild()
+    {
+        var settings = CreateSettings() with
+        {
+            AnswerQualityMode = AnswerQualityModes.Quality,
+            LlmProvider = new LlmProviderSettings { ChatModel = "qwen3.8:27b" },
+        };
+        var services = CreateViewModel(context: null, settings: settings);
+        await services.ViewModel.InitializeFromCommandLineAsync(new CommandLineOptions());
+
+        var method = typeof(MainViewModel).GetMethod("ReplaceAvailableModels", BindingFlags.Instance | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        method.Invoke(services.ViewModel, [new[] { "gemma4:31b", "qwen3.8:27b" }, true]);
+
+        Assert.Equal("qwen3.8:27b", services.ViewModel.ChatModel);
+        Assert.Equal(ModelResolutionSources.Saved, services.ViewModel.ModelResolutionSource);
+        Assert.Equal(0, services.SettingsStore.SaveCount);
     }
 
     private static TestServices CreateViewModel(

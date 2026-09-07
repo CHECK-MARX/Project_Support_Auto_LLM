@@ -31,7 +31,7 @@ public sealed class ProgressBindingTests
         AssertEditableTextBox(document, "CustomerReplyDraft");
         AssertEditableTextBox(document, "InternalMemo");
 
-        foreach (var bindingName in new[] { "Codex.Version", "Codex.Model", "Codex.DiagnosticsPath" })
+        foreach (var bindingName in new[] { "Codex.Version", "Codex.ActualModelAndReasoning", "Codex.DiagnosticsPath" })
         {
             var bindings = document.Descendants()
                 .SelectMany(static element => element.Attributes())

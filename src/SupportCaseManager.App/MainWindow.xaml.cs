@@ -9,14 +9,17 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using MessageBox = System.Windows.MessageBox;
 using SupportCaseManager.App.AiHandoff;
+using SupportCaseManager.App.Diagnostics;
 using SupportCaseManager.App.Theme;
 using SupportCaseManager.App.Dialogs;
 using SupportCaseManager.App.ViewModels;
@@ -109,6 +112,7 @@ public partial class MainWindow : Window
     };
     private static readonly TimeSpan ClosedSearchMinIndicatorDuration = TimeSpan.FromMilliseconds(450);
     private static readonly TimeSpan TabRefreshCacheLifetime = TimeSpan.FromMinutes(2);
+    private HwndSource? _closeTraceSource;
 
     public ObservableCollection<string> StatusOptions => _statusOptions;
     public ObservableCollection<string> ProductNameOptions => _productNameOptions;
@@ -123,7 +127,58 @@ public partial class MainWindow : Window
 
         DataContext = _viewModel;
         InitializeComponent();
+        SourceInitialized += OnSourceInitializedForCloseTrace;
+        Closing += OnClosingForCloseTrace;
         Closed += OnClosed;
+    }
+
+    private void OnSourceInitializedForCloseTrace(object? sender, EventArgs e)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        ParentCloseTrace.Write("WINDOW_SOURCE_INITIALIZED", handle);
+
+        try
+        {
+            _closeTraceSource = HwndSource.FromHwnd(handle);
+            _closeTraceSource?.AddHook(OnCloseTraceWindowMessage);
+        }
+        catch (Exception exception)
+        {
+            ParentCloseTrace.WriteException("SOURCE_HOOK", exception, handle);
+        }
+    }
+
+    private IntPtr OnCloseTraceWindowMessage(
+        IntPtr hwnd,
+        int message,
+        IntPtr wParam,
+        IntPtr lParam,
+        ref bool handled)
+    {
+        try
+        {
+            if (message == 0x0112 && (wParam.ToInt64() & 0xFFF0L) == 0xF060L)
+            {
+                ParentCloseTrace.Write("SC_CLOSE_RECEIVED", hwnd);
+            }
+            else if (message == 0x0010)
+            {
+                ParentCloseTrace.Write("WM_CLOSE_RECEIVED", hwnd);
+            }
+        }
+        catch (Exception exception)
+        {
+            ParentCloseTrace.WriteException("WINDOW_MESSAGE", exception, hwnd);
+        }
+
+        return IntPtr.Zero;
+    }
+
+    private void OnClosingForCloseTrace(object? sender, CancelEventArgs e)
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        ParentCloseTrace.Write("CLOSING_ENTER", handle, e.Cancel);
+        ParentCloseTrace.Write("CLOSING_EXIT", handle, e.Cancel);
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
@@ -151,35 +206,38 @@ public partial class MainWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
-        SaveDirectoryScanCache();
-        _statusRefreshCts?.Cancel();
-        _statusRefreshCts?.Dispose();
-        _statusRefreshCts = null;
-        _closedRefreshCts?.Cancel();
-        _closedRefreshCts?.Dispose();
-        _closedRefreshCts = null;
-        _caseRefreshCts?.Cancel();
-        _caseRefreshCts?.Dispose();
-        _caseRefreshCts = null;
-        _closedSearchCts?.Cancel();
-        _closedSearchCts?.Dispose();
-        _closedSearchCts = null;
-        _caseTabPreloadCts?.Cancel();
-        _caseTabPreloadCts?.Dispose();
-        _caseTabPreloadCts = null;
-        _viewModel.PersistSettings();
-        base.OnClosed(e);
-    }
+        var handle = new WindowInteropHelper(this).Handle;
+        ParentCloseTrace.Write("CLOSED_ENTER", handle);
 
-    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
-    {
-        base.OnClosing(e);
-
-        if (System.Windows.Application.Current?.MainWindow == this)
+        try
         {
-            e.Cancel = true;
-            Hide();
-            _viewModel.StatusMessage = "トレイに格納しました。";
+            SaveDirectoryScanCache();
+            _statusRefreshCts?.Cancel();
+            _statusRefreshCts?.Dispose();
+            _statusRefreshCts = null;
+            _closedRefreshCts?.Cancel();
+            _closedRefreshCts?.Dispose();
+            _closedRefreshCts = null;
+            _caseRefreshCts?.Cancel();
+            _caseRefreshCts?.Dispose();
+            _caseRefreshCts = null;
+            _closedSearchCts?.Cancel();
+            _closedSearchCts?.Dispose();
+            _closedSearchCts = null;
+            _caseTabPreloadCts?.Cancel();
+            _caseTabPreloadCts?.Dispose();
+            _caseTabPreloadCts = null;
+            _viewModel.PersistSettings();
+            base.OnClosed(e);
+        }
+        catch (Exception exception)
+        {
+            ParentCloseTrace.WriteException("CLOSED", exception, handle);
+            throw;
+        }
+        finally
+        {
+            ParentCloseTrace.Write("CLOSED_EXIT", handle);
         }
     }
 

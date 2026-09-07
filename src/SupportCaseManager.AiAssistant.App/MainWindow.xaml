@@ -150,6 +150,8 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Text="Codex実行ファイル" />
                                 <TextBox Grid.Column="1"
@@ -178,9 +180,25 @@
                                 <TextBlock Grid.Row="4" Text="ChatGPT認証" />
                                 <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2"
                                            Text="{Binding Codex.AccountStatus, Mode=OneWay}" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="5" Text="既定モデル" />
-                                <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="2"
-                                           Text="{Binding Codex.Model, Mode=OneWay}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="5" Text="Codexモデル" />
+                                <ComboBox Grid.Row="5"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding Codex.AvailableModels}"
+                                          SelectedValuePath="Id"
+                                          DisplayMemberPath="SelectionDisplayName"
+                                          SelectedValue="{Binding Codex.SelectedModel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="6" Text="推論レベル" />
+                                <ComboBox Grid.Row="6"
+                                          Grid.Column="1"
+                                          ItemsSource="{Binding Codex.AvailableReasoningEfforts}"
+                                          SelectedValuePath="Value"
+                                          DisplayMemberPath="DisplayName"
+                                          ToolTip="モデルごとにCodex App Serverが広告する推論レベルだけを選択できます。"
+                                          SelectedValue="{Binding Codex.SelectedReasoningEffort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="2"
+                                           Text="{Binding Codex.CodexSelectionStatus, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource AppMutedForegroundBrush}" />
                             </Grid>
                         </GroupBox>
 
@@ -1026,9 +1044,9 @@
                                 <TextBlock Grid.Row="3" Grid.Column="2" Text="Codex Thread ID" />
                                 <TextBlock Grid.Row="3" Grid.Column="3" Text="{Binding Codex.ThreadId, Mode=OneWay}" TextWrapping="Wrap" />
 
-                                <TextBlock Grid.Row="4" Text="Codex / モデル" />
+                                <TextBlock Grid.Row="4" Text="Codex / 実値" />
                                 <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3">
-                                    <Run Text="{Binding Codex.Version, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Codex.Model, Mode=OneWay}" />
+                                    <Run Text="{Binding Codex.Version, Mode=OneWay}" /><Run Text=" / " /><Run Text="{Binding Codex.ActualModelAndReasoning, Mode=OneWay}" />
                                 </TextBlock>
 
                                 <TextBlock Grid.Row="5" Text="処理状態" />
@@ -1041,6 +1059,62 @@
                                                  Value="{Binding Codex.ProgressPercent, Mode=OneWay}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1" Margin="12,0,0,0" Text="{Binding Codex.ProgressText, Mode=OneWay}" />
                                 </Grid>
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="Codex設定の適用状況">
+                            <StackPanel>
+                                <TextBlock Text="全体既定" />
+                                <TextBlock Text="{Binding Codex.GlobalSettingsDisplay}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <TextBlock Text="案件設定" />
+                                <TextBlock Text="{Binding Codex.CaseSettingsDisplay}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                                <TextBlock Text="次回新規調査" />
+                                <TextBlock Text="{Binding Codex.EffectiveSettingsDisplay}" TextWrapping="Wrap" FontWeight="SemiBold" Margin="0,0,0,8" />
+                                <TextBlock Text="現在Thread" />
+                                <TextBlock Text="{Binding Codex.ActualThreadSettingsDisplay}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </GroupBox>
+                        <TextBlock Text="案件設定は「新しい調査」から適用されます。「前回の続きから再開」では現在Threadの設定を維持します。" TextWrapping="Wrap" Margin="0,0,0,8" />
+                        <GroupBox Header="案件のCodex設定（次の新しい調査に適用）">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <TextBlock Text="全体既定" />
+                                <TextBlock Grid.Column="1" Grid.ColumnSpan="3"
+                                           Text="{Binding Codex.GlobalCodexSelectionSummary, Mode=OneWay}"
+                                           TextWrapping="Wrap" />
+
+                                <TextBlock Grid.Row="1" Text="案件モデル" />
+                                <ComboBox Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3"
+                                          ItemsSource="{Binding Codex.AvailableCaseModels}"
+                                          SelectedValuePath="Id"
+                                          DisplayMemberPath="DisplayName"
+                                          SelectedValue="{Binding Codex.CaseSelectedModel, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="2" Text="案件推論レベル" />
+                                <ComboBox Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3"
+                                          ItemsSource="{Binding Codex.AvailableCaseReasoningEfforts}"
+                                          SelectedValuePath="Id"
+                                          DisplayMemberPath="DisplayName"
+                                          ToolTip="案件設定は次の新しい調査にだけ適用されます。内部送信値はruntimeのIDです。"
+                                          SelectedValue="{Binding Codex.CaseSelectedReasoningEffort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                                <TextBlock Grid.Row="3" Text="適用状態" />
+                                <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3"
+                                           Text="{Binding Codex.CaseCodexSelectionStatus, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Foreground="{DynamicResource AppMutedForegroundBrush}" />
                             </Grid>
                         </GroupBox>
 
@@ -1516,6 +1590,9 @@
             <TabItem Header="{DynamicResource LogsDiagnosticsTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
+                        <GroupBox Header="案件別Codex設定">
+                            <TextBox Text="{Binding Codex.CaseSettingsDiagnostics, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" />
+                        </GroupBox>
                         <GroupBox Header="{DynamicResource DiagnosticsStatusHeader}">
                             <Grid>
                                 <Grid.ColumnDefinitions>

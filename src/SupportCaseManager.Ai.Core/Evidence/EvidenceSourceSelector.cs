@@ -61,9 +61,13 @@ public static class EvidenceSourceSelector
             return false;
         }
 
-        return !questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase)
+        return !IsOfficialDocumentationQuestion(questionTypes)
             || !IsPastSource(source.SourceType);
     }
+
+    private static bool IsOfficialDocumentationQuestion(IReadOnlyList<string> questionTypes) =>
+        questionTypes.Contains(QuestionTypes.LatestVersionQuestion, StringComparer.OrdinalIgnoreCase) ||
+        questionTypes.Contains(QuestionTypes.ReleaseNotesQuestion, StringComparer.OrdinalIgnoreCase);
 
     private static int Priority(string sourceType, IReadOnlyList<string> questionTypes)
     {

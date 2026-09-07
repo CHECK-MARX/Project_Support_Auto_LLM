@@ -41,22 +41,26 @@ public static class OllamaModelResolver
         var restored = Find(available, savedModel);
         if (!string.IsNullOrWhiteSpace(restored))
         {
-            return Success(restored, ModelResolutionSources.Saved, available, requestedModel);
+            return Success(requestedModel, ModelResolutionSources.Saved, available, requestedModel);
+        }
+
+        if (!string.IsNullOrWhiteSpace(requestedModel))
+        {
+            return new ModelResolutionResult
+            {
+                RequestedModel = requestedModel,
+                Source = ModelResolutionSources.Unresolved,
+                AvailableModels = available,
+                FallbackReason = ModelFallbackReasons.RequestedModelUnavailable,
+                Message = $"保存済みOllamaモデル \"{requestedModel}\" は現在利用できません。別のモデルを選択してください。",
+            };
         }
 
         var preset = ModelCapabilityProfiles.ModelForQualityMode(qualityMode ?? string.Empty);
         var resolvedPreset = Find(available, preset);
         if (!string.IsNullOrWhiteSpace(resolvedPreset))
         {
-            return string.IsNullOrWhiteSpace(requestedModel)
-                ? Success(resolvedPreset, ModelResolutionSources.Preset, available, requestedModel)
-                : Success(
-                    resolvedPreset,
-                    ModelResolutionSources.Fallback,
-                    available,
-                    requestedModel,
-                    resolvedPreset,
-                    ModelFallbackReasons.RequestedModelUnavailable);
+            return Success(resolvedPreset, ModelResolutionSources.Preset, available, requestedModel);
         }
 
         foreach (var candidate in FallbackOrder(qualityMode))
@@ -70,9 +74,7 @@ public static class OllamaModelResolver
                     available,
                     requestedModel,
                     fallback,
-                    string.IsNullOrWhiteSpace(requestedModel)
-                        ? ModelFallbackReasons.QualityPresetUnavailable
-                        : ModelFallbackReasons.RequestedModelUnavailable);
+                    ModelFallbackReasons.QualityPresetUnavailable);
             }
         }
 
@@ -82,9 +84,7 @@ public static class OllamaModelResolver
             available,
             requestedModel,
             available[0],
-            string.IsNullOrWhiteSpace(requestedModel)
-                ? ModelFallbackReasons.QualityPresetUnavailable
-                : ModelFallbackReasons.RequestedModelUnavailable);
+            ModelFallbackReasons.QualityPresetUnavailable);
     }
 
     private static ModelResolutionResult Success(
