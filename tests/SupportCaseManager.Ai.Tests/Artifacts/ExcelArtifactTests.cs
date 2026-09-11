@@ -231,11 +231,41 @@ public sealed class ExcelArtifactTests
             InquiryText = "確認依頼",
             UserInstruction = "英訳してメーカーへ確認",
             CurrentCaseEvidenceReferences = "- EvidenceId: current:session:file:1\n  File: attachment.pdf\n  Locator: page:3\n  Kind: PdfPage\n  ContentHash: abc123\n  Excerpt: Sanitizer evidence",
+            ProtectedValues = new ManufacturerProtectedValueSet
+            {
+                Items =
+                [
+                    new() { Literal = "Path.GetFileName()" },
+                    new() { Literal = "KSAY0005207" },
+                    new() { Literal = "Additional_Inquiry_Details_EN.xlsx", Category = "Attachment" },
+                ],
+            },
+            ManufacturerSafeContext = new ManufacturerSafeContext
+            {
+                ProductName = "Checkmarx",
+                SupportId = "00018290",
+                CurrentOutboundAttachments = ["Inquiry_Details_EN.xlsx"],
+                CurrentCustomerDeltaTechnicalContent = ["質問1：Path.GetFileName()とKSAY0005207を確認してください。"],
+                RequiredProtectedTechnicalValues = ["Path.GetFileName()", "KSAY0005207", "Additional_Inquiry_Details_EN.xlsx"],
+            },
         };
         var composer = new ArtifactPromptComposer();
 
         var translationPrompt = composer.ComposeTranslationPrompt(plan, [entry], context);
         var mailPrompt = composer.ComposeManufacturerMailPrompt(
+            plan,
+            [
+                new ExcelTranslationValue
+                {
+                    Sheet = entry.Sheet,
+                    Cell = entry.Cell,
+                    SourceText = entry.SourceText,
+                    TranslatedText = "Review of Path Traversal",
+                },
+            ],
+            context,
+            ["Inquiry_Details_EN.xlsx"]);
+        var bilingualPrompt = composer.ComposeBilingualManufacturerMailPrompt(
             plan,
             [
                 new ExcelTranslationValue
@@ -256,9 +286,22 @@ public sealed class ExcelArtifactTests
         Assert.Contains("Hello Support Team,", mailPrompt);
         Assert.Contains("Best regards,", mailPrompt);
         Assert.Contains("自動送信はしません", mailPrompt);
-        Assert.Contains("CurrentCase Evidence", mailPrompt);
-        Assert.Contains("attachment.pdf", mailPrompt);
-        Assert.Contains("page:3", mailPrompt);
+        Assert.DoesNotContain("CurrentCase Evidence", mailPrompt);
+        Assert.DoesNotContain("attachment.pdf", mailPrompt);
+        Assert.DoesNotContain("page:3", mailPrompt);
+        Assert.Contains("japaneseDraft", bilingualPrompt);
+        Assert.Contains("englishDraft", bilingualPrompt);
+        Assert.Contains("同じ質問番号", bilingualPrompt);
+        Assert.Contains("Inquiry_Details_EN.xlsx", bilingualPrompt);
+        Assert.Contains("### REQUIRED_PROTECTED_VALUES", bilingualPrompt);
+        Assert.Contains("MAIL_BODY_REQUIRED", bilingualPrompt);
+        Assert.Contains("MAIL_BODY_OR_ATTACHMENT_REQUIRED", bilingualPrompt);
+        Assert.Contains("MissingBeforeSend: 0", bilingualPrompt);
+        Assert.Contains("MissingBeforeSendCount: 0", bilingualPrompt);
+        Assert.Contains("Path.GetFileName()", bilingualPrompt);
+        Assert.Contains("KSAY0005207", bilingualPrompt);
+        Assert.Contains("Additional_Inquiry_Details_EN.xlsx", bilingualPrompt);
+        Assert.Contains("自動送信・ファイル追記・案件ファイル変更は行いません", bilingualPrompt);
     }
 
     [Fact]

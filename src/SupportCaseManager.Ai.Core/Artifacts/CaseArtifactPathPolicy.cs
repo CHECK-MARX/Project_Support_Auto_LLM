@@ -20,27 +20,59 @@ public sealed class CaseArtifactPathPolicy
 
     public string NormalizeSourceFile(string caseFolder, string sourceFilePath)
     {
+        var fullPath = NormalizeSelectedSourceFile(caseFolder, sourceFilePath);
+        if (GetArtifactFormat(fullPath) == ArtifactFormat.Unsupported)
+        {
+            throw new InvalidOperationException("このファイル形式は現在、翻訳保存に対応していません。");
+        }
+
+        return fullPath;
+    }
+
+    public string NormalizeSelectedSourceFile(string caseFolder, string sourceFilePath)
+    {
         var root = NormalizeCaseFolder(caseFolder);
         if (string.IsNullOrWhiteSpace(sourceFilePath))
         {
-            throw new InvalidOperationException("元Excelファイルが未設定です。");
+            throw new InvalidOperationException("翻訳元ファイルが未設定です。");
         }
 
-        var fullPath = Path.GetFullPath(sourceFilePath);
+        var fullPath = Path.GetFullPath(sourceFilePath.Trim());
         EnsureInside(root, fullPath, "元ファイル");
         if (!File.Exists(fullPath))
         {
-            throw new FileNotFoundException("元Excelファイルが見つかりません。", fullPath);
+            throw new FileNotFoundException("翻訳元ファイルが見つかりません。", fullPath);
         }
 
-        if (!string.Equals(Path.GetExtension(fullPath), ".xlsx", StringComparison.OrdinalIgnoreCase))
+        var fileInfo = new FileInfo(fullPath);
+        if ((fileInfo.Attributes & FileAttributes.ReparsePoint) != 0)
         {
-            throw new InvalidOperationException("現在作成できる成果物は.xlsx形式だけです。");
+            var target = fileInfo.ResolveLinkTarget(returnFinalTarget: true);
+            if (target is null)
+            {
+                throw new UnauthorizedAccessException($"リンク先を確認できない元ファイルは使用できません: {fullPath}");
+            }
+
+            EnsureInside(root, Path.GetFullPath(target.FullName), "元ファイルのリンク先");
         }
 
         EnsureNoEscapingDirectoryLink(root, Path.GetDirectoryName(fullPath)!);
         return fullPath;
     }
+
+    public static ArtifactFormat GetArtifactFormat(string filePath)
+    {
+        return Path.GetExtension(filePath).ToLowerInvariant() switch
+        {
+            ".xlsx" => ArtifactFormat.ExcelWorkbook,
+            ".csv" => ArtifactFormat.Csv,
+            ".txt" => ArtifactFormat.PlainText,
+            ".md" => ArtifactFormat.Markdown,
+            _ => ArtifactFormat.Unsupported,
+        };
+    }
+
+    public static bool IsSupportedSource(string filePath) => GetArtifactFormat(filePath) != ArtifactFormat.Unsupported;
 
     public string NormalizeDestinationFolder(string caseFolder, string destinationFolder)
     {
@@ -68,6 +100,14 @@ public sealed class CaseArtifactPathPolicy
         ValidateOutputFileName(outputFileName);
         var output = Path.GetFullPath(Path.Combine(destination, outputFileName));
         EnsureInside(root, output, "出力ファイル");
+        if (!string.Equals(
+                Path.GetExtension(source),
+                Path.GetExtension(output),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("出力ファイルの拡張子は翻訳元ファイルと同じにしてください。");
+        }
+
         if (string.Equals(source, output, StringComparison.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException("元ファイルへの上書きは禁止されています。");
@@ -93,7 +133,46 @@ public sealed class CaseArtifactPathPolicy
         throw new InvalidOperationException("連番付きの未使用ファイル名を作成できませんでした。");
     }
 
-    public static void ValidateOutputFileName(string outputFileName)
+    public static string SuggestDefaultFileName(string sourceFilePath)
+    {
+        return new ArtifactFilenameTranslationService().CreatePreview(sourceFilePath).OutputFileName;
+    }
+
+    public string SuggestDateFileName(
+        string destinationFolder,
+        string sourceFilePath,
+        DateTime localDate)
+    {
+        return SuggestDateFileNameFromOutput(
+            destinationFolder,
+            SuggestDefaultFileName(sourceFilePath),
+            localDate);
+    }
+
+    public string SuggestDateFileNameFromOutput(
+        string destinationFolder,
+        string outputFileName,
+        DateTime localDate)
+    {
+        ValidateOutputFileName(outputFileName);
+        var extension = Path.GetExtension(outputFileName);
+        var stem = Path.GetFileNameWithoutExtension(outputFileName);
+        var date = localDate.ToString("yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture);
+        var baseName = stem.EndsWith("_EN", StringComparison.OrdinalIgnoreCase)
+            ? $"{stem}_{date}{extension}"
+            : $"{stem}_EN_{date}{extension}";
+        ValidateOutputFileName(baseName, GetArtifactFormat(outputFileName));
+        if (!File.Exists(Path.Combine(destinationFolder, baseName)))
+        {
+            return baseName;
+        }
+
+        return SuggestNumberedFileName(destinationFolder, baseName);
+    }
+
+    public static void ValidateOutputFileName(
+        string outputFileName,
+        ArtifactFormat expectedFormat = ArtifactFormat.Unsupported)
     {
         if (string.IsNullOrWhiteSpace(outputFileName))
         {
@@ -107,9 +186,15 @@ public sealed class CaseArtifactPathPolicy
             throw new InvalidOperationException("出力ファイル名にはフォルダや使用できない文字を含められません。");
         }
 
-        if (!string.Equals(Path.GetExtension(outputFileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
+        var actualFormat = GetArtifactFormat(outputFileName);
+        if (actualFormat == ArtifactFormat.Unsupported)
         {
-            throw new InvalidOperationException("出力ファイル名の拡張子は.xlsxにしてください。");
+            throw new InvalidOperationException("このファイル形式は現在、翻訳保存に対応していません。");
+        }
+
+        if (expectedFormat != ArtifactFormat.Unsupported && actualFormat != expectedFormat)
+        {
+            throw new InvalidOperationException("出力ファイルの拡張子は翻訳元ファイルと同じにしてください。");
         }
     }
 

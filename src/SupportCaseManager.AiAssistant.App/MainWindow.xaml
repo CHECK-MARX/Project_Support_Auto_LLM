@@ -59,14 +59,14 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="{DynamicResource UiLanguageLabel}" />
@@ -751,7 +751,7 @@
                         </GroupBox>
 
                         <GroupBox Header="{DynamicResource AdditionalInstructionHeader}">
-                            <TextBox Text="{Binding AdditionalInstruction, UpdateSourceTrigger=PropertyChanged}"
+                            <TextBox Text="{Binding AdditionalInstruction, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
@@ -1252,6 +1252,7 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
                                         <TextBlock Text="処理状態" />
@@ -1276,51 +1277,61 @@
                                                  Text="{Binding Codex.ArtifactSourceFullPath, Mode=OneWay}"
                                                  IsReadOnly="True"
                                                  TextWrapping="Wrap" />
-                                        <Button Grid.Row="1"
-                                                Grid.Column="2"
-                                                Content="元ファイルを開く"
-                                                Command="{Binding Codex.OpenArtifactSourceCommand}" />
+                                        <WrapPanel Grid.Row="1" Grid.Column="2">
+                                            <Button Content="翻訳元ファイルを選択"
+                                                    Command="{Binding Codex.ChooseArtifactSourceCommand}" />
+                                            <Button Content="元ファイルを開く"
+                                                    Command="{Binding Codex.OpenArtifactSourceCommand}" />
+                                        </WrapPanel>
 
-                                        <TextBlock Grid.Row="2" Text="成果物の種類" />
+                                        <TextBlock Grid.Row="2" Text="ファイル形式" />
                                         <TextBlock Grid.Row="2"
+                                                   Grid.Column="1"
+                                                   Grid.ColumnSpan="2"
+                                                   Text="{Binding Codex.ArtifactFormatText, Mode=OneWay}" />
+
+                                        <TextBlock Grid.Row="3" Text="成果物の種類" />
+                                        <TextBlock Grid.Row="3"
                                                    Grid.Column="1"
                                                    Grid.ColumnSpan="2"
                                                    Text="{Binding Codex.ArtifactKindText, Mode=OneWay}" />
 
-                                        <TextBlock Grid.Row="3" Text="処理内容" />
-                                        <TextBlock Grid.Row="3"
+                                        <TextBlock Grid.Row="4" Text="処理内容" />
+                                        <TextBlock Grid.Row="4"
                                                    Grid.Column="1"
                                                    Grid.ColumnSpan="2"
                                                    Text="{Binding Codex.ArtifactProcessDescription, Mode=OneWay}"
                                                    TextWrapping="Wrap" />
 
-                                        <TextBlock Grid.Row="4" Text="保存先フォルダ" />
-                                        <TextBox Grid.Row="4"
+                                        <TextBlock Grid.Row="5" Text="保存先フォルダ" />
+                                        <TextBox Grid.Row="5"
                                                  Grid.Column="1"
                                                  Text="{Binding Codex.ArtifactDestinationFolder, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                  IsReadOnly="False"
                                                  TextWrapping="Wrap" />
-                                        <WrapPanel Grid.Row="4" Grid.Column="2">
+                                        <WrapPanel Grid.Row="5" Grid.Column="2">
                                             <Button Content="保存先を変更"
                                                     Command="{Binding Codex.ChooseArtifactDestinationCommand}" />
                                             <Button Content="保存先を開く"
                                                     Command="{Binding Codex.OpenArtifactDestinationCommand}" />
                                         </WrapPanel>
 
-                                        <TextBlock Grid.Row="5" Text="出力ファイル名" />
-                                        <TextBox Grid.Row="5"
+                                        <TextBlock Grid.Row="6" Text="出力ファイル名" />
+                                        <TextBox Grid.Row="6"
                                                  Grid.Column="1"
-                                                 Text="{Binding Codex.ArtifactOutputFileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 Text="{Binding Codex.ArtifactOutputPlanText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                                  IsReadOnly="False" />
-                                        <WrapPanel Grid.Row="5" Grid.Column="2">
+                                        <WrapPanel Grid.Row="6" Grid.Column="2">
                                             <Button Content="既定名"
                                                     Command="{Binding Codex.ResetArtifactOutputNameCommand}" />
+                                            <Button Content="日付を入れて保存"
+                                                    Command="{Binding Codex.UseDatedArtifactNameCommand}" />
                                             <Button Content="連番で保存"
                                                     Command="{Binding Codex.UseNumberedArtifactNameCommand}" />
                                         </WrapPanel>
 
-                                        <TextBlock Grid.Row="6" Text="上書き／原本" />
-                                        <StackPanel Grid.Row="6"
+                                        <TextBlock Grid.Row="7" Text="上書き／原本" />
+                                        <StackPanel Grid.Row="7"
                                                     Grid.Column="1"
                                                     Grid.ColumnSpan="2"
                                                     Orientation="Horizontal">
@@ -1331,8 +1342,8 @@
                                             <TextBlock Text="{Binding Codex.ArtifactDestinationCreationText, Mode=OneWay}" />
                                         </StackPanel>
 
-                                        <TextBlock Grid.Row="7" Text="対象要素" />
-                                        <TextBlock Grid.Row="7"
+                                        <TextBlock Grid.Row="8" Text="対象要素" />
+                                        <TextBlock Grid.Row="8"
                                                    Grid.Column="1"
                                                    Grid.ColumnSpan="2"
                                                    Text="{Binding Codex.ArtifactTranslationSummary, Mode=OneWay}" />
@@ -1342,7 +1353,7 @@
                                 <WrapPanel Margin="0,0,0,8">
                                     <Button Content="実行内容を確認"
                                             Command="{Binding Codex.PrepareArtifactPlanCommand}" />
-                                    <Button Content="英訳Excelを作成"
+                                    <Button Content="英訳ファイルを作成"
                                             Command="{Binding Codex.CreateExcelArtifactCommand}" />
                                     <Button Content="キャンセル"
                                             Command="{Binding Codex.CancelArtifactCommand}" />
@@ -1351,23 +1362,18 @@
                                 </WrapPanel>
 
                                 <GroupBox Header="翻訳プレビュー（原文と英訳）">
-                                    <DataGrid ItemsSource="{Binding Codex.ArtifactTranslationPreview}"
+                                    <DataGrid ItemsSource="{Binding Codex.ArtifactPreviewItems}"
                                               AutoGenerateColumns="False"
                                               CanUserAddRows="False"
                                               IsReadOnly="True"
                                               MaxHeight="280"
                                               SelectionMode="Single">
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="種類" Binding="{Binding TargetKindText}" Width="110" />
-                                            <DataGridTextColumn Header="シート" Binding="{Binding Sheet}" Width="130" />
-                                            <DataGridTextColumn Header="対象" Binding="{Binding Cell}" Width="110" />
+                                            <DataGridTextColumn Header="種類" Binding="{Binding Kind}" Width="110" />
+                                            <DataGridTextColumn Header="位置" Binding="{Binding Location}" Width="150" />
                                             <DataGridTextColumn Header="原文" Binding="{Binding SourceText}" Width="*" />
                                             <DataGridTextColumn Header="英訳" Binding="{Binding TranslatedText}" Width="*" />
                                             <DataGridTextColumn Header="判定" Binding="{Binding TargetText}" Width="150" />
-                                            <DataGridTextColumn Header="表示形式" Binding="{Binding NumberFormat}" Width="120" />
-                                            <DataGridTextColumn Header="数式" Binding="{Binding FormulaText}" Width="65" />
-                                            <DataGridTextColumn Header="コメント" Binding="{Binding CommentText}" Width="75" />
-                                            <DataGridTextColumn Header="結合セル" Binding="{Binding MergedRange}" Width="100" />
                                         </DataGrid.Columns>
                                     </DataGrid>
                                 </GroupBox>
@@ -1379,6 +1385,9 @@
                                                  AcceptsReturn="True"
                                                  TextWrapping="Wrap"
                                                  MinHeight="55" />
+                                        <TextBlock Text="{Binding Codex.ManufacturerFollowUpScopeText, Mode=OneWay}"
+                                                   TextWrapping="Wrap"
+                                                   Margin="0,6,0,6" />
                                         <TextBox Text="{Binding Codex.ArtifactResultText, Mode=OneWay}"
                                                  IsReadOnly="True"
                                                  AcceptsReturn="True"
@@ -1389,20 +1398,46 @@
                                     </StackPanel>
                                 </GroupBox>
 
-                                <GroupBox Header="メーカー向け確認案（編集可能・自動送信しません）">
+                                <GroupBox Header="メーカー向けメール案（日英・編集可能・自動送信しません）">
                                     <StackPanel>
-                                        <TextBox Text="{Binding Codex.ManufacturerMailDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                 AcceptsReturn="True"
-                                                 IsReadOnly="False"
-                                                 TextWrapping="Wrap"
-                                                 VerticalScrollBarVisibility="Auto"
-                                                 MinHeight="180" />
+                                        <TextBlock Text="{Binding Codex.ManufacturerRecipientText, Mode=OneWay}"
+                                                   Margin="0,0,0,8"
+                                                   TextWrapping="Wrap" />
                                         <WrapPanel Margin="0,8,0,0">
-                                            <Button Content="メーカー確認メール案を作成"
+                                            <Button Content="メーカーへ確認・追加質問する"
                                                     Command="{Binding Codex.GenerateManufacturerMailCommand}" />
-                                            <Button Content="メール案をコピー"
-                                                    Command="{Binding Codex.CopyManufacturerMailCommand}" />
+                                            <Button Content="メーカー回答へ返信する"
+                                                    Command="{Binding Codex.GenerateManufacturerReplyCommand}" />
                                         </WrapPanel>
+                                        <GroupBox Header="メーカー向け確認メール案（日本語・編集可能）">
+                                            <StackPanel>
+                                                <TextBox Text="{Binding Codex.JapaneseManufacturerDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                         AcceptsReturn="True"
+                                                         IsReadOnly="False"
+                                                         TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto"
+                                                         MinHeight="180" />
+                                                <Button Content="日本語案をコピー"
+                                                        Margin="0,8,0,0"
+                                                        Command="{Binding Codex.CopyJapaneseManufacturerDraftCommand}" />
+                                            </StackPanel>
+                                        </GroupBox>
+                                        <GroupBox Header="メーカー向け確認メール案（英語・編集可能）">
+                                            <StackPanel>
+                                                <TextBox Text="{Binding Codex.EnglishManufacturerDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                         AcceptsReturn="True"
+                                                         IsReadOnly="False"
+                                                         TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto"
+                                                         MinHeight="180" />
+                                                <WrapPanel Margin="0,8,0,0">
+                                                    <Button Content="英語案をコピー"
+                                                            Command="{Binding Codex.CopyEnglishManufacturerDraftCommand}" />
+                                                    <Button Content="WPFノート編集に送る（英語）"
+                                                            Command="{Binding Codex.SendEnglishManufacturerDraftToWpfNoteCommand}" />
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </GroupBox>
                                     </StackPanel>
                                 </GroupBox>
                             </StackPanel>

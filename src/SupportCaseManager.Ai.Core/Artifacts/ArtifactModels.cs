@@ -3,6 +3,17 @@ namespace SupportCaseManager.Ai.Core.Artifacts;
 public enum ArtifactKind
 {
     ExcelEnglishTranslation,
+    CsvEnglishTranslation,
+    TextEnglishTranslation,
+}
+
+public enum ArtifactFormat
+{
+    Unsupported,
+    ExcelWorkbook,
+    Csv,
+    PlainText,
+    Markdown,
 }
 
 public enum ExcelTranslationTargetKind
@@ -20,6 +31,34 @@ public sealed record ArtifactCreationRequest
     public string OutputFileName { get; init; } = "Inquiry_Details_EN.xlsx";
     public string ProductName { get; init; } = string.Empty;
     public string UserInstruction { get; init; } = string.Empty;
+}
+
+public sealed record ArtifactTextTranslationEntry
+{
+    public string Key { get; init; } = string.Empty;
+    public string Location { get; init; } = string.Empty;
+    public string SourceText { get; init; } = string.Empty;
+    public bool ShouldTranslate { get; init; }
+    public string SkipReason { get; init; } = string.Empty;
+}
+
+public sealed record ArtifactTextTranslationValue
+{
+    public string Key { get; init; } = string.Empty;
+    public string SourceText { get; init; } = string.Empty;
+    public string TranslatedText { get; init; } = string.Empty;
+}
+
+public sealed record ArtifactTextTranslationPlan
+{
+    public IReadOnlyList<ArtifactTextTranslationEntry> Entries { get; init; } = [];
+    public string EncodingName { get; init; } = "utf-8";
+    public bool HasByteOrderMark { get; init; }
+    public string NewLine { get; init; } = "\n";
+    public char CsvDelimiter { get; init; } = ',';
+    public bool CsvEndsWithNewLine { get; init; }
+    public int TranslatableCount => Entries.Count(static item => item.ShouldTranslate);
+    public int UnchangedCount => Entries.Count(static item => !item.ShouldTranslate);
 }
 
 public sealed record ExcelTranslationEntry
@@ -63,6 +102,7 @@ public sealed record ArtifactCreationPlan
 {
     public Guid PlanId { get; init; } = Guid.NewGuid();
     public ArtifactKind Kind { get; init; } = ArtifactKind.ExcelEnglishTranslation;
+    public ArtifactFormat Format { get; init; } = ArtifactFormat.ExcelWorkbook;
     public ArtifactCreationRequest Request { get; init; } = new();
     public string CaseFolderFullPath { get; init; } = string.Empty;
     public string SourceFullPath { get; init; } = string.Empty;
@@ -73,6 +113,7 @@ public sealed record ArtifactCreationPlan
     public bool OverwriteAllowed { get; init; }
     public bool SourceWillBeModified { get; init; }
     public ExcelTranslationPlan Excel { get; init; } = new();
+    public ArtifactTextTranslationPlan Text { get; init; } = new();
     public IReadOnlyList<string> Warnings { get; init; } = [];
 }
 

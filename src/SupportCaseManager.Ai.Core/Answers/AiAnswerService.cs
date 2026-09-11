@@ -51,7 +51,10 @@ public sealed class AiAnswerService : IAiAnswerService
             return deterministic with { AnswerGenerationMode = AnswerGenerationModes.DeterministicOnly };
         }
 
-        PromptMessages promptMessages = PolisherPromptBuilder.Build(deterministic.CustomerReplyDraft, request.Settings.MaxPromptChars);
+        PromptMessages promptMessages = PolisherPromptBuilder.Build(
+            deterministic.CustomerReplyDraft,
+            request.SupplementalContext,
+            request.Settings.MaxPromptChars);
         LlmGenerationResult generation;
         using var polishingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var polishingTimeoutSeconds = EffectivePolishingTimeoutSeconds(request.Settings);
@@ -128,7 +131,9 @@ public sealed class AiAnswerService : IAiAnswerService
         };
 
         var protectedContext = deterministic.CustomerReplyDraft + Environment.NewLine +
-            string.Join(Environment.NewLine, request.Sources.Select(static source => source.Text));
+            string.Join(Environment.NewLine, request.Sources.Select(static source => source.Text)) +
+            Environment.NewLine +
+            request.SupplementalContext;
         if (!PolishedAnswerValidator.PreservesProtectedValues(
                 protectedContext,
                 processed.CustomerReplyDraft))

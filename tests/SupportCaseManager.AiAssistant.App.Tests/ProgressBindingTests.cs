@@ -43,6 +43,18 @@ public sealed class ProgressBindingTests
     }
 
     [Fact]
+    public void MainWindow_ReplyActionsRemainAndUnusedMemoActionsAreRemoved()
+    {
+        var xaml = File.ReadAllText(FindMainWindowPath());
+
+        Assert.Contains("この回答を返信案へ追記", xaml, StringComparison.Ordinal);
+        Assert.Contains("返信案反映を元に戻す", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("この回答を調査メモへ反映", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("メモ反映を元に戻す", xaml, StringComparison.Ordinal);
+        Assert.Contains("先にCodex調査タブでこの案件の調査を開始してください", xaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void MainWindow_CodexMessageReadOnlyHeadersUseOneWayBindings()
     {
         var document = XDocument.Load(FindMainWindowPath());
@@ -67,15 +79,29 @@ public sealed class ProgressBindingTests
         var document = XDocument.Load(FindMainWindowPath());
 
         AssertEditableTextBox(document, "Codex.ArtifactDestinationFolder");
-        AssertEditableTextBox(document, "Codex.ArtifactOutputFileName");
-        AssertEditableTextBox(document, "Codex.ManufacturerMailDraft");
+        AssertEditableTextBox(document, "Codex.ArtifactOutputPlanText");
+        AssertEditableTextBox(document, "Codex.JapaneseManufacturerDraft");
+        AssertEditableTextBox(document, "Codex.EnglishManufacturerDraft");
+        var xaml = File.ReadAllText(FindMainWindowPath());
+        Assert.Contains("翻訳元ファイルを選択", xaml, StringComparison.Ordinal);
+        Assert.Contains("日付を入れて保存", xaml, StringComparison.Ordinal);
+        Assert.Contains("英訳ファイルを作成", xaml, StringComparison.Ordinal);
+        Assert.Contains("Codex.ArtifactPreviewItems", xaml, StringComparison.Ordinal);
+        Assert.Contains("メーカー向けメール案（日英・編集可能・自動送信しません）", xaml, StringComparison.Ordinal);
+        Assert.Contains("WPFノート編集に送る（英語）", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("英訳Excelを作成", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Codex.ManufacturerMailDraft", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("Codex.CopyManufacturerMailCommand", xaml, StringComparison.Ordinal);
         foreach (var commandName in new[]
                  {
                      "Codex.PrepareArtifactPlanCommand",
                      "Codex.CreateExcelArtifactCommand",
                      "Codex.CancelArtifactCommand",
                      "Codex.GenerateManufacturerMailCommand",
-                     "Codex.CopyManufacturerMailCommand",
+                     "Codex.GenerateManufacturerReplyCommand",
+                     "Codex.CopyJapaneseManufacturerDraftCommand",
+                     "Codex.CopyEnglishManufacturerDraftCommand",
+                     "Codex.SendEnglishManufacturerDraftToWpfNoteCommand",
                  })
         {
             Assert.Contains(

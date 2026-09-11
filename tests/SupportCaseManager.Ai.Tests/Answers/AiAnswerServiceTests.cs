@@ -43,6 +43,40 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public async Task GenerateDraftAsync_IncludesSupplementalContextInPolisherPrompt()
+    {
+        const string supplementalContext = "メーカー回答: 現在案件では社内確認済みの手順を使用します。";
+        var client = new FakeLlmClient("""
+            {
+              "customerReplyDraft": "根拠本文を確認しました。",
+              "internalMemo": "",
+              "needConfirmations": [],
+              "evidence": [],
+              "confidence": 0.8,
+              "warnings": []
+            }
+            """);
+        var request = CreateRequest() with
+        {
+            UserInstruction = "メーカー回答を反映してください。",
+            SupplementalContext = supplementalContext,
+            Settings = new AiAssistantSettings { MaxPromptChars = 12000 },
+        };
+
+        var result = await new AiAnswerService(
+            new PromptBuilder(),
+            new EvidenceBuilder(),
+            new SafetyRedactionService(),
+            client).GenerateDraftAsync(request);
+
+        Assert.NotNull(result);
+        Assert.NotNull(client.LastMessages);
+        Assert.Contains("現在案件の補足根拠（ユーザー提供・最優先）", client.LastMessages!.UserPrompt);
+        Assert.Contains(supplementalContext, client.LastMessages.UserPrompt);
+        Assert.Contains("過去案件由来の情報より優先", client.LastMessages.SystemPrompt);
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_AnswerQualityGateOff_PreservesLegacyResult()
     {
         var service = CreateService("""
@@ -723,6 +757,31 @@ public class AiAnswerServiceTests
     }
 
     [Fact]
+    public void BuildFailureFallback_WithSupplementalContextDoesNotUsePastCaseOnlyFallback()
+    {
+        var request = CreateAnalysisHowToRequest() with
+        {
+            Sources =
+            [
+                new SearchSource
+                {
+                    SourceId = "past-only",
+                    SourceType = "PastCaseNote",
+                    Title = "類似案件",
+                    Text = "過去案件では別の環境で対応しました。",
+                    Score = 0.8,
+                },
+            ],
+            SupplementalContext = "メーカー回答: 現在案件ではGUIで確認済みの手順を使用します。",
+        };
+
+        var result = AnswerPostProcessor.BuildFailureFallback(request, new TimeoutException("simulated"));
+
+        Assert.Contains("補足情報", result.CustomerReplyDraft, StringComparison.Ordinal);
+        Assert.DoesNotContain("現在AIに送信された根拠は過去案件情報が中心です", result.CustomerReplyDraft, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_FileDeliveryAccessReplacesGenericSuccessfulReplyWithPastCaseGuidance()
     {
         const string inquiry = "QAC 2026.2をFibeからダウンロードできません。2026.1を別の方法で提供できますか。";
@@ -1141,12 +1200,15 @@ public class AiAnswerServiceTests
             this.response = response;
         }
 
+        public PromptMessages? LastMessages { get; private set; }
+
         public Task<LlmGenerationResult> GenerateAsync(
             PromptMessages messages,
             LlmProviderSettings settings,
             bool disableThinking = true,
             CancellationToken cancellationToken = default)
         {
+            LastMessages = messages;
             return Task.FromResult(new LlmGenerationResult { Content = response, DoneReason = "stop" });
         }
     }

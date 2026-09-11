@@ -16,6 +16,10 @@ public sealed record class AnswerDraftRequest
     [JsonPropertyName("userInstruction")]
     public string? UserInstruction { get; init; }
 
+    [JsonPropertyName("supplementalContext")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SupplementalContext { get; init; }
+
     [JsonPropertyName("commonInstruction")]
     public string CommonInstruction { get; init; } = string.Empty;
 

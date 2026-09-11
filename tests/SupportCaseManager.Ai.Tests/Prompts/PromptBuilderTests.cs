@@ -64,6 +64,25 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void Build_IncludesSupplementalContextBeforeGeneralInstruction()
+    {
+        var request = CreateRequest() with
+        {
+            UserInstruction = "丁寧に回答してください。",
+            SupplementalContext = "メーカー回答: 現在案件では社内確認済みの手順を使用します。",
+            Settings = new AiAssistantSettings { MaxPromptChars = 12000 },
+        };
+
+        var messages = new PromptBuilder().Build(request);
+
+        Assert.Contains("# 現在案件の補足根拠（ユーザー提供・最優先）", messages.UserPrompt);
+        Assert.Contains("メーカー回答: 現在案件では社内確認済みの手順を使用します。", messages.UserPrompt);
+        Assert.True(
+            messages.UserPrompt.IndexOf("# 現在案件の補足根拠", StringComparison.Ordinal) <
+            messages.UserPrompt.IndexOf("# 今回の指示", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Build_RespectsMaxEvidenceItems()
     {
         var request = CreateRequest() with

@@ -523,17 +523,120 @@ public sealed class MainViewModelManualSearchTests
         Assert.Contains("max output tokens: 8", services.ViewModel.OllamaProductionMiniTestResultText);
     }
 
+    [Fact]
+    public void ApplyCodexReply_AppendsWithoutOverwriteChoiceAndPreservesExistingReply()
+    {
+        var confirmationMessages = new List<string>();
+        var services = CreateViewModel(
+            [],
+            confirmReplyAppend: message =>
+            {
+                confirmationMessages.Add(message);
+                return true;
+            });
+        services.ViewModel.CustomerReplyDraft = "既存の返信案";
+
+        var applied = services.ViewModel.ApplyCodexReply("編集済みTechnicalAnswer");
+
+        Assert.True(applied);
+        Assert.Equal($"既存の返信案{Environment.NewLine}{Environment.NewLine}編集済みTechnicalAnswer", services.ViewModel.CustomerReplyDraft);
+        Assert.Single(confirmationMessages);
+        Assert.Contains("末尾へ追記", confirmationMessages[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("上書き", confirmationMessages[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildDraftRequest_MapsExplicitAdditionalInstructionToSupplementalContext()
+    {
+        const string supplementalContext = "メーカー回答: 現在案件では社内確認済みの手順を使用します。";
+        var services = CreateViewModel([]);
+        services.ViewModel.AdditionalInstruction = supplementalContext;
+
+        var request = InvokePrivate<AnswerDraftRequest>(services.ViewModel, "BuildDraftRequest");
+
+        Assert.Equal(supplementalContext, request.UserInstruction);
+        Assert.Equal(supplementalContext, request.SupplementalContext);
+    }
+
+    [Fact]
+    public void ApplyCodexReply_CancelPreservesExistingReply()
+    {
+        var services = CreateViewModel([], confirmReplyAppend: _ => false);
+        services.ViewModel.CustomerReplyDraft = "既存の返信案";
+
+        var applied = services.ViewModel.ApplyCodexReply("編集済みTechnicalAnswer");
+
+        Assert.False(applied);
+        Assert.Equal("既存の返信案", services.ViewModel.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public void UndoCodexReplyIsOneShot()
+    {
+        var services = CreateViewModel([], confirmReplyAppend: _ => true);
+        services.ViewModel.CustomerReplyDraft = "既存の返信案";
+
+        Assert.True(services.ViewModel.ApplyCodexReply("編集済みTechnicalAnswer"));
+        services.ViewModel.UndoCodexApplication(isReply: true);
+        Assert.Equal("既存の返信案", services.ViewModel.CustomerReplyDraft);
+
+        services.ViewModel.UndoCodexApplication(isReply: true);
+        Assert.Equal("既存の返信案", services.ViewModel.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task LoadCase_HydratesActualReplyDraftAndCodexAppendPreservesIt()
+    {
+        var temp = Directory.CreateTempSubdirectory("support-case-reply-");
+        const string existingReply = "既存のお客様向け返信案です。";
+        var services = CreateViewModel(
+            [],
+            confirmReplyAppend: _ => true,
+            caseNotes:
+            [
+                new NoteSnapshot
+                {
+                    NoteKind = "お客様への返信案",
+                    FileName = "お客様への返信案_00001234.txt",
+                    Text = existingReply,
+                    LastModifiedAt = DateTimeOffset.UtcNow,
+                },
+            ]);
+        services.ViewModel.CaseFolderPath = temp.FullName;
+        var propertyChanged = false;
+        services.ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainViewModel.CustomerReplyDraft))
+            {
+                propertyChanged = true;
+            }
+        };
+
+        await InvokePrivateTaskAsync(services.ViewModel, "LoadCaseAsync");
+
+        Assert.Equal(existingReply, services.ViewModel.CustomerReplyDraft);
+        services.ViewModel.InternalMemo = "内部メモは返信案に混ぜない";
+        Assert.True(services.ViewModel.ApplyCodexReply($"Codexで作成した回答です。{Environment.NewLine}[MANUAL EDIT]"));
+        Assert.Equal(
+            $"{existingReply}{Environment.NewLine}{Environment.NewLine}Codexで作成した回答です。{Environment.NewLine}[MANUAL EDIT]",
+            services.ViewModel.CustomerReplyDraft);
+        Assert.True(propertyChanged);
+        Assert.Equal("内部メモは返信案に混ぜない", services.ViewModel.InternalMemo);
+    }
+
     private static TestServices CreateViewModel(
         IReadOnlyList<SearchSource> manualResults,
         Exception? manualSearchException = null,
         IAiAnswerService? answerService = null,
         ILlmClientFactory? llmClientFactory = null,
-        IReadOnlyList<SearchSource>? crossProductAnswers = null)
+        IReadOnlyList<SearchSource>? crossProductAnswers = null,
+        Func<string, bool>? confirmReplyAppend = null,
+        IReadOnlyList<NoteSnapshot>? caseNotes = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var viewModel = new MainViewModel(
             new FakeSettingsStore(),
-            new FakeCaseContextBuilder(),
+            new FakeCaseContextBuilder(caseNotes),
             new FakeNoteSnapshotReader(),
             new FakeCaseIndexBuilder(),
             new FakeManualIndexBuilder(),
@@ -550,7 +653,8 @@ public sealed class MainViewModelManualSearchTests
             new FakeDraftStore(),
             _ => logger,
             new NoopAppearanceService(),
-            llmClientFactory)
+            llmClientFactory,
+            confirmReplyAppend: confirmReplyAppend)
         {
             InquiryText = """
                 ライセンス認証エラーで製品が起動できません。
@@ -643,6 +747,13 @@ public sealed class MainViewModelManualSearchTests
 
     private sealed class FakeCaseContextBuilder : ICaseContextBuilder
     {
+        private readonly IReadOnlyList<NoteSnapshot> notes;
+
+        public FakeCaseContextBuilder(IReadOnlyList<NoteSnapshot>? notes = null)
+        {
+            this.notes = notes ?? [];
+        }
+
         public Task<CaseContext> BuildFromCaseFolderAsync(
             string caseFolderPath,
             string? productName = null,
@@ -650,7 +761,14 @@ public sealed class MainViewModelManualSearchTests
             string? closeFolder = null,
             CancellationToken cancellationToken = default)
         {
-            return Task.FromResult(new CaseContext());
+            return Task.FromResult(new CaseContext
+            {
+                CaseFolderPath = caseFolderPath,
+                ProductName = productName,
+                BaseFolder = baseFolder,
+                CloseFolder = closeFolder,
+                Notes = notes,
+            });
         }
     }
 

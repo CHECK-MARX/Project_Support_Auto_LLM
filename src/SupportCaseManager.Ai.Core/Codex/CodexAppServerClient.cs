@@ -36,6 +36,9 @@ public interface ICodexAppServerClient : IAsyncDisposable
         string? reasoningEffort = null,
         CancellationToken cancellationToken = default);
     Task InterruptTurnAsync(CancellationToken cancellationToken = default);
+    Task<CodexTurnStartResult> StartIsolatedDraftTurnAsync(string briefPrompt, string? model,
+        string? reasoningEffort, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException("この接続は独立したメール文章化に対応していません。");
 }
 
 public sealed class CodexAppServerClient : ICodexAppServerClient
@@ -57,6 +60,7 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
     private bool disposed;
     private CodexConnectionState state = CodexConnectionState.Disconnected;
     private string? lastCompletedTurnId;
+    private string? isolatedDraftThreadId;
 
     public CodexAppServerClient(
         ICodexExecutableResolver executableResolver,
@@ -249,6 +253,7 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
         CancellationToken cancellationToken = default)
     {
         EnsureConnected();
+        isolatedDraftThreadId = null;
         if (string.IsNullOrWhiteSpace(CurrentThreadId) || string.IsNullOrWhiteSpace(WorkingDirectory))
         {
             throw new InvalidOperationException("Codex Threadが開始されていません。");
@@ -320,11 +325,50 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
         SetState(CodexConnectionState.Interrupting);
         await transport.SendRequestAsync(
                 "turn/interrupt",
-                new { threadId = CurrentThreadId, turnId = CurrentTurnId },
+                new { threadId = isolatedDraftThreadId ?? CurrentThreadId, turnId = CurrentTurnId },
                 ProtocolTimeout,
                 cancellationToken)
             .ConfigureAwait(false);
         await logger.WriteAsync("turn", "Turn interrupted.", cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<CodexTurnStartResult> StartIsolatedDraftTurnAsync(string briefPrompt, string? model,
+        string? reasoningEffort, CancellationToken cancellationToken = default)
+    {
+        EnsureConnected();
+        ArgumentException.ThrowIfNullOrWhiteSpace(briefPrompt);
+        var root = AppContext.BaseDirectory;
+        var thread = await transport.SendRequestAsync("thread/start", new
+        {
+            cwd = root,
+            model = NullIfWhiteSpace(model),
+            allowProviderModelFallback = false,
+            approvalPolicy = "never",
+            sandbox = "read-only",
+            ephemeral = true,
+            environments = Array.Empty<object>(),
+            runtimeWorkspaceRoots = Array.Empty<string>(),
+            developerInstructions = "Only verbalize the supplied ManufacturerMailBrief. Do not investigate, use tools, read files, access the network or infer facts. No other case context is authorized. Return the requested bilingual JSON only.",
+        }, ProtocolTimeout, cancellationToken).ConfigureAwait(false);
+        isolatedDraftThreadId = ParseThreadResult(thread).ThreadId;
+        SetState(CodexConnectionState.Investigating);
+        var response = await transport.SendRequestAsync("turn/start", new
+        {
+            threadId = isolatedDraftThreadId,
+            input = new[] { new { type = "text", text = briefPrompt } },
+            model = NullIfWhiteSpace(model),
+            effort = NullIfWhiteSpace(reasoningEffort),
+            approvalPolicy = "never",
+            cwd = root,
+            runtimeWorkspaceRoots = Array.Empty<string>(),
+            environments = Array.Empty<object>(),
+        }, ProtocolTimeout, cancellationToken).ConfigureAwait(false);
+        var turnId = GetNestedString(response, "turn", "id")
+            ?? throw new JsonException("turn/start応答にturn.idがありません。");
+        CurrentTurnId = string.Equals(lastCompletedTurnId, turnId, StringComparison.Ordinal) ? null : turnId;
+        return new CodexTurnStartResult(turnId,
+            GetString(response, "model") ?? GetNestedString(response, "turn", "model") ?? string.Empty,
+            GetString(response, "reasoningEffort") ?? GetString(response, "effort") ?? string.Empty);
     }
 
     public async ValueTask DisposeAsync()

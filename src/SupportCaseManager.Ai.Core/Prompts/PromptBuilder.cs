@@ -37,7 +37,7 @@ public sealed class PromptBuilder : IPromptBuilder
                 FinalPromptChars = adjustedSystemPrompt.Length + userPrompt.Length,
                 SystemChars = adjustedSystemPrompt.Length,
                 UserPromptChars = userPrompt.Length,
-                InquiryChars = SafeLength(request.InquiryText) + SafeLength(request.UserInstruction) + request.Case.Notes.Sum(static note => SafeLength(note.Text)),
+                InquiryChars = SafeLength(request.InquiryText) + SafeLength(request.UserInstruction) + SafeLength(request.SupplementalContext) + request.Case.Notes.Sum(static note => SafeLength(note.Text)),
                 EvidenceChars = request.Sources.Take(evidenceLimit).Sum(static source => SafeLength(source.Text)),
                 EvidenceCount = request.Sources.Take(evidenceLimit).Count(),
             },
@@ -95,6 +95,14 @@ public sealed class PromptBuilder : IPromptBuilder
         }
 
         builder.AppendLine();
+
+        if (!string.IsNullOrWhiteSpace(request.SupplementalContext))
+        {
+            builder.AppendLine("# 現在案件の補足根拠（ユーザー提供・最優先）");
+            builder.AppendLine("以下は現在案件についてユーザーが明示した追加情報です。過去案件より優先して確認しますが、補足根拠にない内容は推測しません。");
+            builder.AppendLine(request.SupplementalContext.Trim());
+            builder.AppendLine();
+        }
 
         if (!string.IsNullOrWhiteSpace(request.UserInstruction))
         {

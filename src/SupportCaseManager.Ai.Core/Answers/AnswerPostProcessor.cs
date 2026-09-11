@@ -63,7 +63,8 @@ public static partial class AnswerPostProcessor
             customerReply = directValidateUploadReply;
             mergedWarnings.Add("LLM回答が根拠手順を十分に反映できなかったため、送信済み根拠からValidateアップロード手順を補完しました。");
         }
-        else if (HowToAnswerComposer.IsAnalysisHowTo(request) &&
+        else if (!HasSupplementalContext(request) &&
+            HowToAnswerComposer.IsAnalysisHowTo(request) &&
             (!HowToAnswerComposer.HasRequiredStructure(customerReply) || HasUnresolvedHowToSection(customerReply)) &&
             HowToAnswerComposer.TryComposeAnalysis(request, out var structuredHowToReply))
         {
@@ -110,7 +111,9 @@ public static partial class AnswerPostProcessor
                     var procedureReply = string.Empty;
                     var usedProcedureFallback = TryBuildValidateUploadProcedureReply(request, out procedureReply);
                     var analysisReply = string.Empty;
-                    var usedAnalysisFallback = !usedProcedureFallback && TryBuildQacAnalysisProcedureReply(request, out analysisReply);
+                    var usedAnalysisFallback = !usedProcedureFallback &&
+                        !HasSupplementalContext(request) &&
+                        TryBuildQacAnalysisProcedureReply(request, out analysisReply);
                     var streamReply = string.Empty;
                     var usedStreamFallback = !usedProcedureFallback && !usedAnalysisFallback &&
                         TryBuildValidateStreamReply(request, out streamReply);
@@ -171,9 +174,11 @@ public static partial class AnswerPostProcessor
                 .Where(static item => IsCustomerVisibleSourceType(item.SourceType))
                 .ToList();
             customerReply = customerVisibleEvidence.Count == 0
-                ? BuildPastCaseOnlySafeCustomerReply(request, finalEvidence
-                    .Where(static item => IsPastCaseSourceType(item.SourceType))
-                    .ToList())
+                ? HasSupplementalContext(request)
+                    ? BuildSupplementalOnlySafeCustomerReply(request)
+                    : BuildPastCaseOnlySafeCustomerReply(request, finalEvidence
+                        .Where(static item => IsPastCaseSourceType(item.SourceType))
+                        .ToList())
                 : DeterministicAnswerComposer.ComposeHowTo(customerVisibleEvidence);
             mergedWarnings.Add("LLMなしでEvidenceのみからHowTo回答の見出し構造を生成しました。");
         }
@@ -572,6 +577,11 @@ public static partial class AnswerPostProcessor
             if (evidence.Any(static item => IsCustomerVisibleSourceType(item.SourceType)))
             {
                 return BuildNoDirectEvidenceCustomerReply(request);
+            }
+
+            if (HasSupplementalContext(request))
+            {
+                return BuildSupplementalOnlySafeCustomerReply(request);
             }
 
             return BuildPastCaseOnlySafeCustomerReply(request, pastCaseEvidence);
@@ -976,6 +986,20 @@ public static partial class AnswerPostProcessor
         builder.AppendLine();
         builder.AppendLine("次の対応");
         builder.AppendLine("・該当する根拠を確認でき次第、回答内容を整理します。");
+        return builder.ToString();
+    }
+
+    private static bool HasSupplementalContext(AnswerDraftRequest request) =>
+        !string.IsNullOrWhiteSpace(request.SupplementalContext);
+
+    private static string BuildSupplementalOnlySafeCustomerReply(AnswerDraftRequest request)
+    {
+        var subject = BuildInquirySubject(request);
+        var builder = new StringBuilder();
+        builder.AppendLine($"お問い合わせいただいた{subject}について、現在案件の補足情報を含めて回答生成を試みました。");
+        builder.AppendLine();
+        builder.AppendLine("補足情報は現在案件の確認材料として扱っていますが、LLMの回答生成が完了しなかったため、この画面で内容を確認してください。");
+        builder.AppendLine("過去案件の情報だけを根拠にした回答ではありません。製品マニュアルまたはメーカー公式情報と照合したうえで回答内容を確定してください。");
         return builder.ToString();
     }
 

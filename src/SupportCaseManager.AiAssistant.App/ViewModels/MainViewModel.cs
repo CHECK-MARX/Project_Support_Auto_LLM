@@ -87,7 +87,7 @@ public sealed class MainViewModel : ObservableObject
     private readonly ILlmClientFactory llmClientFactory;
     private readonly IRustEvidenceSelectorWorkerClient persistentRustEvidenceSelectorWorkerClient;
     private readonly CurrentCaseEvidenceService currentCaseEvidenceService;
-
+    private readonly Func<string, bool> confirmReplyAppend;
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
@@ -267,7 +267,8 @@ public sealed class MainViewModel : ObservableObject
         IAppAppearanceService appearanceService,
         ILlmClientFactory? llmClientFactory = null,
         IRustEvidenceSelectorWorkerClient? persistentRustEvidenceSelectorWorkerClient = null,
-        CurrentCaseEvidenceService? currentCaseEvidenceService = null)
+        CurrentCaseEvidenceService? currentCaseEvidenceService = null,
+        Func<string, bool>? confirmReplyAppend = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -291,6 +292,7 @@ public sealed class MainViewModel : ObservableObject
         this.persistentRustEvidenceSelectorWorkerClient = persistentRustEvidenceSelectorWorkerClient ??
             new RustEvidenceSelectorWorkerClient();
         this.currentCaseEvidenceService = currentCaseEvidenceService ?? new CurrentCaseEvidenceService();
+        this.confirmReplyAppend = confirmReplyAppend ?? ConfirmReplyAppend;
 
         LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
@@ -563,9 +565,18 @@ public sealed class MainViewModel : ObservableObject
         var hasExisting = !string.IsNullOrWhiteSpace(current)
             && !string.Equals(current.Trim(), "まだ生成されていません。", StringComparison.Ordinal);
         var append = false;
-        if (hasExisting)
+        if (hasExisting && isReply)
         {
-            var target = isReply ? "お客様への返信案" : "調査メモ";
+            if (!confirmReplyAppend("現在の返信案の末尾へ追記します。\n\nよろしいですか？"))
+            {
+                return false;
+            }
+
+            append = true;
+        }
+        else if (hasExisting)
+        {
+            const string target = "調査メモ";
             var result = System.Windows.MessageBox.Show(
                 $"{target}に既存の文章があります。\n\nはい: 上書き\nいいえ: 末尾へ追加\nキャンセル: 反映しない",
                 "Codex回答の反映",
@@ -578,6 +589,7 @@ public sealed class MainViewModel : ObservableObject
 
             append = result == MessageBoxResult.No;
         }
+
         var next = CodexDraftTextApplicator.Apply(
             current,
             text,
@@ -595,6 +607,15 @@ public sealed class MainViewModel : ObservableObject
 
         StatusMessage = "Codex回答を編集欄へ反映しました。まだ案件ファイルには保存していません。";
         return true;
+    }
+
+    private static bool ConfirmReplyAppend(string message)
+    {
+        return System.Windows.MessageBox.Show(
+            message,
+            "返信案への追記",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question) == MessageBoxResult.OK;
     }
 
     public string AiDataFolder
@@ -3381,6 +3402,7 @@ public sealed class MainViewModel : ObservableObject
         Status = context.Status ?? string.Empty;
         ReceptionDate = context.ReceptionDate?.ToString("yyyy-MM-dd") ?? string.Empty;
         ReplaceNotes(context.Notes);
+        ApplyPreferredCustomerReplyDraft(context.Notes);
         codex?.RefreshCaseSelection();
     }
 
@@ -3410,6 +3432,31 @@ public sealed class MainViewModel : ObservableObject
     {
         return string.Equals(note.NoteKind, "お客様ご相談内容", StringComparison.OrdinalIgnoreCase)
             || note.FileName.StartsWith("お客様ご相談内容_", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ApplyPreferredCustomerReplyDraft(IReadOnlyList<NoteSnapshot> notes)
+    {
+        var replyNote = notes
+            .Where(IsCustomerReplyNote)
+            .OrderByDescending(note => !string.IsNullOrWhiteSpace(SupportNumber)
+                && note.FileName.Contains(SupportNumber, StringComparison.OrdinalIgnoreCase))
+            .ThenByDescending(static note => note.LastModifiedAt)
+            .FirstOrDefault();
+
+        CustomerReplyDraft = string.IsNullOrWhiteSpace(replyNote?.Text)
+            ? "まだ生成されていません。"
+            : replyNote.Text;
+        InternalMemo = string.Empty;
+        codexReplyUndo = null;
+        codexMemoUndo = null;
+    }
+
+    private static bool IsCustomerReplyNote(NoteSnapshot note)
+    {
+        return string.Equals(note.NoteKind, "お客様への返信案", StringComparison.OrdinalIgnoreCase)
+            || note.FileName.StartsWith("お客様への返信案_", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(note.NoteKind, "返信案", StringComparison.OrdinalIgnoreCase)
+            || note.FileName.StartsWith("返信案_", StringComparison.OrdinalIgnoreCase);
     }
 
     private void ApplyLaunchContextNote(AiAssistantLaunchContext context)
@@ -4236,12 +4283,19 @@ public sealed class MainViewModel : ObservableObject
             UserInstruction = pastAnswerPolishRequested
                 ? $"以下は同一またはほぼ同一の問い合わせに対して過去に実際に使用した回答です。技術的内容を変更せず、今回のお客様向けに必要な範囲だけ整えてください。{Environment.NewLine}{AdditionalInstruction}"
                 : AdditionalInstruction,
+            SupplementalContext = HasExplicitSupplementalContext(AdditionalInstruction)
+                ? AdditionalInstruction
+                : null,
             Sources = selectedSources,
             FactResolution = factResolution,
             Settings = settings,
             RequestedAt = DateTimeOffset.Now,
         };
     }
+
+    private static bool HasExplicitSupplementalContext(string? value) =>
+        !string.IsNullOrWhiteSpace(value) &&
+        !string.Equals(value.Trim(), DefaultAdditionalInstruction, StringComparison.Ordinal);
 
     private static IReadOnlyList<string> CollectAttachmentFileNames(string? caseFolderPath)
     {
