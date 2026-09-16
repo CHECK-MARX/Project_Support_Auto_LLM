@@ -75,9 +75,9 @@ public sealed partial class ArtifactRequestDetector
     [GeneratedRegex(@"(?<name>[^\\/:*?""<>|\r\n]{1,120}\.xlsx)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex ExcelFileNameRegex();
 
-    [GeneratedRegex(@"(?:\.xlsx|\.csv|\.txt|\.md|Excel|エクセル|CSV|テキスト|Markdown)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?:\.xlsx|\.docx|\.csv|\.txt|\.md|Excel|エクセル|Word|ワード|CSV|テキスト|Markdown)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SupportedFileRegex();
 
-    [GeneratedRegex(@"(?<name>[^\\/:*?""<>|\r\n]{1,120}\.(?:xlsx|csv|txt|md))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<name>[^\\/:*?""<>|\r\n]{1,120}\.(?:xlsx|docx|csv|txt|md))", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex SupportedFileNameRegex();
 }

@@ -19,7 +19,9 @@ using System.Windows.Threading;
 using Microsoft.Win32;
 using MessageBox = System.Windows.MessageBox;
 using SupportCaseManager.App.AiHandoff;
+using SupportCaseManager.App.ChatGpt;
 using SupportCaseManager.App.Diagnostics;
+using SupportCaseManager.App.Outlook;
 using SupportCaseManager.App.Theme;
 using SupportCaseManager.App.Dialogs;
 using SupportCaseManager.App.ViewModels;
@@ -43,6 +45,11 @@ public partial class MainWindow : Window
     private readonly IAiAssistantLaunchContextBuilder _aiLaunchContextBuilder = new AiAssistantLaunchContextBuilder();
     private readonly IAiAssistantHandoffFileWriter _aiHandoffFileWriter = new AiAssistantHandoffFileWriter();
     private readonly IAiAssistantProcessLauncher _aiProcessLauncher = new AiAssistantProcessLauncher();
+    private readonly IOutlookSearchService _outlookSearchService;
+    private readonly IChatGptHistorySearchService _chatGptHistorySearchService;
+    private readonly ProductGptTargetResolver _productGptTargetResolver;
+    private readonly GptCaseRegistrationService _gptCaseRegistrationService;
+    private readonly GptCaseHandoffBriefBuilder _gptHandoffBriefBuilder;
     private AiAssistantNoteEditorTransferServer? _aiNoteEditorTransferServer;
     private readonly Dictionary<string, CaseRecord> _caseCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _categoryPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -99,6 +106,7 @@ public partial class MainWindow : Window
         "scan-cache-v1.json");
     private bool _directoryScanCacheDirty;
     private bool _isNotePreviewActive;
+    private bool _isGptRegistrationInProgress;
     private string _notePreviewBody = string.Empty;
     private string _closedSearchKeyword = string.Empty;
     private string _closedSummaryFilterProduct = string.Empty;
@@ -117,9 +125,20 @@ public partial class MainWindow : Window
     public ObservableCollection<string> StatusOptions => _statusOptions;
     public ObservableCollection<string> ProductNameOptions => _productNameOptions;
 
-    public MainWindow(MainViewModel viewModel)
+    public MainWindow(
+        MainViewModel viewModel,
+        IOutlookSearchService? outlookSearchService = null,
+        IChatGptHistorySearchService? chatGptHistorySearchService = null,
+        ProductGptTargetResolver? productGptTargetResolver = null,
+        GptCaseRegistrationService? gptCaseRegistrationService = null,
+        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null)
     {
         _viewModel = viewModel;
+        _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
+        _chatGptHistorySearchService = chatGptHistorySearchService ?? new ChatGptHistorySearchService();
+        _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
+        _gptCaseRegistrationService = gptCaseRegistrationService ?? new GptCaseRegistrationService();
+        _gptHandoffBriefBuilder = gptHandoffBriefBuilder ?? new GptCaseHandoffBriefBuilder();
         _config = viewModel.Config;
         _repository = viewModel.Repository;
         _logger = viewModel.Logger;
@@ -383,6 +402,9 @@ public partial class MainWindow : Window
                 BasePath = product.BasePath,
                 ClosedPath = product.ClosedPath,
                 ProductPromptFilePath = product.ProductPromptFilePath,
+                GptTargetKey = product.GptTargetKey,
+                GptTargetDisplayName = product.GptTargetDisplayName,
+                GptLaunchUrl = product.GptLaunchUrl,
                 IsEnabled = product.IsEnabled,
                 SortOrder = product.SortOrder,
                 NoteTemplates = NormalizeTemplates(product.NoteTemplates ?? new List<Dictionary<string, string>>()),
@@ -633,6 +655,9 @@ public partial class MainWindow : Window
             BasePath = dialog.BasePath,
             ClosedPath = dialog.ClosedPath,
             ProductPromptFilePath = dialog.ProductPromptFilePath,
+            GptTargetKey = dialog.GptTargetKey,
+            GptTargetDisplayName = dialog.GptTargetDisplayName,
+            GptLaunchUrl = dialog.GptLaunchUrl,
             IsEnabled = dialog.IsProductEnabled,
             SortOrder = dialog.SortOrder,
             NoteTemplates = new List<Dictionary<string, string>>(),
@@ -675,6 +700,9 @@ public partial class MainWindow : Window
             BaseFolder = entry.BasePath,
             ClosedFolder = entry.ClosedPath,
             ProductPromptFilePath = entry.ProductPromptFilePath,
+            GptTargetKey = entry.GptTargetKey,
+            GptTargetDisplayName = entry.GptTargetDisplayName,
+            GptLaunchUrl = entry.GptLaunchUrl,
             IsEnabled = entry.IsEnabled,
             SortOrder = entry.SortOrder,
         })
@@ -692,6 +720,9 @@ public partial class MainWindow : Window
         entry.BasePath = dialog.BasePath;
         entry.ClosedPath = dialog.ClosedPath;
         entry.ProductPromptFilePath = dialog.ProductPromptFilePath;
+        entry.GptTargetKey = dialog.GptTargetKey;
+        entry.GptTargetDisplayName = dialog.GptTargetDisplayName;
+        entry.GptLaunchUrl = dialog.GptLaunchUrl;
         entry.IsEnabled = dialog.IsProductEnabled;
         entry.SortOrder = dialog.SortOrder;
         ProductGrid.Items.Refresh();
@@ -790,6 +821,9 @@ public partial class MainWindow : Window
             BasePath = dialog.BasePath,
             ClosedPath = dialog.ClosedPath,
             ProductPromptFilePath = dialog.ProductPromptFilePath,
+            GptTargetKey = dialog.GptTargetKey,
+            GptTargetDisplayName = dialog.GptTargetDisplayName,
+            GptLaunchUrl = dialog.GptLaunchUrl,
             IsEnabled = dialog.IsProductEnabled,
             SortOrder = dialog.SortOrder,
             NoteTemplates = new List<Dictionary<string, string>>(),
@@ -813,6 +847,9 @@ public partial class MainWindow : Window
                 BasePath = entry.BasePath?.Trim() ?? string.Empty,
                 ClosedPath = entry.ClosedPath?.Trim() ?? string.Empty,
                 ProductPromptFilePath = entry.ProductPromptFilePath?.Trim() ?? string.Empty,
+                GptTargetKey = entry.GptTargetKey?.Trim() ?? string.Empty,
+                GptTargetDisplayName = entry.GptTargetDisplayName?.Trim() ?? string.Empty,
+                GptLaunchUrl = entry.GptLaunchUrl?.Trim() ?? string.Empty,
                 IsEnabled = entry.IsEnabled,
                 SortOrder = entry.SortOrder,
                 NoteTemplates = NormalizeTemplates(entry.NoteTemplates ?? new List<Dictionary<string, string>>()),
@@ -835,6 +872,9 @@ public partial class MainWindow : Window
                 BasePath = entry.BasePath,
                 ClosedPath = entry.ClosedPath,
                 ProductPromptFilePath = entry.ProductPromptFilePath,
+                GptTargetKey = entry.GptTargetKey,
+                GptTargetDisplayName = entry.GptTargetDisplayName,
+                GptLaunchUrl = entry.GptLaunchUrl,
                 IsEnabled = entry.IsEnabled,
                 SortOrder = entry.SortOrder,
                 NoteTemplates = entry.NoteTemplates ?? new List<Dictionary<string, string>>(),
@@ -3439,7 +3479,8 @@ public partial class MainWindow : Window
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
                 category,
-                false);
+                false,
+                record.GptRegistration);
 
             _settings.RecentCases = _settings.RecentCases
                 .Where(item => !string.Equals(item, folderPath, StringComparison.OrdinalIgnoreCase))
@@ -3565,7 +3606,8 @@ public partial class MainWindow : Window
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
                 string.Empty,
-                false);
+                false,
+                record.GptRegistration);
 
             _settings.RecentCases = _settings.RecentCases
                 .Where(item => !string.Equals(item, folderPath, StringComparison.OrdinalIgnoreCase))
@@ -3904,7 +3946,8 @@ public partial class MainWindow : Window
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
                 category,
-                false);
+                false,
+                record.GptRegistration);
 
             _settings.RecentCases = _settings.RecentCases
                 .Where(item => !string.Equals(item, folderPath, StringComparison.OrdinalIgnoreCase))
@@ -4284,6 +4327,7 @@ public partial class MainWindow : Window
         CategoryComboBox.SelectedIndex = 0;
         PreviewTextBox.Text = string.Empty;
         OpenFolderButton.IsEnabled = false;
+        UpdateGptRegistrationUi();
         UpdateNoteFileLabel();
         UpdatePreview();
         _viewModel.StatusMessage = "新規入力モードに切り替えました。";
@@ -4372,17 +4416,49 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    private void OnSupportCopyDoubleClick(object sender, MouseButtonEventArgs e)
+    private async void OnSupportOutlookSearchDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        CopyToClipboard(SupportTextBox.Text, "サポート番号をコピーしました。");
         e.Handled = true;
+        var supportId = SupportTextBox.Text.Trim();
+        if (string.IsNullOrWhiteSpace(supportId))
+        {
+            return;
+        }
+
+        var result = await _outlookSearchService.SearchSupportIdAsync(supportId);
+        switch (result.Status)
+        {
+            case OutlookSearchStatus.Succeeded:
+                _viewModel.StatusMessage = "Classic Outlookに検索結果を表示しました。";
+                break;
+            case OutlookSearchStatus.Busy:
+                _viewModel.StatusMessage = "Classic Outlookの検索を開始しています。";
+                break;
+            case OutlookSearchStatus.Failed:
+                MessageBox.Show(this, result.Message, "Outlook検索", MessageBoxButton.OK, MessageBoxImage.Warning);
+                break;
+        }
     }
 
-    private void OnPreviewBaseCopyDoubleClick(object sender, MouseButtonEventArgs e)
+    private async void OnPreviewChatGptHistoryDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        var baseText = ExtractPreviewBase(PreviewTextBox.Text);
-        CopyToClipboard(baseText, "作成フォルダの先頭をコピーしました。");
         e.Handled = true;
+        if (await TryHandleRegisteredGptDoubleClickAsync())
+        {
+            return;
+        }
+
+        var supportId = _currentCase?.SupportNumber;
+        var result = await _chatGptHistorySearchService.SearchExistingConversationAsync(supportId);
+        switch (result.Status)
+        {
+            case ChatGptHistorySearchStatus.Succeeded:
+                _viewModel.StatusMessage = result.Message;
+                break;
+            case ChatGptHistorySearchStatus.Failed:
+                MessageBox.Show(this, result.Message, "ChatGPT履歴検索", MessageBoxButton.OK, MessageBoxImage.Warning);
+                break;
+        }
     }
 
     private void OnStatusTextChanged(object sender, TextChangedEventArgs e)
@@ -4406,23 +4482,6 @@ public partial class MainWindow : Window
         {
             PreviewTextBox.Text = "(必須項目を入力してください)";
         }
-    }
-
-    private static string ExtractPreviewBase(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var trimmed = value.Trim();
-        var endIndex = trimmed.IndexOf(')');
-        if (endIndex >= 0)
-        {
-            return trimmed[..(endIndex + 1)];
-        }
-
-        return trimmed;
     }
 
     private void CopyToClipboard(string? value, string message)
@@ -4653,7 +4712,8 @@ public partial class MainWindow : Window
                 newPath,
                 CaseNaming.ToIsoTimestamp(DateTime.UtcNow),
                 category,
-                false);
+                false,
+                _currentCase.GptRegistration);
 
             _currentCase = updated;
             _caseCache.Remove(folder);
@@ -5098,67 +5158,9 @@ public partial class MainWindow : Window
 
     private static List<NoteSegment> ParseNoteSegments(string text)
     {
-        var segments = new List<NoteSegment>();
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return segments;
-        }
-
-        var lines = text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
-        var preHeader = new List<string>();
-        var body = new List<string>();
-        var currentHeader = string.Empty;
-        var currentTimestamp = (DateTime?)null;
-        var hasHeader = false;
-        var index = 0;
-
-        foreach (var raw in lines)
-        {
-            var line = raw ?? string.Empty;
-            if (line.StartsWith("*****追記部_", StringComparison.Ordinal))
-            {
-                if (hasHeader)
-                {
-                    segments.Add(new NoteSegment(currentHeader, JoinLines(body), currentTimestamp, index++));
-                    body.Clear();
-                }
-                else if (preHeader.Count > 0)
-                {
-                    segments.Add(new NoteSegment(string.Empty, JoinLines(preHeader), null, index++));
-                    preHeader.Clear();
-                }
-
-                currentHeader = line.TrimEnd();
-                currentTimestamp = TryParseNoteHeaderTimestamp(currentHeader, out var parsed) ? parsed : null;
-                hasHeader = true;
-                continue;
-            }
-
-            if (line.Trim() == "--------------------------------------------------")
-            {
-                continue;
-            }
-
-            if (!hasHeader)
-            {
-                preHeader.Add(line);
-            }
-            else
-            {
-                body.Add(line);
-            }
-        }
-
-        if (hasHeader)
-        {
-            segments.Add(new NoteSegment(currentHeader, JoinLines(body), currentTimestamp, index++));
-        }
-        else if (preHeader.Count > 0)
-        {
-            segments.Add(new NoteSegment(string.Empty, JoinLines(preHeader), null, index++));
-        }
-
-        return segments;
+        return CaseNoteHistoryParser.Parse(text)
+            .Select(entry => new NoteSegment(entry.Header, entry.Body, entry.Timestamp, entry.Index))
+            .ToList();
     }
 
     private static List<NoteSegment> OrderSegments(List<NoteSegment> segments)
@@ -5212,54 +5214,6 @@ public partial class MainWindow : Window
         }
 
         return segments[^1];
-    }
-
-    private static bool TryParseNoteHeaderTimestamp(string header, out DateTime timestamp)
-    {
-        timestamp = default;
-        if (string.IsNullOrWhiteSpace(header))
-        {
-            return false;
-        }
-
-        var marker = "追記部_";
-        var startIndex = header.IndexOf(marker, StringComparison.Ordinal);
-        if (startIndex < 0)
-        {
-            return false;
-        }
-
-        startIndex += marker.Length;
-        var endIndex = header.IndexOf('(', startIndex);
-        var candidate = endIndex >= 0
-            ? header.Substring(startIndex, endIndex - startIndex)
-            : header.Substring(startIndex);
-        candidate = candidate.Trim();
-
-        var formats = new[] { "yyyy/MM/dd HH:mm:ss", "yyyy/MM/dd HH:mm" };
-        if (DateTime.TryParseExact(candidate, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
-        {
-            timestamp = parsed;
-            return true;
-        }
-
-        if (DateTime.TryParse(candidate, out parsed))
-        {
-            timestamp = parsed;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static string JoinLines(List<string> lines)
-    {
-        while (lines.Count > 0 && string.IsNullOrWhiteSpace(lines[^1]))
-        {
-            lines.RemoveAt(lines.Count - 1);
-        }
-
-        return string.Join(EncodingPolicy.LineEnding, lines);
     }
 
     private void OnNoteClear(object sender, RoutedEventArgs e)
@@ -5320,6 +5274,11 @@ public partial class MainWindow : Window
     }
 
     private async void OnAiAssistantOpen(object sender, RoutedEventArgs e)
+    {
+        await OpenAiAssistantAsync();
+    }
+
+    private async Task OpenAiAssistantAsync()
     {
         if (_currentCase == null)
         {
@@ -5473,6 +5432,7 @@ public partial class MainWindow : Window
 
         EnsureCaseNotes(record);
         UpdateNoteFileLabel();
+        UpdateGptRegistrationUi();
     }
 
     private void SelectCategory(string category)
@@ -6130,6 +6090,9 @@ public partial class MainWindow : Window
         public string BasePath { get; set; } = string.Empty;
         public string ClosedPath { get; set; } = string.Empty;
         public string ProductPromptFilePath { get; set; } = string.Empty;
+        public string GptTargetKey { get; set; } = string.Empty;
+        public string GptTargetDisplayName { get; set; } = string.Empty;
+        public string GptLaunchUrl { get; set; } = string.Empty;
         public bool IsEnabled { get; set; } = true;
         public int SortOrder { get; set; }
         public List<Dictionary<string, string>> NoteTemplates { get; set; } = new();
@@ -6144,6 +6107,9 @@ public partial class MainWindow : Window
                 BaseFolder = BasePath,
                 ClosedFolder = ClosedPath,
                 ProductPromptFilePath = ProductPromptFilePath,
+                GptTargetKey = GptTargetKey,
+                GptTargetDisplayName = GptTargetDisplayName,
+                GptLaunchUrl = GptLaunchUrl,
                 IsEnabled = IsEnabled,
                 SortOrder = SortOrder,
             };

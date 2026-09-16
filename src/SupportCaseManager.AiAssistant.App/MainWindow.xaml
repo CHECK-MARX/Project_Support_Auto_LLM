@@ -1359,7 +1359,12 @@
                                             Command="{Binding Codex.CancelArtifactCommand}" />
                                     <Button Content="作成ファイルを開く"
                                             Command="{Binding Codex.OpenCreatedArtifactCommand}" />
+                                    <Button Content="メーカー確認メールで使用"
+                                            Command="{Binding Codex.UseCreatedArtifactForManufacturerMailCommand}" />
                                 </WrapPanel>
+                                <TextBlock Text="{Binding Codex.PendingManufacturerAttachmentText, Mode=OneWay}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8" />
 
                                 <GroupBox Header="翻訳プレビュー（原文と英訳）">
                                     <DataGrid ItemsSource="{Binding Codex.ArtifactPreviewItems}"

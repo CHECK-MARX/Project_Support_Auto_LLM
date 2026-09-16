@@ -131,6 +131,9 @@ public sealed class ConfigStore
                     ["ClosedFolder"] = item.ClosedFolder,
                     ["ClosedPath"] = item.ClosedFolder,
                     ["ProductPromptFilePath"] = item.ProductPromptFilePath,
+                    ["GptTargetKey"] = item.GptTargetKey,
+                    ["GptTargetDisplayName"] = item.GptTargetDisplayName,
+                    ["GptLaunchUrl"] = item.GptLaunchUrl,
                     ["IsEnabled"] = item.IsEnabled,
                     ["SortOrder"] = item.SortOrder,
                     ["NoteTemplates"] = SerializeTemplates(item.NoteTemplates ?? new List<Dictionary<string, string>>()),
@@ -214,6 +217,25 @@ public sealed class ConfigStore
             {
                 product.ProductPromptFilePath = ProductDefinitionDefaults.GetInitialPromptPath(product.DisplayName);
                 migrated |= !string.IsNullOrWhiteSpace(product.ProductPromptFilePath);
+            }
+
+            var defaultGptTarget = ProductDefinitionDefaults.GetInitialGptTarget(product.DisplayName);
+            if (string.IsNullOrWhiteSpace(product.GptTargetKey) && !string.IsNullOrWhiteSpace(defaultGptTarget.Key))
+            {
+                product.GptTargetKey = defaultGptTarget.Key;
+                migrated = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(product.GptTargetDisplayName) && !string.IsNullOrWhiteSpace(defaultGptTarget.DisplayName))
+            {
+                product.GptTargetDisplayName = defaultGptTarget.DisplayName;
+                migrated = true;
+            }
+
+            if (string.IsNullOrWhiteSpace(product.GptLaunchUrl) && !string.IsNullOrWhiteSpace(defaultGptTarget.LaunchUrl))
+            {
+                product.GptLaunchUrl = defaultGptTarget.LaunchUrl;
+                migrated = true;
             }
 
             if (product.SortOrder < 0 || (!HasObjectProperty(root, "Products", index, "SortOrder") && product.SortOrder == 0))
@@ -344,6 +366,15 @@ public sealed class ConfigStore
             var promptPath = ReadObjectString(item, "ProductPromptFilePath")
                 ?? ReadObjectString(item, "productPromptFilePath")
                 ?? string.Empty;
+            var gptTargetKey = ReadObjectString(item, "GptTargetKey")
+                ?? ReadObjectString(item, "gptTargetKey")
+                ?? string.Empty;
+            var gptTargetDisplayName = ReadObjectString(item, "GptTargetDisplayName")
+                ?? ReadObjectString(item, "gptTargetDisplayName")
+                ?? string.Empty;
+            var gptLaunchUrl = ReadObjectString(item, "GptLaunchUrl")
+                ?? ReadObjectString(item, "gptLaunchUrl")
+                ?? string.Empty;
             var isEnabled = ReadObjectBool(item, "IsEnabled") ?? true;
             var sortOrder = ReadObjectInt(item, "SortOrder") ?? list.Count;
 
@@ -360,6 +391,9 @@ public sealed class ConfigStore
                 BasePath = basePath,
                 ClosedPath = closedPath ?? string.Empty,
                 ProductPromptFilePath = promptPath,
+                GptTargetKey = gptTargetKey,
+                GptTargetDisplayName = gptTargetDisplayName,
+                GptLaunchUrl = gptLaunchUrl,
                 IsEnabled = isEnabled,
                 SortOrder = sortOrder,
                 NoteTemplates = templates,

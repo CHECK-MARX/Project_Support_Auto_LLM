@@ -102,7 +102,7 @@
                                 </StackPanel>
 
                                 <TextBlock Text="サポート番号" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" />
-                                <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" MouseDoubleClick="OnSupportCopyDoubleClick" />
+                                <TextBox x:Name="SupportTextBox" Grid.Row="1" Grid.Column="1" Margin="8,4" TextChanged="OnSupportChanged" MouseDoubleClick="OnSupportOutlookSearchDoubleClick" />
                                 <TextBlock Text="ステータス" Grid.Row="1" Grid.Column="2" VerticalAlignment="Center" />
                                 <ComboBox x:Name="StatusComboBox" Grid.Row="1" Grid.Column="3" Margin="8,4" IsEditable="True" SelectionChanged="OnPreviewChanged" />
                                 <StackPanel Grid.Row="1" Grid.Column="4" Orientation="Horizontal" HorizontalAlignment="Left" Margin="0,4">
@@ -115,9 +115,13 @@
                                 <Button x:Name="StatusUpdateButton" Grid.Row="2" Grid.Column="4" Content="ステータス更新" Width="100" Margin="0,4" HorizontalAlignment="Left" Click="OnStatusUpdate" />
 
                                 <TextBlock Text="作成フォルダ" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" />
-                                <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" MouseDoubleClick="OnPreviewBaseCopyDoubleClick" />
+                                <TextBox x:Name="PreviewTextBox" Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="4" Margin="8,4" IsReadOnly="True" MouseDoubleClick="OnPreviewChatGptHistoryDoubleClick" />
 
-                                <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0" />
+                                <StackPanel Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                    <TextBlock Text="GPT:" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="GptRegistrationStatusText" Text="未登録" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <Button x:Name="GptRegistrationButton" Content="GPTへ登録" Click="OnGptRegistrationAction" IsEnabled="False" />
+                                </StackPanel>
                             </Grid>
                         </GroupBox>
 
@@ -197,6 +201,7 @@
                             <DataGridTextColumn Header="ベースフォルダ" Binding="{Binding BasePath}" Width="2*" />
                             <DataGridTextColumn Header="クローズフォルダ" Binding="{Binding ClosedPath}" Width="2*" />
                             <DataGridTextColumn Header="Codex指示ファイル" Binding="{Binding ProductPromptFilePath}" Width="2*" />
+                            <DataGridTextColumn Header="GPT登録先" Binding="{Binding GptTargetDisplayName}" Width="180" />
                             <DataGridCheckBoxColumn Header="有効" Binding="{Binding IsEnabled}" Width="70" />
                             <DataGridTextColumn Header="表示順" Binding="{Binding SortOrder}" Width="80" />
                         </DataGrid.Columns>

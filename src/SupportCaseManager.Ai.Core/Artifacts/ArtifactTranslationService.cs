@@ -39,6 +39,7 @@ public sealed class ArtifactTranslationService : IArtifactTranslationService
     {
         this.pathPolicy = pathPolicy ?? new CaseArtifactPathPolicy();
         this.handlers = (handlers ?? [
+            new WordDocumentTranslationHandler(),
             new CsvTranslationHandler(),
             new TextTranslationHandler(ArtifactFormat.PlainText),
             new TextTranslationHandler(ArtifactFormat.Markdown),
@@ -90,9 +91,12 @@ public sealed class ArtifactTranslationService : IArtifactTranslationService
 
         return new ArtifactCreationPlan
         {
-            Kind = format == ArtifactFormat.Csv
-                ? ArtifactKind.CsvEnglishTranslation
-                : ArtifactKind.TextEnglishTranslation,
+            Kind = format switch
+            {
+                ArtifactFormat.Csv => ArtifactKind.CsvEnglishTranslation,
+                ArtifactFormat.WordDocument => ArtifactKind.WordEnglishTranslation,
+                _ => ArtifactKind.TextEnglishTranslation,
+            },
             Format = format,
             Request = request,
             CaseFolderFullPath = caseFolder,

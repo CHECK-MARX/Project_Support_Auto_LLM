@@ -21,6 +21,9 @@ public sealed class ProductEditorDialog : Window
     private readonly WpfTextBox _basePathBox;
     private readonly WpfTextBox _closedPathBox;
     private readonly WpfTextBox _promptPathBox;
+    private readonly WpfTextBox _gptTargetKeyBox;
+    private readonly WpfTextBox _gptTargetDisplayNameBox;
+    private readonly WpfTextBox _gptLaunchUrlBox;
     private readonly WpfCheckBox _enabledBox;
     private readonly WpfTextBox _sortOrderBox;
 
@@ -30,6 +33,9 @@ public sealed class ProductEditorDialog : Window
     public string BasePath => _basePathBox.Text.Trim();
     public string ClosedPath => _closedPathBox.Text.Trim();
     public string ProductPromptFilePath => _promptPathBox.Text.Trim();
+    public string GptTargetKey => _gptTargetKeyBox.Text.Trim();
+    public string GptTargetDisplayName => _gptTargetDisplayNameBox.Text.Trim();
+    public string GptLaunchUrl => _gptLaunchUrlBox.Text.Trim();
     public bool IsProductEnabled => _enabledBox.IsChecked == true;
     public int SortOrder => int.TryParse(_sortOrderBox.Text.Trim(), out var value) ? Math.Max(0, value) : 0;
 
@@ -40,7 +46,7 @@ public sealed class ProductEditorDialog : Window
         ProductId = definition.Id == Guid.Empty ? Guid.NewGuid() : definition.Id;
         Title = title;
         Width = 760;
-        Height = 470;
+        Height = 600;
         MinWidth = 680;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         ResizeMode = ResizeMode.CanResize;
@@ -49,9 +55,9 @@ public sealed class ProductEditorDialog : Window
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        for (var row = 0; row < 8; row++)
+        for (var row = 0; row < 11; row++)
         {
-            root.RowDefinitions.Add(new RowDefinition { Height = row == 7 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = row == 10 ? new GridLength(1, GridUnitType.Star) : GridLength.Auto });
         }
 
         _nameBox = AddTextRow(root, 0, "製品表示名", definition.DisplayName);
@@ -59,8 +65,11 @@ public sealed class ProductEditorDialog : Window
         _basePathBox = AddPathRow(root, 2, "ベースフォルダ", definition.BaseFolder, target => BrowseFolder(target, "ベースフォルダを選択"));
         _closedPathBox = AddPathRow(root, 3, "クローズフォルダ", definition.ClosedFolder, target => BrowseFolder(target, "クローズフォルダを選択"));
         _promptPathBox = AddPromptRow(root, 4, definition.ProductPromptFilePath);
+        _gptTargetKeyBox = AddTextRow(root, 5, "GPT登録先キー", definition.GptTargetKey);
+        _gptTargetDisplayNameBox = AddTextRow(root, 6, "GPT登録先名", definition.GptTargetDisplayName);
+        _gptLaunchUrlBox = AddTextRow(root, 7, "GPT登録先URL", definition.GptLaunchUrl);
 
-        AddLabel(root, 5, "有効／無効");
+        AddLabel(root, 8, "有効／無効");
         _enabledBox = new WpfCheckBox
         {
             Content = "通常画面に表示する",
@@ -68,12 +77,12 @@ public sealed class ProductEditorDialog : Window
             Margin = new Thickness(8, 4, 0, 10),
             VerticalAlignment = VerticalAlignment.Center,
         };
-        Grid.SetRow(_enabledBox, 5);
+        Grid.SetRow(_enabledBox, 8);
         Grid.SetColumn(_enabledBox, 1);
         Grid.SetColumnSpan(_enabledBox, 2);
         root.Children.Add(_enabledBox);
 
-        _sortOrderBox = AddTextRow(root, 6, "表示順", definition.SortOrder.ToString());
+        _sortOrderBox = AddTextRow(root, 9, "表示順", definition.SortOrder.ToString());
 
         var buttonRow = new StackPanel
         {
@@ -87,7 +96,7 @@ public sealed class ProductEditorDialog : Window
         okButton.Click += (_, _) => Accept();
         buttonRow.Children.Add(okButton);
         buttonRow.Children.Add(cancelButton);
-        Grid.SetRow(buttonRow, 7);
+        Grid.SetRow(buttonRow, 10);
         Grid.SetColumn(buttonRow, 0);
         Grid.SetColumnSpan(buttonRow, 3);
         root.Children.Add(buttonRow);
@@ -242,6 +251,9 @@ public sealed class ProductEditorDialog : Window
             BaseFolder = BasePath,
             ClosedFolder = ClosedPath,
             ProductPromptFilePath = ProductPromptFilePath,
+            GptTargetKey = GptTargetKey,
+            GptTargetDisplayName = GptTargetDisplayName,
+            GptLaunchUrl = GptLaunchUrl,
             IsEnabled = IsProductEnabled,
             SortOrder = SortOrder,
         };

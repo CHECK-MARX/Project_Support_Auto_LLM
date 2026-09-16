@@ -162,6 +162,11 @@ public sealed class CaseRepository
 
     public void UpdateCaseEntry(CaseRecord updated)
     {
+        _ = TryUpdateCaseEntry(updated);
+    }
+
+    public bool TryUpdateCaseEntry(CaseRecord updated)
+    {
         var replaced = false;
         for (var i = 0; i < _caseIndex.Count; i++)
         {
@@ -180,7 +185,7 @@ public sealed class CaseRepository
             _caseIndex.Add(updated);
         }
 
-        SaveIndex();
+        return SaveIndex();
     }
 
     private string NextFolderName(string root, string company, string supportNumber, string status, string createdOn)
@@ -248,11 +253,11 @@ public sealed class CaseRepository
         }
     }
 
-    private void SaveIndex()
+    private bool SaveIndex()
     {
         if (string.IsNullOrEmpty(_indexPath))
         {
-            return;
+            return false;
         }
 
         try
@@ -265,10 +270,12 @@ public sealed class CaseRepository
             };
             var json = JsonSerializer.Serialize(payload, options);
             File.WriteAllText(_indexPath, json, EncodingPolicy.Utf8NoBom);
+            return true;
         }
         catch (Exception ex)
         {
             _logger.Error($"cases-index.json の書き込みに失敗しました: {ex.Message}", ex);
+            return false;
         }
     }
 
@@ -337,6 +344,18 @@ public sealed class CaseRepository
     {
         var orderedFolder = folders.OrderByDescending(item => item.LastUpdated, StringComparer.Ordinal).ToList();
         var orderedIndex = indexed.OrderByDescending(item => item.LastUpdated, StringComparer.Ordinal).ToList();
+        foreach (var folder in orderedFolder)
+        {
+            var persisted = orderedIndex.FirstOrDefault(item =>
+                (!string.IsNullOrWhiteSpace(folder.NormalizedSupport) &&
+                 string.Equals(item.NormalizedSupport, folder.NormalizedSupport, StringComparison.OrdinalIgnoreCase)) ||
+                string.Equals(item.FolderPath, folder.FolderPath, StringComparison.OrdinalIgnoreCase));
+            if (persisted is not null)
+            {
+                folder.GptRegistration = persisted.GptRegistration.Clone();
+            }
+        }
+
         // フォルダ実体を優先して重複（同一サポート番号）を解決し、
         // 旧インデックスに残った移動前パスで案件が消えるのを防ぐ。
         var combined = CaseCollection.EnsureUniqueCases(orderedFolder.Concat(orderedIndex));

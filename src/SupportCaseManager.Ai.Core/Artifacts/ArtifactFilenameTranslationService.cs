@@ -19,6 +19,7 @@ public sealed class ArtifactFilenameTranslationService
     [
         ("追加問い合わせ内容", "Additional Inquiry Details"),
         ("問い合わせ内容", "Inquiry Details"),
+        ("プロジェクト設定手順", "Project Settings Guide"),
         ("スキャン結果", "Scan Results"),
         ("調査メモ", "Investigation Notes"),
     ];
@@ -38,6 +39,7 @@ public sealed class ArtifactFilenameTranslationService
         ("報告書", "Report"),
         ("概要", "Summary"),
         ("設定", "Settings"),
+        ("プロジェクト", "Project"),
         ("環境", "Environment"),
         ("ログ", "Log"),
         ("エラー", "Error"),

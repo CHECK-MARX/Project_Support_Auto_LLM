@@ -103,6 +103,74 @@ public sealed class CodexAppServerClientTests
     }
 
     [Fact]
+    public async Task RetryableErrorNotification_KeepsTurnActiveUntilSuccessfulCompletion()
+    {
+        using var temp = new Helpers.TempDirectory();
+        var transport = CreateConnectedTransport();
+        transport.Enqueue("thread/start", """{"thread":{"id":"thread-retry"}}""");
+        transport.Enqueue("turn/start", """{"turn":{"id":"turn-retry","status":"inProgress","items":[]}}""");
+        var client = CreateClient(transport);
+        string? warning = null;
+        string? error = null;
+        string? answer = null;
+        CodexTurnCompletedEventArgs? completed = null;
+        client.Warning += (_, value) => warning = value;
+        client.Error += (_, value) => error = value;
+        client.AgentMessageDelta += (_, args) => answer += args.Delta;
+        client.TurnCompleted += (_, args) => completed = args;
+
+        await client.ConnectAsync("codex.exe");
+        await client.StartThreadAsync(temp.Path, null);
+        await client.StartTurnAsync("調査してください");
+        transport.EmitNotification(
+            "error",
+            """{"error":{"message":"stream disconnected","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":null}}},"threadId":"thread-retry","turnId":"turn-retry","willRetry":true}""");
+
+        Assert.Equal(CodexConnectionState.Investigating, client.State);
+        Assert.Null(error);
+        Assert.Contains("自動再試行", warning, StringComparison.Ordinal);
+
+        transport.EmitNotification("item/agentMessage/delta", """{"threadId":"thread-retry","turnId":"turn-retry","itemId":"item-1","delta":"回答です。"}""");
+        transport.EmitNotification("turn/completed", """{"threadId":"thread-retry","turn":{"id":"turn-retry","status":"completed","items":[],"error":null}}""");
+
+        Assert.Equal("回答です。", answer);
+        Assert.Equal("completed", completed?.Status);
+        Assert.Equal(CodexConnectionState.Completed, client.State);
+    }
+
+    [Fact]
+    public async Task NonRetryableErrorNotification_UsesNestedErrorMessageAndFailsTurn()
+    {
+        var transport = CreateConnectedTransport();
+        var client = CreateClient(transport);
+        string? error = null;
+        client.Error += (_, value) => error = value;
+        await client.ConnectAsync("codex.exe");
+
+        transport.EmitNotification(
+            "error",
+            """{"error":{"message":"request failed","codexErrorInfo":"internalServerError"},"threadId":"thread-1","turnId":"turn-1","willRetry":false}""");
+
+        Assert.Equal("request failed", error);
+        Assert.Equal(CodexConnectionState.Error, client.State);
+    }
+
+    [Fact]
+    public async Task WarningNotification_UsesServerMessageWithoutReportingUnknownMethod()
+    {
+        var transport = CreateConnectedTransport();
+        var client = CreateClient(transport);
+        string? warning = null;
+        client.Warning += (_, value) => warning = value;
+        await client.ConnectAsync("codex.exe");
+
+        transport.EmitNotification("warning", """{"message":"Falling back to HTTP.","threadId":"thread-1"}""");
+
+        Assert.Equal("Falling back to HTTP.", warning);
+        Assert.Equal(CodexConnectionState.Connected, client.State);
+    }
+
+    [Fact]
     public async Task ConnectAsync_RejectsApiKeyAccount()
     {
         var transport = new FakeTransport();

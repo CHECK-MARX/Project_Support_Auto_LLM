@@ -16,6 +16,7 @@ public sealed class CaseRecord
     public string LastUpdated { get; set; }
     public string Category { get; set; }
     public bool IsFromFolder { get; set; }
+    public GptCaseRegistration GptRegistration { get; set; }
     public string NormalizedSupport { get; private set; }
 
     public CaseRecord(
@@ -27,7 +28,8 @@ public sealed class CaseRecord
         string folderPath,
         string lastUpdated,
         string category = "",
-        bool isFromFolder = false)
+        bool isFromFolder = false,
+        GptCaseRegistration? gptRegistration = null)
     {
         Company = company ?? string.Empty;
         SupportNumber = supportNumber ?? string.Empty;
@@ -38,6 +40,7 @@ public sealed class CaseRecord
         LastUpdated = lastUpdated ?? string.Empty;
         Category = category ?? string.Empty;
         IsFromFolder = isFromFolder;
+        GptRegistration = gptRegistration?.Clone() ?? new GptCaseRegistration();
         NormalizedSupport = string.Empty;
         Normalize();
     }
@@ -77,7 +80,8 @@ public sealed class CaseRecord
             FolderPath,
             LastUpdated,
             Category,
-            isFromFolder ?? IsFromFolder);
+            isFromFolder ?? IsFromFolder,
+            GptRegistration);
     }
 
     public Dictionary<string, object?> ToDictionary()
@@ -93,6 +97,7 @@ public sealed class CaseRecord
             ["last_updated"] = LastUpdated,
             ["category"] = Category,
             ["is_from_folder"] = IsFromFolder,
+            ["gpt_registration"] = GptRegistration,
         };
     }
 
@@ -109,6 +114,7 @@ public sealed class CaseRecord
             LastUpdated = LastUpdated,
             Category = Category,
             IsFromFolder = IsFromFolder,
+            GptRegistration = GptRegistration.Clone(),
         };
     }
 }
@@ -142,6 +148,9 @@ public sealed class CaseRecordDto
     [JsonPropertyName("is_from_folder")]
     public bool IsFromFolder { get; set; }
 
+    [JsonPropertyName("gpt_registration")]
+    public GptCaseRegistration GptRegistration { get; set; } = new();
+
     public CaseRecord ToRecord()
     {
         return new CaseRecord(
@@ -153,6 +162,65 @@ public sealed class CaseRecordDto
             FolderPath,
             string.IsNullOrEmpty(LastUpdated) ? CaseNaming.ToIsoTimestamp(DateTime.UtcNow) : LastUpdated,
             Category,
-            IsFromFolder);
+            IsFromFolder,
+            GptRegistration);
     }
+}
+
+public static class GptRegistrationStates
+{
+    public const string Unregistered = "UNREGISTERED";
+    public const string Registered = "REGISTERED";
+    public const string NeedsRelink = "NEEDS_RELINK";
+}
+
+public static class GptRegistrationLinkModes
+{
+    public const string CreatedByApp = "CREATED_BY_APP";
+    public const string ExistingChatLinked = "EXISTING_CHAT_LINKED";
+}
+
+public sealed class GptCaseRegistration
+{
+    [JsonPropertyName("support_id")]
+    public string SupportId { get; set; } = string.Empty;
+
+    [JsonPropertyName("product")]
+    public string Product { get; set; } = string.Empty;
+
+    [JsonPropertyName("target_gpt_key")]
+    public string TargetGptKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("target_gpt_display_name")]
+    public string TargetGptDisplayName { get; set; } = string.Empty;
+
+    [JsonPropertyName("conversation_url")]
+    public string ConversationUrl { get; set; } = string.Empty;
+
+    [JsonPropertyName("registered_at")]
+    public string RegisteredAt { get; set; } = string.Empty;
+
+    [JsonPropertyName("link_mode")]
+    public string LinkMode { get; set; } = string.Empty;
+
+    [JsonPropertyName("registration_state")]
+    public string RegistrationState { get; set; } = GptRegistrationStates.Unregistered;
+
+    [JsonIgnore]
+    public bool IsRegistered => string.Equals(
+        RegistrationState,
+        GptRegistrationStates.Registered,
+        StringComparison.Ordinal);
+
+    public GptCaseRegistration Clone() => new()
+    {
+        SupportId = SupportId,
+        Product = Product,
+        TargetGptKey = TargetGptKey,
+        TargetGptDisplayName = TargetGptDisplayName,
+        ConversationUrl = ConversationUrl,
+        RegisteredAt = RegisteredAt,
+        LinkMode = LinkMode,
+        RegistrationState = RegistrationState,
+    };
 }

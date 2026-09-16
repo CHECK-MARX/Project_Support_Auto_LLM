@@ -23,6 +23,10 @@ public sealed class ProductDefinitionMigrationTests
         Assert.Equal("prompts/products/qac.txt", settings.Products[0].ProductPromptFilePath);
         Assert.Equal("prompts/products/checkmarx.txt", settings.Products[1].ProductPromptFilePath);
         Assert.Equal("prompts/products/klocwork.txt", settings.Products[2].ProductPromptFilePath);
+        Assert.Equal("helix-qac", settings.Products[0].GptTargetKey);
+        Assert.Equal("Vulnerability Scanner Assistant", settings.Products[1].GptTargetDisplayName);
+        Assert.Equal("Klocwork", settings.Products[2].GptTargetDisplayName);
+        Assert.StartsWith("https://chatgpt.com/g/", settings.Products[0].GptLaunchUrl, StringComparison.Ordinal);
         Assert.Equal([0, 1, 2], settings.Products.Select(product => product.SortOrder));
         Assert.Equal(ProductDefinitionDefaults.HelixQacId, settings.ActiveProductId);
         Assert.True(File.Exists(settingsPath + ".pre-product-migration.bak"));

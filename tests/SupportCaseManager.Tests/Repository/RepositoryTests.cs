@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Repository;
 using SupportCaseManager.Core.Logging;
 using SupportCaseManager.Core.Notes;
@@ -114,5 +115,54 @@ public class RepositoryTests
         using var doc = JsonDocument.Parse(json);
         var saved = doc.RootElement.EnumerateArray().Single();
         Assert.Equal(currentPath, saved.GetProperty("folder_path").GetString());
+    }
+
+    [Fact]
+    public void AllCases_PreservesGptRegistrationFromIndexWhenFolderIsScanned()
+    {
+        using var temp = new TempDirectory();
+        var folderName = "20260916(ABC_00018303)調査中_20260916";
+        var folderPath = Path.Combine(temp.Path, folderName);
+        Directory.CreateDirectory(folderPath);
+        var repository = new CaseRepository(NullLogger.Instance);
+        repository.SetBasePath(temp.Path);
+        var indexed = new CaseRecord(
+            "ABC", "00018303", "調査中", "20260916", folderName, folderPath, "2026-09-16T00:00:00Z")
+        {
+            GptRegistration = new GptCaseRegistration
+            {
+                SupportId = "00018303",
+                Product = "Checkmarx",
+                TargetGptKey = "checkmarx",
+                TargetGptDisplayName = "Vulnerability Scanner Assistant",
+                ConversationUrl = "https://chatgpt.com/c/existing",
+                RegisteredAt = "2026-09-16T12:00:00+09:00",
+                LinkMode = GptRegistrationLinkModes.CreatedByApp,
+                RegistrationState = GptRegistrationStates.Registered,
+            },
+        };
+        repository.UpdateCaseEntry(indexed);
+
+        var loaded = Assert.Single(repository.AllCases());
+
+        Assert.True(loaded.GptRegistration.IsRegistered);
+        Assert.Equal("https://chatgpt.com/c/existing", loaded.GptRegistration.ConversationUrl);
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(temp.Path, "cases-index.json")));
+        Assert.Equal(
+            "REGISTERED",
+            document.RootElement[0].GetProperty("gpt_registration").GetProperty("registration_state").GetString());
+    }
+
+    [Fact]
+    public void CreateCase_DoesNotRegisterGptAutomatically()
+    {
+        using var temp = new TempDirectory();
+        var repository = new CaseRepository(NullLogger.Instance);
+        repository.SetBasePath(temp.Path);
+
+        var record = repository.CreateCase("ABC", "00018303", "調査中", "20260916");
+
+        Assert.Equal(GptRegistrationStates.Unregistered, record.GptRegistration.RegistrationState);
+        Assert.Empty(record.GptRegistration.ConversationUrl);
     }
 }

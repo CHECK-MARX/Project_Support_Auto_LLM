@@ -17,7 +17,10 @@ public sealed record ManufacturerMailCaseContext
     public ManufacturerCommunicationIntent CommunicationIntent { get; init; } = ManufacturerCommunicationIntent.AskManufacturer;
     public string SupportId { get; init; } = string.Empty;
     public string ProductName { get; init; } = string.Empty;
+    public string ProductPromptFilePath { get; init; } = string.Empty;
+    public string SupportToolSettingsFilePath { get; init; } = string.Empty;
     public string CurrentCustomerDeltaFileName { get; init; } = string.Empty;
+    public string CurrentCustomerDeltaSourceType { get; init; } = "NONE";
     public IReadOnlyList<string> CurrentCustomerDeltaContent { get; init; } = [];
     public string CurrentOutboundAttachment { get; init; } = string.Empty;
     public bool PreviousManufacturerContact { get; init; }

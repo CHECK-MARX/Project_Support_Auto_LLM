@@ -480,9 +480,23 @@ public sealed class CodexAppServerClient : ICodexAppServerClient
                     TurnCompleted?.Invoke(this, completed);
                     break;
                 case "error":
-                    var errorMessage = GetString(parameters, "message") ?? "Codexでエラーが発生しました。";
+                    var errorMessage = GetNestedString(parameters, "error", "message")
+                        ?? GetString(parameters, "message")
+                        ?? "Codexでエラーが発生しました。";
+                    if (GetBoolean(parameters, "willRetry"))
+                    {
+                        Warning?.Invoke(this, "Codex接続が一時的に中断しました。自動再試行を継続しています。");
+                        _ = logger.WriteAsync("notification", "Recoverable Codex error received. willRetry=true");
+                        break;
+                    }
+
                     SetState(CodexConnectionState.Error);
                     Error?.Invoke(this, errorMessage);
+                    break;
+                case "warning":
+                    var warningMessage = GetString(parameters, "message") ?? "Codexから警告を受信しました。";
+                    Warning?.Invoke(this, warningMessage);
+                    _ = logger.WriteAsync("notification", "Codex warning received.");
                     break;
                 case "thread/started":
                 case "thread/status/changed":

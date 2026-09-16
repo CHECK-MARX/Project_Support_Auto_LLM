@@ -92,6 +92,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private bool disposed;
     private bool hasSentInitialContext;
     private bool artifactTurnActive;
+    private bool artifactTurnResponseVisibleInChat = true;
+    private readonly StringBuilder artifactTurnResponseBuffer = new();
     private bool manufacturerDraftTurnActive;
     private string lastSendRoute = "NOT_STARTED";
     private string lastManufacturerIntent = "OTHER";
@@ -1175,6 +1177,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     {
         var instruction = CodexPromptPreset.NormalizeLegacyPrompt(PromptInput);
         var selectedPresetKey = ResolveSelectedPresetKey();
+        var naturalLanguageOperation = SelectedPreset is null
+            ? NaturalLanguageOperationResolver.Resolve(instruction)
+            : NaturalLanguageOperation.NormalChat;
         if (string.Equals(selectedPresetKey, CodexPromptPreset.ReplyToManufacturerKey, StringComparison.Ordinal))
         {
             instruction = CodexPromptPreset.ManufacturerReplyPrompt;
@@ -1188,6 +1193,13 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             return;
         }
 
+        if (naturalLanguageOperation == NaturalLanguageOperation.ManufacturerResponseTranslation)
+        {
+            RecordGuiSendRoute("MANUFACTURER_RESPONSE_TRANSLATION", "NONE");
+            await TranslateManufacturerResponseAsync(instruction).ConfigureAwait(false);
+            return;
+        }
+
         if (IsCustomerReplyRequest(instruction) && IsManufacturerFollowUpPending())
         {
             RunOnUi(() =>
@@ -1198,24 +1210,24 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             return;
         }
 
-        if (IsManufacturerMailRequest(instruction))
+        if (IsManufacturerMailRequest(instruction)
+            || naturalLanguageOperation is NaturalLanguageOperation.ManufacturerAsk
+                or NaturalLanguageOperation.ManufacturerReply)
         {
+            var manufacturerIntent = naturalLanguageOperation == NaturalLanguageOperation.ManufacturerReply
+                || IsManufacturerReplyRequest(instruction)
+                    ? ManufacturerCommunicationIntent.ReplyToManufacturer
+                    : ManufacturerCommunicationIntent.AskManufacturer;
             RecordGuiSendRoute(
                 "MANUFACTURER",
-                IsManufacturerReplyRequest(instruction) ? "REPLY_TO_MANUFACTURER" : "ASK_MANUFACTURER");
-            await GenerateManufacturerMailAsync(instruction).ConfigureAwait(false);
+                manufacturerIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
+                    ? "REPLY_TO_MANUFACTURER"
+                    : "ASK_MANUFACTURER");
+            await GenerateManufacturerMailAsync(instruction, manufacturerIntent).ConfigureAwait(false);
             return;
         }
 
-        RecordGuiSendRoute("GENERIC_TECHNICAL", "OTHER");
-
-        if (artifactRequestDetector.IsExplicitArtifactTranslationRequest(instruction))
-        {
-            await PrepareArtifactPlanAsync(instruction).ConfigureAwait(false);
-            instruction += Environment.NewLine
-                + "ファイルへの書込みはWPF成果物機能がユーザー確認後に行います。"
-                + "読み取り専用を理由に拒否せず、調査上の注意点とメーカー確認論点を回答してください。";
-        }
+        // This is the BASELINE_CHAT path: only the ordinary technical answer is updated.
 
         if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
         {
@@ -1461,17 +1473,6 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 ? $"案件ファイルを読み込みました: {Files.Count}件"
                 : $"案件ファイル: {Files.Count}件 / 警告: {result.Warnings.Count}件";
             caseFolderReady = folderReady;
-            if (caseFolderReady && string.IsNullOrWhiteSpace(ArtifactSourceFile))
-            {
-                try
-                {
-                    SetArtifactSource(FindArtifactSource(snapshot.CaseFolder, string.Empty), userSelected: false);
-                }
-                catch (FileNotFoundException)
-                {
-                    // The artifact controls remain empty until a supported source is available.
-                }
-            }
             CaseFolderSendStatus = folderReady
                 ? string.Empty
                 : "送信できません: 案件フォルダが見つかりません。案件を読み直すか、案件フォルダを選択してください。";
@@ -1535,6 +1536,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private void OnAgentMessageDelta(object? sender, CodexAgentMessageDeltaEventArgs eventArgs)
     {
+        if (artifactTurnActive && !artifactTurnResponseVisibleInChat)
+        {
+            artifactTurnResponseBuffer.Append(eventArgs.Delta);
+            return;
+        }
+
         RunOnUi(() =>
         {
             currentAssistantMessage ??= new CodexChatMessageViewModel
@@ -1558,7 +1565,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         var artifactCompletion = artifactTurnCompletion;
         var isArtifactTurn = artifactTurnActive || artifactCompletion is not null;
         var isManufacturerTurn = manufacturerDraftTurnActive;
-        var artifactResponse = string.Empty;
+        var artifactResponse = isArtifactTurn && !artifactTurnResponseVisibleInChat
+            ? artifactTurnResponseBuffer.ToString()
+            : string.Empty;
         var generationDuration = activeTurnStartedTimestamp.HasValue
             ? Stopwatch.GetElapsedTime(activeTurnStartedTimestamp.Value)
             : TimeSpan.Zero;
@@ -1834,6 +1843,61 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
     }
 
+    private async Task TranslateManufacturerResponseAsync(string instruction)
+    {
+        var technicalAnswerBeforeTranslation = TechnicalAnswer;
+        var englishDraftBeforeTranslation = EnglishManufacturerDraft;
+        var prompt = $"""
+            Translate the manufacturer support response in the user input into faithful, natural Japanese.
+            Return only the Japanese translation. Do not create a reply, a question, or a new email.
+            Preserve product names, versions, identifiers, commands, paths, URLs, and other technical literals exactly.
+
+            ### User input
+            {instruction}
+            """;
+
+        var response = await SendArtifactTurnAsync(
+            prompt,
+            "メーカー回答の日本語訳",
+            showResponseInChat: false).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(technicalAnswerBeforeTranslation)
+            && string.IsNullOrWhiteSpace(TechnicalAnswer))
+        {
+            RunOnUi(() => TechnicalAnswer = technicalAnswerBeforeTranslation);
+        }
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            throw new InvalidDataException("メーカー回答の日本語訳を取得できませんでした。");
+        }
+
+        RunOnUi(() =>
+        {
+            manufacturerMailQualityReady = false;
+            JapaneseManufacturerDraft = response.Trim();
+            EnglishManufacturerDraft = englishDraftBeforeTranslation;
+            lastJapaneseManufacturerDraftAssigned = true;
+            lastEnglishManufacturerDraftAssigned = false;
+            lastTechnicalAnswerChanged = !string.Equals(
+                technicalAnswerBeforeTranslation,
+                TechnicalAnswer,
+                StringComparison.Ordinal);
+            Messages.Add(new CodexChatMessageViewModel
+            {
+                Role = "assistant",
+                Text = "メーカー回答の日本語訳を作成しました。下の日本語欄を確認してください。",
+                CreatedAt = DateTimeOffset.Now,
+            });
+            ConnectionDetails = "メーカー回答の日本語訳を作成しました。ASK/REPLYおよび成果物の状態は変更していません。";
+            ManufacturerFollowUpScopeText += string.Join(
+                Environment.NewLine,
+                string.Empty,
+                "JP Draft Assigned: YES",
+                "EN Draft Assigned: NO (UNCHANGED)",
+                $"TechnicalAnswer Changed: {(lastTechnicalAnswerChanged ? "YES" : "NO")}");
+            RaiseCommandStates();
+        });
+    }
+
     private static bool IsManufacturerConfirmationRequest(string instruction) =>
         string.Equals(instruction, CodexPromptPreset.ManufacturerConfirmationPrompt, StringComparison.Ordinal)
         || instruction.Contains("メーカー向け確認メール案", StringComparison.Ordinal)
@@ -1891,11 +1955,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private bool IsManufacturerFollowUpPending()
     {
         var snapshot = caseProvider();
-        var source = string.IsNullOrWhiteSpace(ArtifactSourceFile)
-            ? FindCurrentCustomerDeltaSource(snapshot)
-            : ArtifactSourceFile;
+        var source = ResolveCurrentCustomerDeltaSource(snapshot);
         var hasDelta = !string.IsNullOrWhiteSpace(source);
-        var hasOutboundAttachment = !string.IsNullOrWhiteSpace(ArtifactOutputFileName);
+        var hasOutboundAttachment = TryGetPendingManufacturerAttachment(snapshot, out _, out _, out _)
+            || !string.IsNullOrWhiteSpace(ArtifactOutputFileName);
         var previousManufacturerContact = Files.Any(file =>
             file.FileName.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
             || file.RelativePath.Contains("manufacturer", StringComparison.OrdinalIgnoreCase));

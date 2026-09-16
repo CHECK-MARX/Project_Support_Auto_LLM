@@ -343,6 +343,206 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
+    public async Task BaselineChat_DoesNotInitializeArtifactOrManufacturerState()
+    {
+        using var temp = new TempDirectory();
+        await File.WriteAllBytesAsync(Path.Combine(temp.Path, "問い合わせ内容.xlsx"), [1, 2, 3]);
+        var productPrompt = Path.Combine(temp.Path, "prompts", "products", "checkmarx.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(productPrompt)!);
+        await File.WriteAllTextAsync(productPrompt, "PRODUCT_BASELINE_RULE: use the selected product evidence.");
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(
+            temp,
+            fakeClient,
+            "通常の技術質問です。",
+            productPromptFile: "prompts/products/checkmarx.txt");
+
+        await viewModel.InitializeAsync();
+
+        Assert.Equal(string.Empty, viewModel.ArtifactSourceFile);
+        Assert.Equal("NONE", viewModel.ArtifactOutputPlanText);
+        Assert.Equal("メーカー確認案スコープ: 未実行", viewModel.ManufacturerFollowUpScopeText);
+        Assert.Null(viewModel.CurrentManufacturerMailBrief);
+
+        const string question = "今回のお客様からの最新の問い合わせ内容を、過去に回答済みの事項と区別して簡潔に整理してください。";
+        viewModel.PromptInput = question;
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal("回答です。", viewModel.TechnicalAnswer);
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.Contains(question, fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("PRODUCT_BASELINE_RULE: use the selected product evidence.", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.ArtifactSourceFile);
+        Assert.Equal("NONE", viewModel.ArtifactOutputPlanText);
+        Assert.Equal("メーカー確認案スコープ: 未実行", viewModel.ManufacturerFollowUpScopeText);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
+        Assert.Null(viewModel.CurrentManufacturerMailBrief);
+    }
+
+    [Fact]
+    public async Task BaselineChat_FilenameAndAttachmentWords_DoNotStartArtifactWorkflow()
+    {
+        using var temp = new TempDirectory();
+        const string fileName = "CxOne_Default_Config_Project_Settings_Guide_EN.docx";
+        await File.WriteAllBytesAsync(Path.Combine(temp.Path, fileName), [1, 2, 3]);
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient, "通常の技術質問です。");
+        await viewModel.InitializeAsync();
+
+        var artifactStateBefore = viewModel.ArtifactStateText;
+        var artifactSourceBefore = viewModel.ArtifactSourceFile;
+        var artifactOutputBefore = viewModel.ArtifactOutputPlanText;
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = $$"""
+            今回のお客様からの最新の問い合わせについて、
+            Ivoさんへ確認する英語メールを作成してください。
+
+            過去に回答済みのT-SQLやRazorの内容を再度質問する必要はありません。
+
+            今回添付するファイルは
+            {{fileName}}
+            です。
+            """;
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.Contains(fileName, fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Equal(artifactStateBefore, viewModel.ArtifactStateText);
+        Assert.Equal(artifactSourceBefore, viewModel.ArtifactSourceFile);
+        Assert.Equal(artifactOutputBefore, viewModel.ArtifactOutputPlanText);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
+        Assert.Null(viewModel.CurrentManufacturerMailBrief);
+    }
+
+    [Theory]
+    [InlineData("メーカーへ確認したいので、日本語と英語でメール文章を作成してください。", nameof(NaturalLanguageOperation.ManufacturerAsk))]
+    [InlineData("メーカー回答に御礼を返信したい。日本語と英語で", nameof(NaturalLanguageOperation.ManufacturerReply))]
+    [InlineData("以下はメーカーからの回答です。日本語にしてください。", nameof(NaturalLanguageOperation.ManufacturerResponseTranslation))]
+    [InlineData("このエラーの原因を教えてください。", nameof(NaturalLanguageOperation.NormalChat))]
+    [InlineData("添付の英語docxについて説明してください。", nameof(NaturalLanguageOperation.NormalChat))]
+    [InlineData("メーカーからもらった英語の資料について説明して。", nameof(NaturalLanguageOperation.NormalChat))]
+    public void NaturalLanguageOperationResolver_RequiresExplicitOperation(
+        string instruction,
+        string expected)
+    {
+        Assert.Equal(expected, NaturalLanguageOperationResolver.Resolve(instruction).ToString());
+    }
+
+    [Fact]
+    public async Task FreeFormManufacturerAsk_RoutesToBilingualDraftsWithoutArtifactPlanning()
+    {
+        using var temp = new TempDirectory();
+        var inquiryFile = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiryFile, "質問1：HelixQACの検証方法をご教示ください。");
+        var fakeClient = new FakeClient();
+        fakeClient.EnqueueResponse(
+            """{"japaneseDraft":"件名: HelixQAC 0001 確認\nメーカーサポートご担当者様\n質問1: HelixQAC 0001の検証方法をご教示ください。\nInquiry_Details_EN.xlsxを添付します。\n東陽テクニカ\n伊藤 健","englishDraft":"Subject: HelixQAC 0001 review\nHello Support Team,\nQuestion 1: Please explain the validation method for HelixQAC 0001.\nWe attach Inquiry_Details_EN.xlsx.\nBest regards,\nKen Ito\nToyo Corporation"}""");
+        var viewModel = CreateViewModel(temp, fakeClient, "質問1：HelixQACの検証方法をご教示ください。", inquiryFile);
+        await viewModel.InitializeAsync();
+        viewModel.TechnicalAnswer = "既存の技術回答案";
+        var artifactSourceBefore = viewModel.ArtifactSourceFile;
+        var artifactOutputBefore = viewModel.ArtifactOutputPlanText;
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = "メーカーへ確認するメールを作ってください。添付ファイルはExample_EN.docxです。";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft), TimeSpan.FromSeconds(5));
+
+        Assert.Contains("HelixQAC", viewModel.JapaneseManufacturerDraft, StringComparison.Ordinal);
+        Assert.Contains("Hello Support Team,", viewModel.EnglishManufacturerDraft, StringComparison.Ordinal);
+        Assert.Equal("既存の技術回答案", viewModel.TechnicalAnswer);
+        Assert.Equal(artifactSourceBefore, viewModel.ArtifactSourceFile);
+        Assert.Equal(artifactOutputBefore, viewModel.ArtifactOutputPlanText);
+        Assert.Contains("GUI Send Route: MANUFACTURER", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Manufacturer Intent: ASK_MANUFACTURER", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FreeFormManufacturerWordsWithoutExplicitOperation_RemainBaselineChat()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.JapaneseManufacturerDraft = "既存の日本語案";
+        viewModel.EnglishManufacturerDraft = "Existing English draft";
+        var artifactSourceBefore = viewModel.ArtifactSourceFile;
+        var artifactOutputBefore = viewModel.ArtifactOutputPlanText;
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = "メーカーからもらった英語のdocx資料について日本語で説明してください。";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal("既存の日本語案", viewModel.JapaneseManufacturerDraft);
+        Assert.Equal("Existing English draft", viewModel.EnglishManufacturerDraft);
+        Assert.Equal(artifactSourceBefore, viewModel.ArtifactSourceFile);
+        Assert.Equal(artifactOutputBefore, viewModel.ArtifactOutputPlanText);
+        Assert.Equal(1, fakeClient.TurnCount);
+    }
+
+    [Fact]
+    public async Task FreeFormManufacturerReply_RoutesToBilingualDrafts()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        fakeClient.EnqueueResponse(
+            """{"japaneseDraft":"件名: HelixQAC 回答受領（Support ID: 0001）\nJim様\nご回答ありがとうございます。\n東陽テクニカ\n伊藤 健","englishDraft":"Subject: Re: HelixQAC response (Support ID: 0001)\nHello Jim,\nThank you for your response.\nBest regards,\nKen Ito\nToyo Corporation"}""");
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.Messages.Add(new CodexChatMessageViewModel
+        {
+            Role = "user",
+            Text = "We support HelixQAC 1.0.\nRegards\nJim Weber | Technical Support Engineer",
+        });
+        viewModel.TechnicalAnswer = "既存の技術回答案";
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = "メーカー回答に御礼を返信したい。日本語と英語で";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft), TimeSpan.FromSeconds(5));
+
+        Assert.Contains("Jim様", viewModel.JapaneseManufacturerDraft, StringComparison.Ordinal);
+        Assert.Contains("Hello Jim,", viewModel.EnglishManufacturerDraft, StringComparison.Ordinal);
+        Assert.Equal("既存の技術回答案", viewModel.TechnicalAnswer);
+        Assert.Contains("Manufacturer Intent: REPLY_TO_MANUFACTURER", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FreeFormManufacturerResponseTranslation_UsesJapaneseDraftOnly()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        fakeClient.EnqueueResponse("HelixQAC 1.0をサポートしています。");
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.TechnicalAnswer = "既存の技術回答案";
+        viewModel.EnglishManufacturerDraft = "Existing English draft";
+        var artifactSourceBefore = viewModel.ArtifactSourceFile;
+        var artifactOutputBefore = viewModel.ArtifactOutputPlanText;
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = "以下はメーカーからの回答です。日本語にしてください。\n\nWe support HelixQAC 1.0.";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(
+            () => viewModel.JapaneseManufacturerDraft == "HelixQAC 1.0をサポートしています。",
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal("Existing English draft", viewModel.EnglishManufacturerDraft);
+        Assert.Equal("既存の技術回答案", viewModel.TechnicalAnswer);
+        Assert.Equal(artifactSourceBefore, viewModel.ArtifactSourceFile);
+        Assert.Equal(artifactOutputBefore, viewModel.ArtifactOutputPlanText);
+        Assert.Contains("GUI Send Route: MANUFACTURER_RESPONSE_TRANSLATION", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Manufacturer Intent: NONE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.DoesNotContain("HelixQAC 1.0をサポートしています。", viewModel.TechnicalAnswer, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task EditedTechnicalAnswer_IsUsedByReplyAndFinalReview()
     {
         using var temp = new TempDirectory();
@@ -433,6 +633,8 @@ public sealed class CodexChatViewModelTests
     public async Task ManufacturerDraft_DoesNotExposeRawJsonInTechnicalAnswer()
     {
         using var temp = new TempDirectory();
+        var inquiryFile = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiryFile, "質問1：HelixQACの検証方法をご教示ください。");
         var correspondenceFolder = Directory.CreateDirectory(Path.Combine(temp.Path, "manufacturer-correspondence"));
         await File.WriteAllTextAsync(
             Path.Combine(correspondenceFolder.FullName, "メーカー連携内容_0001_latest.txt"),
@@ -442,7 +644,7 @@ public sealed class CodexChatViewModelTests
             """
             {"japaneseDraft":"件名: HelixQAC 0001 確認\nメーカーサポートご担当者様\nお世話になっております。\n東陽テクニカの伊藤です。\nお客様からの確認事項について、質問1: HelixQAC 0001の検証方法をご教示ください。\nTranslated_File_EN.txtを添付します。\nどうぞよろしくお願いいたします。\n株式会社東陽テクニカ\n伊藤 健","englishDraft":"Subject: HelixQAC 0001 review\nHi John,\nThis is Ken Ito from Toyo Corporation.\nOur customer has asked us to confirm the details. Question 1: Please explain the validation method for HelixQAC 0001.\nWe attach Translated_File_EN.txt.\nBest regards,\nKen Ito\nToyo Corporation"}
             """);
-        var viewModel = CreateViewModel(temp, fakeClient, "質問1：HelixQACの検証方法をご教示ください。");
+        var viewModel = CreateViewModel(temp, fakeClient, "質問1：HelixQACの検証方法をご教示ください。", inquiryFile);
         await viewModel.InitializeAsync();
 
         viewModel.TechnicalAnswer = "既存の技術回答案";
@@ -476,10 +678,12 @@ public sealed class CodexChatViewModelTests
     public async Task ManufacturerValidationFailure_ShowsCategoryDetailsAndKeepsTransferClosed()
     {
         using var temp = new TempDirectory();
+        var inquiryFile = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiryFile, "質問1：HelixQACの検証方法をご教示ください。");
         var fakeClient = new FakeClient();
         fakeClient.EnqueueResponse(
             """{"japaneseDraft":"件名: HelixQAC 0001 確認\n本件をクローズしたいと考えています。","englishDraft":"Subject: 0001 review\nWe would like to close this case."}""");
-        var viewModel = CreateViewModel(temp, fakeClient, "質問1：HelixQACの検証方法をご教示ください。");
+        var viewModel = CreateViewModel(temp, fakeClient, "質問1：HelixQACの検証方法をご教示ください。", inquiryFile);
         await viewModel.InitializeAsync();
 
         viewModel.JapaneseManufacturerDraft = "previous Japanese draft";
@@ -501,10 +705,13 @@ public sealed class CodexChatViewModelTests
     {
         using var temp = new TempDirectory();
         await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様ご相談内容_00018729.txt"), "old customer inquiry");
+        var productPrompt = Path.Combine(temp.Path, "prompts", "products", "qac.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(productPrompt)!);
+        await File.WriteAllTextAsync(productPrompt, "PRODUCT_REPLY_RULE: use the confirmed recipient greeting.");
         var fakeClient = new FakeClient();
         fakeClient.EnqueueResponse(
-            """{"japaneseDraft":"件名: Amazon Linux 2023 サポートについて（Support ID: 0001）\nJim様\nお世話になっております。\nEngineeringチームへのご確認とご回答をありがとうございます。\nAmazon Linux 2023は2023.8までサポートされ、HelixQACのドキュメントにサポートが記載予定であると理解しました。\n新しいバージョンの検証にはインフラ準備が必要で、まだ予定されていないことも承知しました。\n改めてご支援ありがとうございます。\n東陽テクニカ\n伊藤 健","englishDraft":"Subject: Re: Amazon Linux 2023 Support (Support ID: 0001)\nHi Jim,\nThank you for checking with the Engineering team and for your update.\nWe understand that Amazon Linux 2023 is supported up to 2023.8 and that HelixQAC documentation will state this support.\nWe also understand that testing newer versions requires infrastructure setup and has not yet been scheduled.\nThank you again for your support and clarification.\nBest regards,\nKen Ito\nToyo Corporation"}""");
-        var viewModel = CreateViewModel(temp, fakeClient, "old inquiry");
+            """{"japaneseDraft":"件名: Amazon Linux 2023 サポートについて（Support ID: 0001）\nJim様\nお世話になっております。\nEngineeringチームへのご確認とご回答をありがとうございます。\nAmazon Linux 2023は2023.8までサポートされ、HelixQACのドキュメントにサポートが記載予定であると理解しました。\n新しいバージョンの検証にはインフラ準備が必要で、まだ予定されていないことも承知しました。\n改めてご支援ありがとうございます。\nTOYO Support Team\nCxOne Support","englishDraft":"Subject: Re: Amazon Linux 2023 Support (Support ID: 0001)\nHi Jim,\nThank you for checking with the Engineering team and for your update.\nWe understand that Amazon Linux 2023 is supported up to 2023.8 and that HelixQAC documentation will state this support.\nWe also understand that testing newer versions requires infrastructure setup and has not yet been scheduled.\nThank you again for your support and clarification.\nBest regards,\nToyo Support Team\nCxOne Support"}""");
+        var viewModel = CreateViewModel(temp, fakeClient, "old inquiry", string.Empty, "prompts/products/qac.txt");
         await viewModel.InitializeAsync();
         viewModel.Messages.Add(new CodexChatMessageViewModel
         {
@@ -523,6 +730,10 @@ public sealed class CodexChatViewModelTests
             viewModel.ArtifactStateText == "完了",
             $"State={viewModel.ArtifactStateText}; Warning={viewModel.ArtifactWarnings}; Error={viewModel.ErrorText}; Prompt={fakeClient.LastTurnText}");
         Assert.Contains("Hi Jim,", viewModel.EnglishManufacturerDraft, StringComparison.Ordinal);
+        Assert.EndsWith("東陽テクニカ\n伊藤 健", viewModel.JapaneseManufacturerDraft.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.EndsWith("Best regards,\nKen Ito\nToyo Corporation", viewModel.EnglishManufacturerDraft.Replace("\r\n", "\n"), StringComparison.Ordinal);
+        Assert.DoesNotContain("CxOne Support", viewModel.JapaneseManufacturerDraft, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("Toyo Support Team", viewModel.EnglishManufacturerDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Question", viewModel.EnglishManufacturerDraft, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Could you", viewModel.EnglishManufacturerDraft, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(string.Empty, viewModel.ArtifactSourceFile);
@@ -541,6 +752,7 @@ public sealed class CodexChatViewModelTests
         Assert.Contains("TechnicalAnswer Changed: NO", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
         Assert.Contains("Communication Intent: REPLY_TO_MANUFACTURER", fakeClient.LastTurnText, StringComparison.Ordinal);
         Assert.Contains("Jim Weber", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("PRODUCT_REPLY_RULE: use the confirmed recipient greeting.", fakeClient.LastTurnText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -987,6 +1199,7 @@ public sealed class CodexChatViewModelTests
                 SupportId = "00018290",
                 CompanyName = "Test Company",
                 CaseFolder = temp.Path,
+                InquiryFile = source,
                 InquiryText = "質問1：翻訳の検証方法をご教示ください。",
                 NoteEditorTransferPipeName = "synthetic-note-pipe",
             },
@@ -1035,6 +1248,25 @@ public sealed class CodexChatViewModelTests
 
         Assert.Equal(1, fakeArtifactService.CreateCount);
         Assert.True(File.Exists(viewModel.CreatedArtifactPath));
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
+        Assert.Contains("Manufacturer Communication Intent: NONE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Current Operation: ARTIFACT_TRANSLATION", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Current Customer Delta: NOT_APPLICABLE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Current Outbound Attachment: NOT_APPLICABLE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Protected Value validation: NOT_APPLICABLE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            viewModel.Messages,
+            message => message.Role == "assistant"
+                && message.Text.Contains("translatedText", StringComparison.Ordinal));
+        Assert.True(viewModel.UseCreatedArtifactForManufacturerMailCommand.CanExecute(null));
+        viewModel.UseCreatedArtifactForManufacturerMailCommand.Execute(null);
+        Assert.Contains("Inquiry_Details_EN_2.xlsx", viewModel.PendingManufacturerAttachmentText, StringComparison.Ordinal);
+
+        viewModel.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(
+            () => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft),
+            TimeSpan.FromSeconds(5));
         Assert.True(
             viewModel.JapaneseManufacturerDraft.Contains("質問1", StringComparison.Ordinal),
             $"ArtifactState={viewModel.ArtifactStateText}; Warning={viewModel.ArtifactWarnings}; Error={viewModel.ErrorText}; Connection={viewModel.ConnectionDetails}");
@@ -1074,37 +1306,118 @@ public sealed class CodexChatViewModelTests
         Assert.Equal("English", viewModel.ArtifactPreviewItems.Single().TranslatedText);
         Assert.False(viewModel.CreateExcelArtifactCommand.CanExecute(null));
 
-        // Keep the successful old artifact, then change the live output and retry.
+        // A pending selection remains the exact created artifact even if a later plan name changes.
         viewModel.ArtifactOutputFileName = "Additional_Inquiry_Details_EN.xlsx";
         viewModel.TechnicalAnswer = "We would like to close this case. Inquiry_Details_EN.xlsx";
-        fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 追加確認（Support ID: 00018290）\nメーカーサポートご担当者様\nお世話になっております。\n東陽テクニカの伊藤です。\nSupport ID 00018290について、Additional_Inquiry_Details_EN.xlsxを添付します。\nどうぞよろしくお願いいたします。\n株式会社東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx follow-up (Support ID: 00018290)\nHello Support Team,\nThis is Ken Ito from Toyo Corporation.\nFor Support ID 00018290, the current attachment is Additional_Inquiry_Details_EN.xlsx.\nBest regards,\nKen Ito\nToyo Corporation"}""");
+        fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 追加確認（Support ID: 00018290）\nメーカーサポートご担当者様\nお世話になっております。\n東陽テクニカの伊藤です。\nSupport ID 00018290について、Inquiry_Details_EN_2.xlsxを添付します。\nどうぞよろしくお願いいたします。\n株式会社東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx follow-up (Support ID: 00018290)\nHello Support Team,\nThis is Ken Ito from Toyo Corporation.\nFor Support ID 00018290, the current attachment is Inquiry_Details_EN_2.xlsx.\nBest regards,\nKen Ito\nToyo Corporation"}""");
         viewModel.GenerateManufacturerMailCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
-        Assert.Contains("Additional_Inquiry_Details_EN.xlsx", fakeClient.LastTurnText);
-        Assert.DoesNotContain("Inquiry_Details_EN_2.xlsx", fakeClient.LastTurnText);
-        Assert.Contains("Additional_Inquiry_Details_EN.xlsx", viewModel.JapaneseManufacturerDraft);
-        Assert.Contains("Additional_Inquiry_Details_EN.xlsx", viewModel.EnglishManufacturerDraft);
+        Assert.Contains("Inquiry_Details_EN_2.xlsx", fakeClient.LastTurnText);
+        Assert.DoesNotContain("Additional_Inquiry_Details_EN.xlsx", fakeClient.LastTurnText);
+        Assert.Contains("Inquiry_Details_EN_2.xlsx", viewModel.JapaneseManufacturerDraft);
+        Assert.Contains("Inquiry_Details_EN_2.xlsx", viewModel.EnglishManufacturerDraft);
         Assert.True(viewModel.SendEnglishManufacturerDraftToWpfNoteCommand.CanExecute(null));
 
         // Retry with malformed output preserves the previous diagnostic candidate.
         fakeClient.EnqueueResponse("invalid JSON");
         viewModel.GenerateManufacturerMailCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.GenerateManufacturerMailCommand.CanExecute(null), TimeSpan.FromSeconds(5));
-        Assert.Contains("Inquiry_Details_EN.xlsx", viewModel.EnglishManufacturerDraft);
+        Assert.Contains("Inquiry_Details_EN_2.xlsx", viewModel.EnglishManufacturerDraft);
         Assert.False(viewModel.SendEnglishManufacturerDraftToWpfNoteCommand.CanExecute(null));
     }
 
     [Fact]
-    public async Task ArtifactInitialization_PrefersOriginalSourceOverPreviousTranslation()
+    public async Task ExplicitPendingArtifact_IsUsedByTheNextManufacturerAsk()
+    {
+        using var temp = new TempDirectory();
+        var translationSource = Path.Combine(temp.Path, "Project_Settings_Guide.xlsx");
+        var customerInquiry = Path.Combine(temp.Path, "お客様ご相談内容_00018303.txt");
+        await File.WriteAllBytesAsync(translationSource, [1, 2, 3]);
+        await File.WriteAllTextAsync(customerInquiry, "質問1：翻訳内容をご確認ください。");
+        var productPrompt = Path.Combine(temp.Path, "prompts", "products", "checkmarx.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(productPrompt)!);
+        await File.WriteAllTextAsync(productPrompt, "PRODUCT_MAIL_RULE: preserve the confirmed recipient greeting.");
+        var fakeClient = new FakeClient();
+        var fakeArtifactService = new FakeExcelTranslationService { SourceText = "elementToProof 9.7.4.0 1239753" };
+        var viewModel = new CodexChatViewModel(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            () => new CodexCaseSnapshot
+            {
+                ProductName = "Checkmarx",
+                SupportId = "00018303",
+                CaseFolder = temp.Path,
+                InquiryFile = customerInquiry,
+                InquiryText = "質問1：翻訳内容をご確認ください。",
+                ProductPromptFilePath = "prompts/products/checkmarx.txt",
+            },
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { },
+            excelTranslationService: fakeArtifactService,
+            artifactPromptComposer: new ArtifactPromptComposer(temp.Path));
+        viewModel.PromptInput = "Project_Settings_Guide.xlsxを英語に翻訳して別名で保存してください";
+        await viewModel.InitializeAsync();
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        viewModel.ArtifactOutputFileName = "Project_Settings_Guide_EN.xlsx";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+
+        fakeClient.EnqueueResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"elementToProof 9.7.4.0 1239753","translatedText":"English"}]""");
+        fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 確認（Support ID: 00018303）\nメーカーサポートご担当者様\nお世話になっております。\nProject_Settings_Guide_EN.xlsxを添付します。質問1: 翻訳内容をご確認ください。\nよろしくお願いいたします。\n東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx review (Support ID: 00018303)\nHello Support Team,\nPlease review Project_Settings_Guide_EN.xlsx. Question 1: Please review the translation.\nBest regards,\nKen Ito\nToyo Corporation"}""");
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+
+        Assert.Contains("Current Outbound Attachment: NOT_APPLICABLE", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        viewModel.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "警告あり", TimeSpan.FromSeconds(5));
+        Assert.Contains("TRANSLATED_ARTIFACT_NOT_SELECTED", viewModel.ArtifactWarnings, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.True(viewModel.UseCreatedArtifactForManufacturerMailCommand.CanExecute(null));
+        viewModel.UseCreatedArtifactForManufacturerMailCommand.Execute(null);
+        Assert.Contains("Project_Settings_Guide_EN.xlsx", viewModel.PendingManufacturerAttachmentText, StringComparison.Ordinal);
+
+        viewModel.ArtifactOutputFileName = "Translated_File_EN.xlsx";
+        viewModel.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft), TimeSpan.FromSeconds(5));
+
+        Assert.Contains("Project_Settings_Guide_EN.xlsx", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("PRODUCT_MAIL_RULE: preserve the confirmed recipient greeting.", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Translated_File_EN.xlsx", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("elementToProof", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("9.7.4.0", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("1239753", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.Contains("Project_Settings_Guide_EN.xlsx", viewModel.JapaneseManufacturerDraft, StringComparison.Ordinal);
+        Assert.Contains("Project_Settings_Guide_EN.xlsx", viewModel.EnglishManufacturerDraft, StringComparison.Ordinal);
+        Assert.Contains("Current Customer Delta: お客様ご相談内容_00018303.txt", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.Contains("Current Customer Delta Source Type: CUSTOMER_INQUIRY", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Current Customer Delta: Project_Settings_Guide.xlsx", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ExplicitArtifactPlan_PrefersOriginalSourceOverPreviousTranslation()
     {
         using var temp = new TempDirectory();
         var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
         await File.WriteAllBytesAsync(source, [1, 2, 3]);
         await File.WriteAllBytesAsync(Path.Combine(temp.Path, "問い合わせ内容_EN.xlsx"), [4, 5, 6]);
         await File.WriteAllBytesAsync(Path.Combine(temp.Path, "問い合わせ内容_EN_2.xlsx"), [7, 8, 9]);
-        var viewModel = CreateViewModel(temp, new FakeClient());
+        var viewModel = CreateViewModel(
+            temp,
+            new FakeClient(),
+            excelTranslationService: new FakeExcelTranslationService());
 
         await viewModel.InitializeAsync();
+
+        Assert.Equal(string.Empty, viewModel.ArtifactSourceFile);
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
 
         Assert.Equal(source, viewModel.ArtifactSourceFile);
         Assert.Equal("Inquiry_Details_EN.xlsx", viewModel.ArtifactOutputFileName);
@@ -1120,7 +1433,13 @@ public sealed class CodexChatViewModelTests
         Assert.True(condition());
     }
 
-    private static CodexChatViewModel CreateViewModel(TempDirectory temp, FakeClient fakeClient, string inquiry = "確認してください。")
+    private static CodexChatViewModel CreateViewModel(
+        TempDirectory temp,
+        FakeClient fakeClient,
+        string inquiry = "確認してください。",
+        string inquiryFile = "",
+        string productPromptFile = "",
+        IExcelTranslationService? excelTranslationService = null)
     {
         return new CodexChatViewModel(
             fakeClient,
@@ -1134,12 +1453,16 @@ public sealed class CodexChatViewModelTests
                 ProductName = "HelixQAC",
                 SupportId = "0001",
                 CaseFolder = temp.Path,
+                InquiryFile = inquiryFile,
+                ProductPromptFilePath = productPromptFile,
                 InquiryText = inquiry,
             },
             () => "fake.exe",
             _ => true,
             _ => true,
-            _ => { });
+            _ => { },
+            excelTranslationService: excelTranslationService,
+            artifactPromptComposer: new ArtifactPromptComposer(temp.Path));
     }
 
     private static CodexChatViewModel CreateViewModelWithSelection(
@@ -1363,6 +1686,7 @@ public sealed class CodexChatViewModelTests
     private sealed class FakeExcelTranslationService : IExcelTranslationService
     {
         public int CreateCount { get; private set; }
+        public string SourceText { get; init; } = "日本語";
 
         public Task<ArtifactCreationPlan> CreatePlanAsync(
             ArtifactCreationRequest request,
@@ -1375,7 +1699,7 @@ public sealed class CodexChatViewModelTests
             {
                 Sheet = "Sheet1",
                 Cell = "A1",
-                SourceText = "日本語",
+                SourceText = SourceText,
                 ShouldTranslate = true,
                 NumberFormat = "General",
             };

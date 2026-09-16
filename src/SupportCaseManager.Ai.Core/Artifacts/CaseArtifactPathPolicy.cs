@@ -65,6 +65,7 @@ public sealed class CaseArtifactPathPolicy
         return Path.GetExtension(filePath).ToLowerInvariant() switch
         {
             ".xlsx" => ArtifactFormat.ExcelWorkbook,
+            ".docx" => ArtifactFormat.WordDocument,
             ".csv" => ArtifactFormat.Csv,
             ".txt" => ArtifactFormat.PlainText,
             ".md" => ArtifactFormat.Markdown,

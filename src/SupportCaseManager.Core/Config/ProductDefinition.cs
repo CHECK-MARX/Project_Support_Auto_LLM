@@ -19,6 +19,12 @@ public class ProductDefinition
 
     public string ProductPromptFilePath { get; set; } = string.Empty;
 
+    public string GptTargetKey { get; set; } = string.Empty;
+
+    public string GptTargetDisplayName { get; set; } = string.Empty;
+
+    public string GptLaunchUrl { get; set; } = string.Empty;
+
     public bool IsEnabled { get; set; } = true;
 
     public int SortOrder { get; set; }
@@ -94,6 +100,35 @@ public static class ProductDefinitionDefaults
         return string.Empty;
     }
 
+    public static (string Key, string DisplayName, string LaunchUrl) GetInitialGptTarget(string? displayName)
+    {
+        if (Matches(displayName, "HelixQAC", "Helix QAC", "QAC"))
+        {
+            return (
+                "helix-qac",
+                "Helix QAC",
+                "https://chatgpt.com/g/g-6a708339ff8c81918be8831828a7863d-helix-qac");
+        }
+
+        if (Matches(displayName, "Checkmarx", "CxSAST", "SAST"))
+        {
+            return (
+                "checkmarx",
+                "Vulnerability Scanner Assistant",
+                "https://chatgpt.com/g/g-6a7089ad03808191b94cee193d7e912d-vulnerability-scanner-assistant");
+        }
+
+        if (Matches(displayName, "Klocwork", "Klcwork", "KW"))
+        {
+            return (
+                "klocwork",
+                "Klocwork",
+                "https://chatgpt.com/g/g-6a708c87de44819180c443e59b0a604f-klocwork");
+        }
+
+        return (string.Empty, string.Empty, string.Empty);
+    }
+
     private static bool Matches(string? value, params string[] candidates)
     {
         return candidates.Any(candidate => string.Equals(value?.Trim(), candidate, StringComparison.OrdinalIgnoreCase));
@@ -142,6 +177,15 @@ public static class ProductDefinitionValidator
             if (!string.IsNullOrWhiteSpace(product.ProductPromptFilePath) && !IsValidPath(product.ProductPromptFilePath))
             {
                 errors.Add($"{label}: Codex指示ファイルのパス形式が不正です。");
+            }
+
+            if (!string.IsNullOrWhiteSpace(product.GptLaunchUrl) &&
+                (!Uri.TryCreate(product.GptLaunchUrl, UriKind.Absolute, out var gptUri) ||
+                 !string.Equals(gptUri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                 !string.Equals(gptUri.Host, "chatgpt.com", StringComparison.OrdinalIgnoreCase) ||
+                 !gptUri.AbsolutePath.StartsWith("/g/", StringComparison.Ordinal)))
+            {
+                errors.Add($"{label}: GPT登録先URLは https://chatgpt.com/g/... 形式で指定してください。");
             }
         }
 

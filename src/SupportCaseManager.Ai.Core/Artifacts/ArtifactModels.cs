@@ -5,12 +5,14 @@ public enum ArtifactKind
     ExcelEnglishTranslation,
     CsvEnglishTranslation,
     TextEnglishTranslation,
+    WordEnglishTranslation,
 }
 
 public enum ArtifactFormat
 {
     Unsupported,
     ExcelWorkbook,
+    WordDocument,
     Csv,
     PlainText,
     Markdown,

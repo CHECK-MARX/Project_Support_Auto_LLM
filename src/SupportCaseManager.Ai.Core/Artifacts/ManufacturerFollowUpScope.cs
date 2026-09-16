@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Codex;
 
@@ -47,6 +49,13 @@ public sealed record ManufacturerFollowUpScope
         .Where(static text => !string.IsNullOrWhiteSpace(text))
         .ToArray();
 }
+
+public sealed record ManufacturerHistoryEntry(
+    DateTimeOffset Timestamp,
+    string StatusLabel,
+    string Body,
+    string SourceType,
+    string Direction);
 
 public static class ManufacturerFollowUpScopeResolver
 {
@@ -103,13 +112,14 @@ public static class ManufacturerFollowUpScopeResolver
             .GroupBy(static file => file.FileName, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
 
-        var normalizedEvidence = evidence
+        var normalizedEvidence = ExpandAppendOnlyHistory(evidence)
             .Where(static source => !string.IsNullOrWhiteSpace(source.Title) || !string.IsNullOrWhiteSpace(source.Text))
             .ToArray();
         var internalState = normalizedEvidence.Where(IsInternalState).ToArray();
         var visibleEvidence = normalizedEvidence.Except(internalState).ToArray();
         var priorResponse = visibleEvidence
             .Where(IsPriorManufacturerResponse)
+            .OrderByDescending(SourceTimestamp)
             .Take(24)
             .Select(source => WithRole(source, "PriorManufacturerResponse"))
             .ToArray();
@@ -122,10 +132,12 @@ public static class ManufacturerFollowUpScopeResolver
             .Max();
 
         var currentDelta = visibleEvidence
+            .Where(source => !source.RetrievedAt.HasValue
+                || IsLatestHistoryEntry(source, visibleEvidence))
             .Where(source => IsCurrentCustomerDelta(source, fileByName, priorResponseTime, currentSupportId))
             .Where(source => !priorResponseKeys.Contains(SourceKey(source)))
             .OrderByDescending(source => IsAdditionalInquiryFile(FindFile(source, fileByName)))
-            .ThenByDescending(source => FindFile(source, fileByName)?.LastModifiedAt ?? DateTimeOffset.MinValue)
+            .ThenByDescending(SourceTimestamp)
             .Take(1)
             .Select(source => WithRole(source, "CurrentCustomerDelta"))
             .ToArray();
@@ -290,10 +302,105 @@ public static class ManufacturerFollowUpScopeResolver
 
         // Role metadata is accepted only after the source has been bound to a
         // current-case customer inquiry file. Text markers alone are not evidence.
-        return HasRole(source, "CurrentCustomerDelta")
+        return source.RetrievedAt.HasValue
+            || HasRole(source, "CurrentCustomerDelta")
             || IsAdditionalInquiryFile(file)
             || (priorResponseTime != DateTimeOffset.MinValue && file.LastModifiedAt > priorResponseTime);
     }
+
+    private static bool IsLatestHistoryEntry(SearchSource source, IReadOnlyList<SearchSource> evidence)
+    {
+        if (!source.RetrievedAt.HasValue)
+        {
+            return true;
+        }
+
+        var sameDocument = evidence.Where(candidate =>
+            string.Equals(candidate.Title, source.Title, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(candidate.FilePath, source.FilePath, StringComparison.OrdinalIgnoreCase));
+        var latest = sameDocument
+            .Select(candidate => candidate.RetrievedAt)
+            .Where(static value => value.HasValue)
+            .Select(static value => value!.Value)
+            .DefaultIfEmpty(DateTimeOffset.MinValue)
+            .Max();
+        return source.RetrievedAt.Value == latest;
+    }
+
+    private static IReadOnlyList<SearchSource> ExpandAppendOnlyHistory(IReadOnlyList<SearchSource> sources)
+    {
+        var expanded = new List<SearchSource>();
+        foreach (var source in sources)
+        {
+            var text = source.Text ?? string.Empty;
+            var matches = AppendHeader.Matches(text);
+            if (matches.Count == 0)
+            {
+                expanded.Add(source);
+                continue;
+            }
+
+            for (var index = 0; index < matches.Count; index++)
+            {
+                var match = matches[index];
+                var bodyStart = match.Index + match.Length;
+                var bodyEnd = index + 1 < matches.Count ? matches[index + 1].Index : text.Length;
+                var body = text[bodyStart..bodyEnd].Trim();
+                if (!TryParseHistoryTimestamp(match.Groups["timestamp"].Value, out var timestamp))
+                {
+                    continue;
+                }
+
+                var sourceType = ClassifyHistorySource(source.Title, source.FilePath);
+                expanded.Add(source with
+                {
+                    SourceId = $"{source.SourceId}:history:{timestamp:yyyyMMddHHmmss}",
+                    Text = body,
+                    RetrievedAt = timestamp,
+                    SourceType = source.SourceType,
+                    EvidenceKind = sourceType,
+                    SourceRole = string.Empty,
+                    Locator = $"history:{timestamp:O}",
+                });
+            }
+        }
+
+        return expanded;
+    }
+
+    private static DateTimeOffset SourceTimestamp(SearchSource source) =>
+        source.RetrievedAt ?? DateTimeOffset.MinValue;
+
+    private static bool TryParseHistoryTimestamp(string value, out DateTimeOffset timestamp) =>
+        DateTimeOffset.TryParseExact(
+            value,
+            "yyyy/MM/dd HH:mm:ss",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeLocal,
+            out timestamp);
+
+    private static string ClassifyHistorySource(string? title, string? filePath)
+    {
+        var value = $"{title} {filePath}";
+        if (value.Contains("お客様への返信案", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("customer_reply", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("customer-reply", StringComparison.OrdinalIgnoreCase))
+        {
+            return "CUSTOMER_REPLY";
+        }
+
+        if (value.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("manufacturer", StringComparison.OrdinalIgnoreCase))
+        {
+            return "MANUFACTURER_COMMUNICATION";
+        }
+
+        return "CUSTOMER_INQUIRY";
+    }
+
+    private static readonly Regex AppendHeader = new(
+        @"\*{5}追記部_(?<timestamp>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\((?<status>[^)]*)\)\*{6}\s*",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     private static bool IsAdditionalInquiryFile(CodexCaseFileInfo? file) => file is not null
         && AdditionalInquiryMarkers.Any(marker =>
@@ -355,6 +462,7 @@ public static class ManufacturerFollowUpScopeResolver
 
         return value.Contains("質問", StringComparison.OrdinalIgnoreCase)
             || value.Contains("問い合わせ", StringComparison.OrdinalIgnoreCase)
+            || value.Contains("確認", StringComparison.OrdinalIgnoreCase)
             || value.Contains("request", StringComparison.OrdinalIgnoreCase)
             || value.Contains("inquiry", StringComparison.OrdinalIgnoreCase)
             || value.Contains("confirmation", StringComparison.OrdinalIgnoreCase);

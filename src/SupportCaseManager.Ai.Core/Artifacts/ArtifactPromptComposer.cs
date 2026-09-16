@@ -157,8 +157,8 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
 
             Translate every JSON item and return only a JSON array.
             Keep key and sourceText exactly unchanged.
-            Preserve the file format, row/line structure, delimiters, quoting, and technical terms.
-            Do not translate URLs, email addresses, file paths, command names, identifiers, or markup syntax.
+            Preserve the file format, document structure, paragraph order, tables, headers, footers, formatting, and technical terms.
+            Do not translate URLs, email addresses, file paths, command names, options, API names, product names, versions, identifiers, code, field codes, or markup syntax.
             WPFがユーザー確認後に同じ拡張子のコピーへ反映するため、ファイル操作や保存は行わないでください。
 
             ### 共通指示
@@ -327,7 +327,7 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
             : ComposeManufacturerQuestionPrompt(context);
     }
 
-    private static string ComposeManufacturerQuestionPrompt(ManufacturerMailCaseContext context)
+    private string ComposeManufacturerQuestionPrompt(ManufacturerMailCaseContext context)
     {
 
         const string outputShape = "{\"japaneseDraft\":\"...\",\"englishDraft\":\"...\"}";
@@ -341,6 +341,7 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
         var protectedValues = context.ProtectedValues.Values.Count == 0
             ? "- なし"
             : string.Join(Environment.NewLine, context.ProtectedValues.Values.Select(static value => $"- {value}"));
+        var productInstruction = LoadProductInstruction(context);
 
         return $"""
             ## メーカー向け確認メール案（日英）
@@ -351,6 +352,9 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
             ### Resolved Case Context
             Support ID: {context.SupportId}
             Product: {context.ProductName}
+
+            ### Product-specific Codex instruction
+            {ValueOrFallback(productInstruction, "(製品別指示なし)")}
             Current Customer Delta: {context.CurrentCustomerDeltaFileName}
             Current Outbound Attachment: {context.CurrentOutboundAttachment}
             Previous Manufacturer Contact: {(context.PreviousManufacturerContact ? "TRUE" : "FALSE")}
@@ -386,7 +390,7 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
             """;
     }
 
-    private static string ComposeManufacturerAcknowledgementPrompt(ManufacturerMailCaseContext context)
+    private string ComposeManufacturerAcknowledgementPrompt(ManufacturerMailCaseContext context)
     {
         const string outputShape = "{\"japaneseDraft\":\"...\",\"englishDraft\":\"...\"}";
         var recipient = string.IsNullOrWhiteSpace(context.ImmediateManufacturerRecipientName)
@@ -395,6 +399,7 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
         var protectedValues = context.ProtectedValues.Values.Count == 0
             ? "- なし"
             : string.Join(Environment.NewLine, context.ProtectedValues.Values.Select(static value => $"- {value}"));
+        var productInstruction = LoadProductInstruction(context);
 
         return $"""
             ## メーカー回答への返信案（日英）
@@ -406,6 +411,9 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
             Support ID: {context.SupportId}
             Product: {context.ProductName}
             Communication Intent: REPLY_TO_MANUFACTURER
+
+            ### Product-specific Codex instruction
+            {ValueOrFallback(productInstruction, "(製品別指示なし)")}
             Recipient: {recipient}
             CloseRequested: FALSE
 
@@ -459,6 +467,17 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
             applicationBaseDirectory: applicationBaseDirectory);
     }
 
+    private string LoadProductInstruction(ManufacturerMailCaseContext context)
+    {
+        var loaded = LoadInstructions(new ArtifactPromptContext
+        {
+            ProductName = context.ProductName,
+            ProductPromptFilePath = context.ProductPromptFilePath,
+            SupportToolSettingsFilePath = context.SupportToolSettingsFilePath,
+        });
+        return loaded.ProductInstruction;
+    }
+
     private static IReadOnlyList<string> SafeAttachmentNames(
         ManufacturerSafeContext safe,
         IReadOnlyList<string> fallback)
@@ -509,6 +528,7 @@ public sealed class ArtifactPromptComposer : IArtifactPromptComposer
     private static string FormatName(ArtifactFormat format) => format switch
     {
         ArtifactFormat.ExcelWorkbook => "Excel Workbook (.xlsx)",
+        ArtifactFormat.WordDocument => "Word Document (.docx)",
         ArtifactFormat.Csv => "CSV (.csv)",
         ArtifactFormat.PlainText => "Text (.txt)",
         ArtifactFormat.Markdown => "Markdown (.md)",

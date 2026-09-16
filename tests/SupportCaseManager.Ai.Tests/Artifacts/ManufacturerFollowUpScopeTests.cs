@@ -197,6 +197,62 @@ public sealed class ManufacturerFollowUpScopeTests
         Assert.DoesNotContain("クローズ", delta.Text, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Resolve_UsesLatestAppendOnlyCustomerEntryInsteadOfWholeFile()
+    {
+        var customerHistory = """
+            *****追記部_2026/09/10 09:00:00(対応済み)******
+            T-SQL parserの過去質問です。USE_NEW_SQLを確認しました。
+            *****追記部_2026/09/12 10:00:00(回答済み)******
+            Razorの.razor対応について回答済みです。RazorParsingStartedも確認済みです。
+            *****追記部_2026/09/14 15:59:03(クローズ確認中)******
+            Project Settings > Rules > SASTで+ Add RuleをクリックするとFindings Analysisが追加されます。
+            このRuleはグレーアウトされ、defaultConfigを選択できません。Service Userと権限の関係を確認してください。
+            """;
+        var manufacturerHistory = """
+            *****追記部_2026/09/10 11:00:00(送信済み)******
+            T-SQL parserについてメーカーへ確認しました。
+            *****追記部_2026/09/14 16:10:00(送信済み)******
+            メーカーへの確認依頼: defaultConfigがRule候補に表示されない原因とService User / permissionの関係を確認してください。
+            """;
+        var replyHistory = """
+            *****追記部_2026/09/14 16:20:00(回答済み)******
+            お客様へ前回のメーカー回答を案内しました。
+            """;
+
+        SearchSource[] evidence =
+        [
+            Source("customer-history", "お客様ご相談内容_00018303.txt", customerHistory, ""),
+            Source("manufacturer-history", "メーカー連携内容_00018303.txt", manufacturerHistory, ""),
+            Source("reply-history", "お客様への返信案_00018303.txt", replyHistory, ""),
+        ];
+        CodexCaseFileInfo[] files =
+        [
+            FileInfo("お客様ご相談内容_00018303.txt", CodexCaseFileKind.CustomerInquiry),
+            FileInfo("メーカー連携内容_00018303.txt", CodexCaseFileKind.Other),
+            FileInfo("お客様への返信案_00018303.txt", CodexCaseFileKind.Other),
+        ];
+
+        var scope = ManufacturerFollowUpScopeResolver.Resolve(
+            evidence,
+            files,
+            ["CxOne_Default_Config_Project_Settings_Guide_EN.docx"],
+            "CxOne_Default_Config_Project_Settings_Guide_EN.docx",
+            "00018303");
+
+        var delta = Assert.Single(scope.CurrentCustomerDelta);
+        Assert.Equal("CUSTOMER_INQUIRY", delta.EvidenceKind);
+        Assert.Equal("2026-09-14T15:59:03", delta.RetrievedAt?.ToString("yyyy-MM-dd'T'HH:mm:ss"));
+        Assert.Contains("Findings Analysis", delta.Text, StringComparison.Ordinal);
+        Assert.Contains("defaultConfig", delta.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("T-SQL", delta.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("RazorParsingStarted", delta.Text, StringComparison.Ordinal);
+        Assert.Equal(ManufacturerDraftMode.FollowUp, scope.Mode);
+        Assert.True(scope.PreviousManufacturerContactConfirmed);
+        Assert.True(scope.PreviousCustomerReplyFound);
+        Assert.Contains(scope.PriorManufacturerRequest, item => item.Text.Contains("defaultConfig", StringComparison.Ordinal));
+    }
+
     private static SearchSource Source(
         string id,
         string title,
