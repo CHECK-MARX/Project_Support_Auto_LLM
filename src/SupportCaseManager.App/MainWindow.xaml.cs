@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     private readonly ProductGptTargetResolver _productGptTargetResolver;
     private readonly GptCaseRegistrationService _gptCaseRegistrationService;
     private readonly GptCaseHandoffBriefBuilder _gptHandoffBriefBuilder;
+    private readonly GptHandoffImportService _gptHandoffImportService;
     private AiAssistantNoteEditorTransferServer? _aiNoteEditorTransferServer;
     private readonly Dictionary<string, CaseRecord> _caseCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _categoryPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -107,6 +108,8 @@ public partial class MainWindow : Window
     private bool _directoryScanCacheDirty;
     private bool _isNotePreviewActive;
     private bool _isGptRegistrationInProgress;
+    private bool _isGptHandoffOperationInProgress;
+    private string _gptHandoffNoChangeSupportId = string.Empty;
     private string _notePreviewBody = string.Empty;
     private string _closedSearchKeyword = string.Empty;
     private string _closedSummaryFilterProduct = string.Empty;
@@ -131,7 +134,8 @@ public partial class MainWindow : Window
         IChatGptHistorySearchService? chatGptHistorySearchService = null,
         ProductGptTargetResolver? productGptTargetResolver = null,
         GptCaseRegistrationService? gptCaseRegistrationService = null,
-        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null)
+        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null,
+        GptHandoffImportService? gptHandoffImportService = null)
     {
         _viewModel = viewModel;
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
@@ -139,6 +143,7 @@ public partial class MainWindow : Window
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
         _gptCaseRegistrationService = gptCaseRegistrationService ?? new GptCaseRegistrationService();
         _gptHandoffBriefBuilder = gptHandoffBriefBuilder ?? new GptCaseHandoffBriefBuilder();
+        _gptHandoffImportService = gptHandoffImportService ?? new GptHandoffImportService();
         _config = viewModel.Config;
         _repository = viewModel.Repository;
         _logger = viewModel.Logger;

@@ -206,6 +206,15 @@ public sealed class GptCaseRegistration
     [JsonPropertyName("registration_state")]
     public string RegistrationState { get; set; } = GptRegistrationStates.Unregistered;
 
+    [JsonPropertyName("last_imported_hash")]
+    public string LastImportedHash { get; set; } = string.Empty;
+
+    [JsonPropertyName("last_imported_at")]
+    public string LastImportedAt { get; set; } = string.Empty;
+
+    [JsonPropertyName("import_version")]
+    public int ImportVersion { get; set; }
+
     [JsonIgnore]
     public bool IsRegistered => string.Equals(
         RegistrationState,
@@ -222,5 +231,8 @@ public sealed class GptCaseRegistration
         RegisteredAt = RegisteredAt,
         LinkMode = LinkMode,
         RegistrationState = RegistrationState,
+        LastImportedHash = LastImportedHash,
+        LastImportedAt = LastImportedAt,
+        ImportVersion = ImportVersion,
     };
 }

@@ -208,6 +208,55 @@ public sealed class GptCaseRegistrationServiceTests
         Assert.Equal("https://chatgpt.com/c/existing", conversation.OpenedUrl);
     }
 
+    [Fact]
+    public async Task SendHandoffPrompt_UsesRegisteredExistingConversationAndFixedContract()
+    {
+        var caseRecord = Case();
+        caseRecord.GptRegistration = Registration();
+        var conversation = new FakeConversationService();
+
+        var result = await new GptCaseRegistrationService(conversation)
+            .SendHandoffPromptAsync(caseRecord);
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("https://chatgpt.com/c/existing", conversation.SentUrl);
+        Assert.Contains("<<<AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
+        Assert.Contains("【現在の未解決事項】", conversation.SentMessage, StringComparison.Ordinal);
+        Assert.Contains("<<<END_AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
+        Assert.Equal(0, conversation.CreateCalls);
+    }
+
+    [Fact]
+    public async Task SendHandoffPrompt_BlocksUnregisteredOrMismatchedCaseWithoutSending()
+    {
+        var conversation = new FakeConversationService();
+        var service = new GptCaseRegistrationService(conversation);
+
+        var unregistered = await service.SendHandoffPromptAsync(Case());
+        var mismatchedCase = Case();
+        mismatchedCase.GptRegistration = Registration();
+        mismatchedCase.GptRegistration.SupportId = "00019999";
+        var mismatched = await service.SendHandoffPromptAsync(mismatchedCase);
+
+        Assert.False(unregistered.Succeeded);
+        Assert.False(mismatched.Succeeded);
+        Assert.Empty(conversation.SentUrl);
+    }
+
+    [Fact]
+    public async Task ConversationService_SendMessageUsesNormalizedExistingConversationOnly()
+    {
+        var gateway = new FakeConversationGateway();
+
+        await new GptConversationService(gateway).SendMessageAsync(
+            "https://chatgpt.com/g/g-test/c/existing",
+            "handoff prompt");
+
+        Assert.Equal("https://chatgpt.com/c/existing", gateway.SentUrl);
+        Assert.Equal("handoff prompt", gateway.SentMessage);
+        Assert.Equal(0, gateway.CreateCalls);
+    }
+
     private static CaseRecord Case() => new(
         "Company",
         "00018303",
@@ -243,6 +292,8 @@ public sealed class GptCaseRegistrationServiceTests
 
         public int CreateCalls { get; private set; }
         public string OpenedUrl { get; private set; } = string.Empty;
+        public string SentUrl { get; private set; } = string.Empty;
+        public string SentMessage { get; private set; } = string.Empty;
 
         public Task<GptConversationCreationResult> CreateConversationAsync(
             ProductGptTarget target,
@@ -256,6 +307,45 @@ public sealed class GptCaseRegistrationServiceTests
         public Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken = default)
         {
             OpenedUrl = conversationUrl;
+            return Task.CompletedTask;
+        }
+
+        public Task SendMessageAsync(
+            string conversationUrl,
+            string message,
+            CancellationToken cancellationToken = default)
+        {
+            SentUrl = conversationUrl;
+            SentMessage = message;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakeConversationGateway : IGptConversationGateway
+    {
+        public int CreateCalls { get; private set; }
+        public string SentUrl { get; private set; } = string.Empty;
+        public string SentMessage { get; private set; } = string.Empty;
+
+        public Task<GptConversationCreationResult> CreateConversationAsync(
+            ProductGptTarget target,
+            string approvedBrief,
+            CancellationToken cancellationToken)
+        {
+            CreateCalls++;
+            return Task.FromResult(new GptConversationCreationResult(
+                GptConversationCreationStatus.Failed,
+                string.Empty,
+                string.Empty));
+        }
+
+        public Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken) =>
+            Task.CompletedTask;
+
+        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken)
+        {
+            SentUrl = conversationUrl;
+            SentMessage = message;
             return Task.CompletedTask;
         }
     }

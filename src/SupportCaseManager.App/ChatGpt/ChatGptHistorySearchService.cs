@@ -202,13 +202,65 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         return Task.CompletedTask;
     }
 
+    public async Task SendMessageAsync(
+        string conversationUrl,
+        string message,
+        CancellationToken cancellationToken)
+    {
+        if (!GptConversationUrl.TryValidateConversation(conversationUrl, out var normalizedUrl))
+        {
+            throw new InvalidOperationException("保存済みGPTチャットURLが不正です。");
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = normalizedUrl,
+            UseShellExecute = true,
+        });
+
+        var automationTarget = await FindChatGptTargetAsync(
+                cancellationToken,
+                expectedConversationUrl: normalizedUrl,
+                requireSearchButton: false,
+                timeout: ConversationTimeout)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("登録済みGPT案件チャットを特定できませんでした。送信していません。");
+        BringToForeground(automationTarget.BrowserWindow);
+
+        var promptInput = FindPromptInput(automationTarget.WebContentRoot)
+            ?? throw new InvalidOperationException("ChatGPTの入力欄を特定できませんでした。送信していません。");
+        if (!promptInput.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternValue) ||
+            valuePatternValue is not ValuePattern valuePattern ||
+            valuePattern.Current.IsReadOnly)
+        {
+            throw new InvalidOperationException("ChatGPTの入力欄へ引継ぎ依頼を設定できませんでした。送信していません。");
+        }
+
+        promptInput.SetFocus();
+        valuePattern.SetValue(message);
+        var submitButton = await FindSubmitButtonAsync(
+                automationTarget.WebContentRoot,
+                cancellationToken)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("ChatGPTの送信ボタンを特定できませんでした。送信していません。");
+        if (!submitButton.TryGetCurrentPattern(InvokePattern.Pattern, out var invokePatternValue) ||
+            invokePatternValue is not InvokePattern invokePattern)
+        {
+            throw new InvalidOperationException("ChatGPTの送信ボタンを操作できませんでした。送信していません。");
+        }
+
+        invokePattern.Invoke();
+    }
+
     private static async Task<ChatGptAutomationTarget?> FindChatGptTargetAsync(
         CancellationToken cancellationToken,
         string? expectedTitle = null,
         string? expectedTargetUrl = null,
-        bool requireSearchButton = true)
+        bool requireSearchButton = true,
+        string? expectedConversationUrl = null,
+        TimeSpan? timeout = null)
     {
-        var deadline = DateTime.UtcNow + SearchTimeout;
+        var deadline = DateTime.UtcNow + (timeout ?? SearchTimeout);
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -227,6 +279,8 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                     (!requireSearchButton || FindSearchButton(webContentRoot) is not null) &&
                     (string.IsNullOrWhiteSpace(expectedTargetUrl) ||
                      BrowserWindowHasTargetUrl(window, expectedTargetUrl)) &&
+                    (string.IsNullOrWhiteSpace(expectedConversationUrl) ||
+                     BrowserWindowHasConversationUrl(window, expectedConversationUrl)) &&
                     (string.IsNullOrWhiteSpace(expectedTitle) ||
                      window.Current.Name.Contains(expectedTitle, StringComparison.OrdinalIgnoreCase) ||
                      webContentRoot.Current.Name.Contains(expectedTitle, StringComparison.OrdinalIgnoreCase)))
@@ -239,6 +293,38 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         }
 
         return null;
+    }
+
+    private static bool BrowserWindowHasConversationUrl(
+        AutomationElement browserWindow,
+        string expectedConversationUrl)
+    {
+        if (!GptConversationUrl.TryValidateConversation(expectedConversationUrl, out var expected))
+        {
+            return false;
+        }
+
+        foreach (AutomationElement edit in browserWindow.FindAll(
+                     TreeScope.Descendants,
+                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
+        {
+            if (string.Equals(
+                    edit.Current.AutomationId,
+                    PromptInputAutomationId,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (TryReadValue(edit, out var value) &&
+                GptConversationUrl.TryValidateConversation(value, out var actual) &&
+                string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool BrowserWindowHasTargetUrl(AutomationElement browserWindow, string expectedTargetUrl)

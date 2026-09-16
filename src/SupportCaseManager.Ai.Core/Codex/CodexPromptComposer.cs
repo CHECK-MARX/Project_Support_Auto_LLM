@@ -145,6 +145,10 @@ public sealed class CodexPromptComposer : ICodexPromptComposer
             builder.AppendLine();
             builder.AppendLine($"### {item.RelativePath}");
             builder.AppendLine($"形式: {item.ContentType} / 検出文字コード: {item.EncodingName} / 抜粋: {(item.IsTruncated ? "はい" : "いいえ")}");
+            if (string.Equals(item.ContentType, "GptHandoff", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine("GPT Handoffは案件継続用の補助情報です。実際のメーカー返信原文、公式資料、Manual、現在のお客様問い合わせを上書きせず、製品仕様・対応バージョン・正式サポート可否の確定根拠として単独利用しないでください。");
+            }
             builder.AppendLine("----- BEGIN ATTACHMENT CONTENT -----");
             builder.AppendLine(item.Content);
             builder.AppendLine("----- END ATTACHMENT CONTENT -----");

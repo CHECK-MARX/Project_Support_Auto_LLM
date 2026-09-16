@@ -198,6 +198,10 @@ public sealed class PromptBuilder : IPromptBuilder
 
         builder.AppendLine("# 参照根拠");
         var maxEvidenceItems = EvidenceLimit(request);
+        if (request.Sources.Any(static source => string.Equals(source.SourceType, "GptHandoff", StringComparison.OrdinalIgnoreCase)))
+        {
+            builder.AppendLine("GptHandoffはGPTチャットで整理された案件継続用の補助情報です。実際のメーカー返信原文、OfficialDoc、Manual、現在のお客様問い合わせを優先してください。GptHandoff単独で製品仕様、対応バージョン、正式サポート可否をConfirmed扱いにしないでください。");
+        }
         if (request.Sources.Any(static source => string.Equals(source.SourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase)))
         {
             builder.AppendLine("以下のExactPastAnswerは、同一またはほぼ同一の問い合わせに対して過去に実際に使用した回答です。");

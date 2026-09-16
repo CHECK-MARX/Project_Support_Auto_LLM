@@ -34,6 +34,7 @@ public static class FreshnessEvidenceAutoSelector
                 "OfficialDoc" => 0,
                 "Manual" => 1,
                 "PastCaseNote" => 2,
+                "GptHandoff" => 4,
                 _ => 3,
             };
         }
@@ -43,6 +44,7 @@ public static class FreshnessEvidenceAutoSelector
             "Manual" => 0,
             "OfficialDoc" => 1,
             "PastCaseNote" => 2,
+            "GptHandoff" => 4,
             _ => 3,
         };
     }

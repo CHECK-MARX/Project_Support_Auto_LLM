@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Core.Cases;
 
 namespace SupportCaseManager.Ai.Core.Codex;
 
@@ -137,6 +138,24 @@ public sealed class CodexAttachmentContentReader : ICodexAttachmentContentReader
         CancellationToken cancellationToken)
     {
         var extension = Path.GetExtension(path);
+        if (file.Kind == CodexCaseFileKind.GptHandoff)
+        {
+            var handoffBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+            var handoffText = DecodeText(handoffBytes);
+            if (!GptHandoffParser.TryBuildEffectiveSnapshot(handoffText.Text, out var snapshot, out _))
+            {
+                return null;
+            }
+
+            var excerpt = BuildExcerpt(GptHandoffParser.Canonicalize(snapshot), MaximumCharactersPerFile);
+            return new CodexReadableAttachmentContent(
+                file.RelativePath,
+                "GptHandoff",
+                handoffText.EncodingName,
+                excerpt.Text,
+                excerpt.IsTruncated);
+        }
+
         if (extension.Equals(".zip", StringComparison.OrdinalIgnoreCase))
         {
             var content = await ReadZipAsync(path, cancellationToken).ConfigureAwait(false);

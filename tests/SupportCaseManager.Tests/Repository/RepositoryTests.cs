@@ -139,6 +139,9 @@ public class RepositoryTests
                 RegisteredAt = "2026-09-16T12:00:00+09:00",
                 LinkMode = GptRegistrationLinkModes.CreatedByApp,
                 RegistrationState = GptRegistrationStates.Registered,
+                LastImportedHash = "ABC123",
+                LastImportedAt = "2026-09-16T21:30:00+09:00",
+                ImportVersion = 3,
             },
         };
         repository.UpdateCaseEntry(indexed);
@@ -147,6 +150,9 @@ public class RepositoryTests
 
         Assert.True(loaded.GptRegistration.IsRegistered);
         Assert.Equal("https://chatgpt.com/c/existing", loaded.GptRegistration.ConversationUrl);
+        Assert.Equal("ABC123", loaded.GptRegistration.LastImportedHash);
+        Assert.Equal("2026-09-16T21:30:00+09:00", loaded.GptRegistration.LastImportedAt);
+        Assert.Equal(3, loaded.GptRegistration.ImportVersion);
         using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(temp.Path, "cases-index.json")));
         Assert.Equal(
             "REGISTERED",

@@ -97,6 +97,38 @@ public sealed class Phase65CurrentCaseEvidenceTests
         Assert.False(File.Exists(Path.Combine(fixture.Root, "src", "app.cs")));
     }
 
+    [Fact]
+    public async Task GptHandoffIsIngestedAsSupplementalSourceWithLatestSectionState()
+    {
+        using var fixture = new CaseFixture();
+        await File.WriteAllTextAsync(Path.Combine(fixture.Root, "GPT連携内容_00018303.txt"), """
+            *****追記部_2026/09/16 20:00:00(GPT取込)******
+            【メーカー担当者】
+            Chen Chen
+
+            【現在の未解決事項】
+            古い未解決事項
+            --------------------------------------------------
+            *****追記部_2026/09/16 21:00:00(GPT取込)******
+            【現在の未解決事項】
+            顧客同意確認
+            --------------------------------------------------
+            """);
+
+        var result = await new CurrentCaseEvidenceService().BuildAsync(
+            fixture.Root,
+            "session-gpt",
+            "メーカー担当者 未解決事項");
+
+        Assert.Contains(result.Evidence, source =>
+            source.SourceType == "GptHandoff" && source.Text.Contains("Chen Chen", StringComparison.Ordinal));
+        Assert.Contains(result.Evidence, source =>
+            source.SourceType == "GptHandoff" && source.Text.Contains("顧客同意確認", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Evidence, source => source.Text.Contains("古い未解決事項", StringComparison.Ordinal));
+        Assert.All(result.Evidence.Where(source => source.SourceType == "GptHandoff"), source =>
+            Assert.Equal("session-gpt", source.CaseSessionId));
+    }
+
     private sealed class CaseFixture : IDisposable
     {
         public CaseFixture()

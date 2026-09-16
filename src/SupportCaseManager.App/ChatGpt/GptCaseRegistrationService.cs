@@ -56,6 +56,11 @@ public interface IGptConversationService
         CancellationToken cancellationToken = default);
 
     Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken = default);
+
+    Task SendMessageAsync(
+        string conversationUrl,
+        string message,
+        CancellationToken cancellationToken = default);
 }
 
 public interface IGptConversationGateway
@@ -66,6 +71,8 @@ public interface IGptConversationGateway
         CancellationToken cancellationToken);
 
     Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken);
+
+    Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken);
 }
 
 public sealed class GptConversationService : IGptConversationService
@@ -103,6 +110,67 @@ public sealed class GptConversationService : IGptConversationService
 
         return gateway.OpenConversationAsync(normalized, cancellationToken);
     }
+
+    public Task SendMessageAsync(
+        string conversationUrl,
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        if (!GptConversationUrl.TryValidateConversation(conversationUrl, out var normalized))
+        {
+            throw new InvalidOperationException("保存済みGPTチャットURLが不正です。");
+        }
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            throw new InvalidOperationException("GPTへ送信する内容がありません。");
+        }
+
+        return gateway.SendMessageAsync(normalized, message, cancellationToken);
+    }
+}
+
+public static class GptHandoffPrompt
+{
+    public const string Text = """
+        この案件について、AI回答支援へ引き継ぐための現在の重要情報を整理してください。
+
+        メール文面の単なる言い換え、雑談、試行錯誤、却下された案は除外し、
+        案件対応を継続するために必要な情報だけを整理してください。
+
+        以下の形式を厳守してください。
+
+        <<<AI_HANDOFF_V1>>>
+
+        【メーカー担当者】
+        現在確認できるメーカー担当者名。
+        不明なら「不明」。
+
+        【新たに判明した事項】
+        新しく判明・確定した重要事項。
+
+        【現在の未解決事項】
+        現在も回答・確認が完了していない事項。
+
+        【解決済みに変更した事項】
+        以前は未解決だったが現在は解決済みとなった事項。
+
+        【メーカー最新回答の要旨】
+        新しいメーカー回答が存在する場合のみ簡潔に記載。
+
+        【お客様対応上の注意事項】
+        今後のお客様への回答・確認で重要な事項。
+
+        【現在の次アクション】
+        次に実施すべき対応。
+
+        <<<END_AI_HANDOFF_V1>>>
+
+        案件情報に存在しない事実は推測しないでください。
+        過去に解決済みの事項を未解決として復活させないでください。
+        Scan ID、Engine Version、ログ値等は現在の問題に必要な場合だけ含めてください。
+        個人メールアドレス、電話番号、不要な署名情報は原則含めないでください。
+        """;
 }
 
 public static class GptConversationUrl
@@ -164,6 +232,8 @@ public sealed record GptRegistrationUpdate(
     GptRegistrationUpdateStatus Status,
     GptCaseRegistration? Registration,
     string Message);
+
+public sealed record GptHandoffPromptSendResult(bool Succeeded, string Message);
 
 public sealed class GptCaseRegistrationService
 {
@@ -265,6 +335,37 @@ public sealed class GptCaseRegistrationService
 
     public Task OpenAsync(string conversationUrl, CancellationToken cancellationToken = default) =>
         conversationService.OpenConversationAsync(conversationUrl, cancellationToken);
+
+    public async Task<GptHandoffPromptSendResult> SendHandoffPromptAsync(
+        CaseRecord caseRecord,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caseRecord);
+        var registration = caseRecord.GptRegistration;
+        if (!registration.IsRegistered ||
+            !string.Equals(registration.SupportId, caseRecord.SupportNumber, StringComparison.OrdinalIgnoreCase) ||
+            !GptConversationUrl.TryValidateConversation(registration.ConversationUrl, out var conversationUrl))
+        {
+            return new GptHandoffPromptSendResult(
+                false,
+                "GPT登録済みのConversation URLを確認できません。");
+        }
+
+        try
+        {
+            await conversationService.SendMessageAsync(
+                conversationUrl,
+                GptHandoffPrompt.Text,
+                cancellationToken);
+            return new GptHandoffPromptSendResult(
+                true,
+                "登録済みGPT案件チャットへ引継ぎ情報の作成を依頼しました。回答をコピーして取り込んでください。");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return new GptHandoffPromptSendResult(false, ex.Message);
+        }
+    }
 
     private static GptRegistrationUpdate? ValidateNewRegistration(
         CaseRecord caseRecord,

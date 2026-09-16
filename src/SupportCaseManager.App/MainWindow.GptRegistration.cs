@@ -409,6 +409,160 @@ public partial class MainWindow
             _ => "GPTへ登録",
         };
         GptRegistrationButton.IsEnabled = _currentCase is not null && !_isGptRegistrationInProgress;
+
+        if (GptHandoffStatusText is null || GptHandoffCreateButton is null || GptHandoffImportButton is null)
+        {
+            return;
+        }
+
+        var handoffAvailable = _currentCase is not null &&
+            registration is not null &&
+            registration.IsRegistered &&
+            string.Equals(registration.SupportId, _currentCase.SupportNumber, StringComparison.OrdinalIgnoreCase) &&
+            GptConversationUrl.TryValidateConversation(registration.ConversationUrl, out _);
+        GptHandoffStatusText.Text = BuildGptHandoffStatusText(_currentCase, registration);
+        var handoffEnabled = handoffAvailable &&
+            !_isGptRegistrationInProgress &&
+            !_isGptHandoffOperationInProgress;
+        GptHandoffCreateButton.IsEnabled = handoffEnabled;
+        GptHandoffImportButton.IsEnabled = handoffEnabled;
+    }
+
+    private string BuildGptHandoffStatusText(CaseRecord? caseRecord, GptCaseRegistration? registration)
+    {
+        if (caseRecord is not null &&
+            string.Equals(_gptHandoffNoChangeSupportId, caseRecord.SupportNumber, StringComparison.OrdinalIgnoreCase))
+        {
+            return "変更なし";
+        }
+
+        if (registration is not null &&
+            DateTimeOffset.TryParse(registration.LastImportedAt, out var importedAt))
+        {
+            return $"取込済み {importedAt.ToLocalTime():yyyy/MM/dd HH:mm}";
+        }
+
+        return "未取込";
+    }
+
+    private async void OnGptHandoffCreate(object sender, RoutedEventArgs e)
+    {
+        if (_isGptHandoffOperationInProgress || _currentCase is null)
+        {
+            return;
+        }
+
+        _isGptHandoffOperationInProgress = true;
+        UpdateGptRegistrationUi();
+        try
+        {
+            var result = await _gptCaseRegistrationService.SendHandoffPromptAsync(_currentCase);
+            _viewModel.StatusMessage = result.Message;
+            MessageBox.Show(
+                this,
+                result.Message,
+                "GPT引継ぎ情報",
+                MessageBoxButton.OK,
+                result.Succeeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("GPT引継ぎ情報の作成依頼に失敗しました。", ex);
+            MessageBox.Show(
+                this,
+                "登録済みGPT案件チャットへ引継ぎ情報を依頼できませんでした。送信していません。",
+                "GPT引継ぎ情報",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _isGptHandoffOperationInProgress = false;
+            UpdateGptRegistrationUi();
+        }
+    }
+
+    private async void OnGptHandoffImport(object sender, RoutedEventArgs e)
+    {
+        if (_isGptHandoffOperationInProgress || _currentCase is null)
+        {
+            return;
+        }
+
+        _isGptHandoffOperationInProgress = true;
+        UpdateGptRegistrationUi();
+        try
+        {
+            var clipboardText = System.Windows.Clipboard.ContainsText(System.Windows.TextDataFormat.UnicodeText)
+                ? System.Windows.Clipboard.GetText(System.Windows.TextDataFormat.UnicodeText)
+                : string.Empty;
+            if (!GptHandoffParser.TryParseClipboard(clipboardText, out var snapshot, out _))
+            {
+                MessageBox.Show(
+                    this,
+                    "GPTで生成された引継ぎ情報をコピーしてから取り込んでください。",
+                    "GPT引継ぎ情報",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var preview = new GptHandoffImportPreviewDialog(snapshot) { Owner = this };
+            if (preview.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var caseRecord = _currentCase;
+            var result = await _gptHandoffImportService.ImportAsync(caseRecord, snapshot);
+            if (result.Status == GptHandoffImportStatus.Imported)
+            {
+                var registration = caseRecord.GptRegistration.Clone();
+                registration.LastImportedHash = result.LastImportedHash;
+                registration.LastImportedAt = result.LastImportedAt;
+                registration.ImportVersion = result.ImportVersion;
+                if (!SaveGptRegistration(caseRecord, registration))
+                {
+                    MessageBox.Show(
+                        this,
+                        "引継ぎ情報は案件ファイルへ保存しましたが、取込metadataを保存できませんでした。再取り込み時は案件ファイルから重複を判定します。",
+                        "GPT引継ぎ情報",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                    return;
+                }
+
+                _gptHandoffNoChangeSupportId = string.Empty;
+                _viewModel.StatusMessage = result.Message;
+                MessageBox.Show(this, result.Message, "GPT引継ぎ情報", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (result.Status == GptHandoffImportStatus.NoChange)
+            {
+                _gptHandoffNoChangeSupportId = caseRecord.SupportNumber;
+                _viewModel.StatusMessage = result.Message;
+                MessageBox.Show(this, result.Message, "GPT引継ぎ情報", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            MessageBox.Show(this, result.Message, "GPT引継ぎ情報", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("GPT引継ぎ情報の取り込みに失敗しました。", ex);
+            MessageBox.Show(
+                this,
+                "GPT引継ぎ情報を取り込めませんでした。案件情報は変更していません。",
+                "GPT引継ぎ情報",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            _isGptHandoffOperationInProgress = false;
+            UpdateGptRegistrationUi();
+        }
     }
 
     private static bool HasGptRegistrationMismatch(

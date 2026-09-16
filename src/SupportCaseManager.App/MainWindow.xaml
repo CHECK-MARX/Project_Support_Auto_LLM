@@ -89,6 +89,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />
@@ -121,6 +122,12 @@
                                     <TextBlock Text="GPT:" VerticalAlignment="Center" Margin="0,0,6,0" />
                                     <TextBlock x:Name="GptRegistrationStatusText" Text="未登録" VerticalAlignment="Center" Margin="0,0,12,0" />
                                     <Button x:Name="GptRegistrationButton" Content="GPTへ登録" Click="OnGptRegistrationAction" IsEnabled="False" />
+                                </StackPanel>
+                                <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+                                    <TextBlock Text="GPT連携:" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBlock x:Name="GptHandoffStatusText" Text="未取込" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <Button x:Name="GptHandoffCreateButton" Content="GPT引継ぎ情報を作成" Click="OnGptHandoffCreate" IsEnabled="False" />
+                                    <Button x:Name="GptHandoffImportButton" Content="GPT引継ぎ情報を取り込む" Margin="8,0,0,0" Click="OnGptHandoffImport" IsEnabled="False" />
                                 </StackPanel>
                             </Grid>
                         </GroupBox>
