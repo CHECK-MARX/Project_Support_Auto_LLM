@@ -76,27 +76,44 @@ public static class GptHandoffParser
         }
 
         var normalized = NormalizeNewlines(clipboardText);
-        var start = normalized.IndexOf(GptHandoffFormat.StartMarker, StringComparison.Ordinal);
-        var end = start < 0
-            ? -1
-            : normalized.IndexOf(
-                GptHandoffFormat.EndMarker,
-                start + GptHandoffFormat.StartMarker.Length,
-                StringComparison.Ordinal);
-        if (start < 0 || end < 0)
+        var searchStart = 0;
+        var markerPairFound = false;
+        var lastParseError = string.Empty;
+        while (searchStart < normalized.Length)
+        {
+            var start = normalized.IndexOf(GptHandoffFormat.StartMarker, searchStart, StringComparison.Ordinal);
+            if (start < 0)
+            {
+                break;
+            }
+
+            var payloadStart = start + GptHandoffFormat.StartMarker.Length;
+            var end = normalized.IndexOf(GptHandoffFormat.EndMarker, payloadStart, StringComparison.Ordinal);
+            if (end < 0)
+            {
+                break;
+            }
+
+            markerPairFound = true;
+            var payload = normalized[payloadStart..end];
+            if (TryParseSections(payload, requireAllSections: true, out snapshot, out lastParseError))
+            {
+                return true;
+            }
+
+            searchStart = end + GptHandoffFormat.EndMarker.Length;
+        }
+
+        if (!markerPairFound)
         {
             error = "Clipboardに有効なAI_HANDOFF_V1形式がありません。";
             return false;
         }
 
-        var payloadStart = start + GptHandoffFormat.StartMarker.Length;
-        var payload = normalized[payloadStart..end];
-        if (!TryParseSections(payload, requireAllSections: true, out snapshot, out error))
-        {
-            return false;
-        }
-
-        return true;
+        error = string.IsNullOrWhiteSpace(lastParseError)
+            ? "Clipboardに有効なAI_HANDOFF_V1形式がありません。"
+            : lastParseError;
+        return false;
     }
 
     public static bool TryParseStoredEntry(string? value, out GptHandoffSnapshot snapshot) =>
@@ -187,7 +204,13 @@ public static class GptHandoffParser
         foreach (var rawLine in NormalizeNewlines(value).Split('\n'))
         {
             var line = rawLine.TrimEnd();
-            if (SectionsByHeader.TryGetValue(line.Trim(), out var section))
+            var structuralLine = NormalizeStructuralLine(line);
+            if (IsMarkdownFence(structuralLine) || structuralLine is "**" or "__")
+            {
+                continue;
+            }
+
+            if (SectionsByHeader.TryGetValue(structuralLine, out var section))
             {
                 if (currentSection is not null)
                 {
@@ -206,16 +229,16 @@ public static class GptHandoffParser
                 continue;
             }
 
-            if (line.TrimStart().StartsWith('【') && line.TrimEnd().EndsWith('】'))
+            if (structuralLine.StartsWith('【') && structuralLine.EndsWith('】'))
             {
                 snapshot = new GptHandoffSnapshot(parsed);
-                error = $"未対応の引継ぎ情報セクションです: {line.Trim()}";
+                error = $"未対応の引継ぎ情報セクションです: {structuralLine}";
                 return false;
             }
 
             if (currentSection is null)
             {
-                if (!string.IsNullOrWhiteSpace(line))
+                if (!string.IsNullOrWhiteSpace(structuralLine))
                 {
                     snapshot = new GptHandoffSnapshot(parsed);
                     error = "引継ぎ情報のセクション形式が不正です。";
@@ -295,6 +318,27 @@ public static class GptHandoffParser
 
     private static string NormalizeNewlines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+    private static string NormalizeStructuralLine(string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.StartsWith("> ", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        if (normalized.Length >= 4 &&
+            ((normalized.StartsWith("**", StringComparison.Ordinal) && normalized.EndsWith("**", StringComparison.Ordinal)) ||
+             (normalized.StartsWith("__", StringComparison.Ordinal) && normalized.EndsWith("__", StringComparison.Ordinal))))
+        {
+            normalized = normalized[2..^2].Trim();
+        }
+
+        return normalized;
+    }
+
+    private static bool IsMarkdownFence(string value) =>
+        value.StartsWith("```", StringComparison.Ordinal);
 }
 
 public enum GptHandoffImportStatus
@@ -468,7 +512,7 @@ public sealed class GptHandoffImportService
         }
 
         builder.Append("*****追記部_")
-            .Append(importedAt.ToLocalTime().ToString("yyyy/MM/dd HH:mm:ss"))
+            .Append(importedAt.ToString("yyyy/MM/dd HH:mm:ss"))
             .Append("(GPT取込)******")
             .Append(lineEnding);
         foreach (var section in GptHandoffFormat.SectionOrder.Where(changes.Sections.ContainsKey))

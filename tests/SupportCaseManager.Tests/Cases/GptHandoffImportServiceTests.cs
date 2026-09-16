@@ -5,6 +5,9 @@ namespace SupportCaseManager.Tests.Cases;
 
 public sealed class GptHandoffImportServiceTests
 {
+    private static readonly DateTimeOffset ImportTime =
+        new(2026, 9, 16, 21, 30, 0, TimeSpan.FromHours(9));
+
     [Fact]
     public void ClipboardParser_RequiresMarkersAndAllSevenSections()
     {
@@ -27,6 +30,43 @@ public sealed class GptHandoffImportServiceTests
     }
 
     [Fact]
+    public void ClipboardParser_AcceptsChatGptMarkdownAroundContractStructure()
+    {
+        var canonical = GptHandoffParser.Canonicalize(Snapshot());
+        foreach (var section in GptHandoffFormat.SectionOrder)
+        {
+            var header = $"【{GptHandoffFormat.Label(section)}】";
+            canonical = canonical.Replace(header, $"**{header}**", StringComparison.Ordinal);
+        }
+
+        var clipboard = $"""
+            ```text
+            **{GptHandoffFormat.StartMarker}**
+            {canonical}
+            **{GptHandoffFormat.EndMarker}**
+            ```
+            """;
+
+        Assert.True(GptHandoffParser.TryParseClipboard(clipboard, out var parsed, out var error), error);
+        Assert.Equal("Chen Chen", parsed[GptHandoffSection.ManufacturerContact]);
+    }
+
+    [Fact]
+    public void ClipboardParser_UsesValidBlockWhenClipboardContainsAnEarlierQuotedContract()
+    {
+        var clipboard = $"""
+            {GptHandoffFormat.StartMarker}
+            省略
+            {GptHandoffFormat.EndMarker}
+
+            {ClipboardText(Snapshot())}
+            """;
+
+        Assert.True(GptHandoffParser.TryParseClipboard(clipboard, out var parsed, out var error), error);
+        Assert.Equal("顧客同意確認", parsed[GptHandoffSection.UnresolvedItems]);
+    }
+
+    [Fact]
     public async Task FirstImportCreatesSingleAppendOnlyCaseFile()
     {
         using var temp = new TempDirectory();
@@ -36,7 +76,10 @@ public sealed class GptHandoffImportServiceTests
         Assert.Equal(1, result.ImportVersion);
         Assert.Equal(Path.Combine(temp.Path, "GPT連携内容_00018303.txt"), result.FilePath);
         var text = await File.ReadAllTextAsync(result.FilePath);
-        Assert.Contains("*****追記部_2026/09/16 21:30:00(GPT取込)******", text, StringComparison.Ordinal);
+        Assert.Contains(
+            $"*****追記部_{ImportTime:yyyy/MM/dd HH:mm:ss}(GPT取込)******",
+            text,
+            StringComparison.Ordinal);
         Assert.Contains("【現在の未解決事項】", text, StringComparison.Ordinal);
     }
 
@@ -118,8 +161,7 @@ public sealed class GptHandoffImportServiceTests
         Assert.Empty(Directory.GetFiles(temp.Path));
     }
 
-    private static GptHandoffImportService Service() => new(
-        () => new DateTimeOffset(2026, 9, 16, 21, 30, 0, TimeSpan.FromHours(9)));
+    private static GptHandoffImportService Service() => new(() => ImportTime);
 
     private static CaseRecord Case(string folder)
     {

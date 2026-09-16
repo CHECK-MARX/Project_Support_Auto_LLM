@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Automation;
+using WinForms = System.Windows.Forms;
 
 namespace SupportCaseManager.App.ChatGpt;
 
@@ -147,27 +148,15 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         var promptInput = FindPromptInput(automationTarget.WebContentRoot)
             ?? throw new InvalidOperationException("ChatGPTの入力欄を特定できませんでした。");
-        if (!promptInput.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternValue) ||
-            valuePatternValue is not ValuePattern valuePattern ||
-            valuePattern.Current.IsReadOnly)
-        {
-            throw new InvalidOperationException("ChatGPTの入力欄へ登録内容を設定できませんでした。");
-        }
-
-        promptInput.SetFocus();
-        valuePattern.SetValue(approvedBrief);
-        var submitButton = await FindSubmitButtonAsync(
+        await SubmitPromptAsync(
+                automationTarget.BrowserWindow,
                 automationTarget.WebContentRoot,
-                cancellationToken)
-            .ConfigureAwait(false)
-            ?? throw new InvalidOperationException("ChatGPTの送信ボタンを特定できませんでした。");
-        if (!submitButton.TryGetCurrentPattern(InvokePattern.Pattern, out var invokePatternValue) ||
-            invokePatternValue is not InvokePattern invokePattern)
-        {
-            throw new InvalidOperationException("ChatGPTの送信ボタンを操作できませんでした。");
-        }
-
-        invokePattern.Invoke();
+                promptInput,
+                approvedBrief,
+                cancellationToken,
+                "ChatGPTの入力欄へ登録内容を設定できませんでした。",
+                "ChatGPTの送信操作を確認できませんでした。登録内容は送信していません。")
+            .ConfigureAwait(false);
         string? conversationUrl;
         try
         {
@@ -229,27 +218,16 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         var promptInput = FindPromptInput(automationTarget.WebContentRoot)
             ?? throw new InvalidOperationException("ChatGPTの入力欄を特定できませんでした。送信していません。");
-        if (!promptInput.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternValue) ||
-            valuePatternValue is not ValuePattern valuePattern ||
-            valuePattern.Current.IsReadOnly)
-        {
-            throw new InvalidOperationException("ChatGPTの入力欄へ引継ぎ依頼を設定できませんでした。送信していません。");
-        }
-
-        promptInput.SetFocus();
-        valuePattern.SetValue(message);
-        var submitButton = await FindSubmitButtonAsync(
+        await SubmitPromptAsync(
+                automationTarget.BrowserWindow,
                 automationTarget.WebContentRoot,
-                cancellationToken)
-            .ConfigureAwait(false)
-            ?? throw new InvalidOperationException("ChatGPTの送信ボタンを特定できませんでした。送信していません。");
-        if (!submitButton.TryGetCurrentPattern(InvokePattern.Pattern, out var invokePatternValue) ||
-            invokePatternValue is not InvokePattern invokePattern)
-        {
-            throw new InvalidOperationException("ChatGPTの送信ボタンを操作できませんでした。送信していません。");
-        }
-
-        invokePattern.Invoke();
+                promptInput,
+                message,
+                cancellationToken,
+                "ChatGPTの入力欄へ引継ぎ依頼を設定できませんでした。送信していません。",
+                "ChatGPTの送信操作を確認できませんでした。送信していません。",
+                normalizedUrl)
+            .ConfigureAwait(false);
     }
 
     private static async Task<ChatGptAutomationTarget?> FindChatGptTargetAsync(
@@ -414,23 +392,204 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         AutomationElement root,
         CancellationToken cancellationToken)
     {
-        var condition = new AndCondition(
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
-            new PropertyCondition(AutomationElement.AutomationIdProperty, SubmitButtonAutomationId));
         var deadline = DateTime.UtcNow + SearchTimeout;
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var button = root.FindFirst(TreeScope.Descendants, condition);
-            if (button is not null)
+            foreach (AutomationElement button in root.FindAll(
+                         TreeScope.Descendants,
+                         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
             {
-                return button;
+                if (IsSubmitButtonCandidate(button))
+                {
+                    return button;
+                }
             }
 
             await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
         }
 
         return null;
+    }
+
+    private static bool IsSubmitButtonCandidate(AutomationElement button)
+    {
+        try
+        {
+            var current = button.Current;
+            if (!current.IsEnabled)
+            {
+                return false;
+            }
+
+            if (string.Equals(current.AutomationId, SubmitButtonAutomationId, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var automationId = current.AutomationId ?? string.Empty;
+            if (automationId.Contains("send", StringComparison.OrdinalIgnoreCase) ||
+                automationId.Contains("submit", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            var accessibleText = $"{current.Name} {current.HelpText}";
+            return accessibleText.Contains("送信", StringComparison.OrdinalIgnoreCase) ||
+                   accessibleText.Contains("send", StringComparison.OrdinalIgnoreCase) ||
+                   accessibleText.Contains("submit", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (ElementNotAvailableException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task SubmitPromptAsync(
+        AutomationElement browserWindow,
+        AutomationElement webContentRoot,
+        AutomationElement promptInput,
+        string message,
+        CancellationToken cancellationToken,
+        string inputError,
+        string submitError,
+        string? expectedConversationUrl = null)
+    {
+        if (!promptInput.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternValue) ||
+            valuePatternValue is not ValuePattern valuePattern ||
+            valuePattern.Current.IsReadOnly)
+        {
+            throw new InvalidOperationException(inputError);
+        }
+
+        promptInput.SetFocus();
+        valuePattern.SetValue(message);
+        if (!await WaitForPromptValueAsync(promptInput, message, cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(inputError);
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedConversationUrl) &&
+            !BrowserWindowHasConversationUrl(browserWindow, expectedConversationUrl))
+        {
+            throw new InvalidOperationException("対象Conversationを再確認できません。送信していません。");
+        }
+
+        var submitButton = await FindSubmitButtonAsync(webContentRoot, cancellationToken).ConfigureAwait(false);
+        if (submitButton is not null && TryInvoke(submitButton))
+        {
+            return;
+        }
+
+        if (!await FocusComposerAsync(promptInput, cancellationToken).ConfigureAwait(false))
+        {
+            throw new InvalidOperationException(submitError);
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedConversationUrl) &&
+            !BrowserWindowHasConversationUrl(browserWindow, expectedConversationUrl))
+        {
+            throw new InvalidOperationException("対象Conversationを再確認できません。送信していません。");
+        }
+
+        WinForms.SendKeys.SendWait("{ENTER}");
+    }
+
+    private static async Task<bool> WaitForPromptValueAsync(
+        AutomationElement promptInput,
+        string expected,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + SearchTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (TryReadValuePattern(promptInput, out var actual) &&
+                string.Equals(actual, expected, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> FocusComposerAsync(
+        AutomationElement promptInput,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + SearchTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                promptInput.SetFocus();
+                var focused = AutomationElement.FocusedElement;
+                if (focused is not null &&
+                    string.Equals(
+                        focused.Current.AutomationId,
+                        PromptInputAutomationId,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    focused.Current.ProcessId == promptInput.Current.ProcessId)
+                {
+                    return true;
+                }
+            }
+            catch (ElementNotAvailableException)
+            {
+                return false;
+            }
+
+            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        return false;
+    }
+
+    private static bool TryInvoke(AutomationElement element)
+    {
+        try
+        {
+            if (element.TryGetCurrentPattern(InvokePattern.Pattern, out var patternValue) &&
+                patternValue is InvokePattern invokePattern)
+            {
+                invokePattern.Invoke();
+                return true;
+            }
+        }
+        catch (ElementNotAvailableException)
+        {
+            // Fall back to the focused composer when the button provider is unstable.
+        }
+        catch (InvalidOperationException)
+        {
+            // Fall back to the focused composer when Invoke is not supported at runtime.
+        }
+
+        return false;
+    }
+
+    private static bool TryReadValuePattern(AutomationElement element, out string value)
+    {
+        value = string.Empty;
+        try
+        {
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var patternValue) &&
+                patternValue is ValuePattern valuePattern)
+            {
+                value = valuePattern.Current.Value;
+                return true;
+            }
+        }
+        catch (ElementNotAvailableException)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static async Task<string?> FindConversationUrlAsync(

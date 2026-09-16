@@ -1,4 +1,5 @@
 using System;
+using SupportCaseManager.Ai.Contracts;
 
 namespace SupportCaseManager.App.AiHandoff;
 
@@ -39,4 +40,6 @@ public sealed record class AiAssistantCurrentState
     public string InquiryText { get; init; } = string.Empty;
 
     public string AdditionalInstruction { get; init; } = string.Empty;
+
+    public GptHandoffContext GptHandoff { get; init; } = new();
 }

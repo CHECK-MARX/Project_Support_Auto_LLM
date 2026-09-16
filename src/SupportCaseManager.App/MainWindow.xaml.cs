@@ -50,7 +50,6 @@ public partial class MainWindow : Window
     private readonly ProductGptTargetResolver _productGptTargetResolver;
     private readonly GptCaseRegistrationService _gptCaseRegistrationService;
     private readonly GptCaseHandoffBriefBuilder _gptHandoffBriefBuilder;
-    private readonly GptHandoffImportService _gptHandoffImportService;
     private AiAssistantNoteEditorTransferServer? _aiNoteEditorTransferServer;
     private readonly Dictionary<string, CaseRecord> _caseCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _categoryPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -108,8 +107,6 @@ public partial class MainWindow : Window
     private bool _directoryScanCacheDirty;
     private bool _isNotePreviewActive;
     private bool _isGptRegistrationInProgress;
-    private bool _isGptHandoffOperationInProgress;
-    private string _gptHandoffNoChangeSupportId = string.Empty;
     private string _notePreviewBody = string.Empty;
     private string _closedSearchKeyword = string.Empty;
     private string _closedSummaryFilterProduct = string.Empty;
@@ -134,8 +131,7 @@ public partial class MainWindow : Window
         IChatGptHistorySearchService? chatGptHistorySearchService = null,
         ProductGptTargetResolver? productGptTargetResolver = null,
         GptCaseRegistrationService? gptCaseRegistrationService = null,
-        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null,
-        GptHandoffImportService? gptHandoffImportService = null)
+        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null)
     {
         _viewModel = viewModel;
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
@@ -143,7 +139,6 @@ public partial class MainWindow : Window
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
         _gptCaseRegistrationService = gptCaseRegistrationService ?? new GptCaseRegistrationService();
         _gptHandoffBriefBuilder = gptHandoffBriefBuilder ?? new GptCaseHandoffBriefBuilder();
-        _gptHandoffImportService = gptHandoffImportService ?? new GptHandoffImportService();
         _config = viewModel.Config;
         _repository = viewModel.Repository;
         _logger = viewModel.Logger;
@@ -3451,6 +3446,8 @@ public partial class MainWindow : Window
             return false;
         }
 
+        record.GptRegistration = FindExistingGptRegistration(record, product.BasePath, product.ClosedPath);
+
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
 
         if (Directory.Exists(newPath))
@@ -3578,6 +3575,8 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
+
+        record.GptRegistration = FindExistingGptRegistration(record, sourceProduct.BasePath, sourceProduct.ClosedPath);
 
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
         if (Directory.Exists(newPath))
@@ -3760,7 +3759,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SetCurrentCase(record);
+            SetCurrentCase(HydrateGptRegistration(record));
             NoteEditorTextBox.Clear();
             _isNotePreviewActive = false;
             _notePreviewBody = string.Empty;
@@ -3903,6 +3902,8 @@ public partial class MainWindow : Window
             error = "案件情報の解析に失敗しました。";
             return false;
         }
+
+        record.GptRegistration = FindExistingGptRegistration(record, product.BasePath, product.ClosedPath);
 
         var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
         var targetDir = useYearFolder
@@ -5381,6 +5382,31 @@ public partial class MainWindow : Window
             NoteFilePath = GetNoteFilePath(),
             SelectedText = NoteEditorTextBox.SelectedText ?? string.Empty,
             CurrentNoteText = NoteEditorTextBox.Text ?? string.Empty,
+            GptHandoff = BuildGptHandoffContext(),
+        };
+    }
+
+    private GptHandoffContext BuildGptHandoffContext()
+    {
+        var registration = _currentCase?.GptRegistration;
+        if (registration is null)
+        {
+            return new GptHandoffContext();
+        }
+
+        return new GptHandoffContext
+        {
+            SupportId = registration.SupportId,
+            Product = registration.Product,
+            TargetGptKey = registration.TargetGptKey,
+            TargetGptDisplayName = registration.TargetGptDisplayName,
+            ConversationUrl = registration.ConversationUrl,
+            RegisteredAt = registration.RegisteredAt,
+            LinkMode = registration.LinkMode,
+            RegistrationState = registration.RegistrationState,
+            LastImportedHash = registration.LastImportedHash,
+            LastImportedAt = registration.LastImportedAt,
+            ImportVersion = registration.ImportVersion,
         };
     }
 
@@ -5406,6 +5432,7 @@ public partial class MainWindow : Window
 
     private void SetCurrentCase(CaseRecord record, bool persist = true)
     {
+        record = HydrateGptRegistration(record);
         _currentCase = record;
         CompanyTextBox.Text = record.Company;
         SupportTextBox.Text = record.SupportNumber;
@@ -5438,6 +5465,92 @@ public partial class MainWindow : Window
         EnsureCaseNotes(record);
         UpdateNoteFileLabel();
         UpdateGptRegistrationUi();
+    }
+
+    private CaseRecord HydrateGptRegistration(CaseRecord record)
+    {
+        if (record.GptRegistration.IsRegistered ||
+            string.IsNullOrWhiteSpace(record.NormalizedSupport))
+        {
+            return record;
+        }
+
+        if (_caseCache.TryGetValue(record.FolderPath, out var cached) && cached.GptRegistration.IsRegistered)
+        {
+            record.GptRegistration = cached.GptRegistration.Clone();
+            return record;
+        }
+
+        if (_currentCase is not null &&
+            string.Equals(_currentCase.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase) &&
+            _currentCase.GptRegistration.IsRegistered)
+        {
+            record.GptRegistration = _currentCase.GptRegistration.Clone();
+            return record;
+        }
+
+        var roots = new[] { _activeProduct?.BasePath, _activeProduct?.ClosedPath }
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots)
+        {
+            var repository = new CaseRepository(_logger);
+            try
+            {
+                repository.SetBasePath(root);
+                var indexed = repository.FindBySupport(record.SupportNumber);
+                if (indexed?.GptRegistration.IsRegistered == true)
+                {
+                    record.GptRegistration = indexed.GptRegistration.Clone();
+                    return record;
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Ignore an unavailable optional product root.
+            }
+        }
+
+        return record;
+    }
+
+    private GptCaseRegistration FindExistingGptRegistration(
+        CaseRecord record,
+        params string?[] configuredRoots)
+    {
+        if (_caseCache.TryGetValue(record.FolderPath, out var cached) && cached.GptRegistration.IsRegistered)
+        {
+            return cached.GptRegistration.Clone();
+        }
+
+        if (_currentCase is not null &&
+            string.Equals(_currentCase.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase) &&
+            _currentCase.GptRegistration.IsRegistered)
+        {
+            return _currentCase.GptRegistration.Clone();
+        }
+
+        foreach (var root in configuredRoots
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var repository = new CaseRepository(_logger);
+                repository.SetBasePath(root);
+                var indexed = repository.FindBySupport(record.SupportNumber);
+                if (indexed?.GptRegistration.IsRegistered == true)
+                {
+                    return indexed.GptRegistration.Clone();
+                }
+            }
+            catch (ArgumentException)
+            {
+                // An unavailable optional root must not block a folder move.
+            }
+        }
+
+        return new GptCaseRegistration();
     }
 
     private void SelectCategory(string category)
