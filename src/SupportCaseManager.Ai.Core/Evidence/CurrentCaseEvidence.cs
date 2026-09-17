@@ -9,6 +9,7 @@ using DocumentFormat.OpenXml.Spreadsheet;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Core.Cases;
 
 namespace SupportCaseManager.Ai.Core.Evidence;
 
@@ -212,6 +213,28 @@ public sealed class CurrentCaseEvidenceService
             return [];
         }
 
+        if (file.Kind == CodexCaseFileKind.GptHandoff)
+        {
+            if (!GptHandoffParser.TryBuildEffectiveSnapshot(text, out var snapshot, out _))
+            {
+                return [];
+            }
+
+            return GptHandoffFormat.SectionOrder
+                .Where(section => !string.IsNullOrWhiteSpace(snapshot[section]))
+                .Select(section => CreateSource(
+                    sessionId,
+                    logicalId,
+                    file,
+                    hash,
+                    $"{GptHandoffFormat.Label(section)}: {snapshot[section]}",
+                    $"GptHandoff:{GptHandoffFormat.Label(section)}",
+                    $"gpt-handoff:{section}",
+                    null,
+                    null))
+                .ToList();
+        }
+
         if (content.Pages is { Count: > 0 })
         {
             return content.Pages
@@ -358,7 +381,7 @@ public sealed class CurrentCaseEvidenceService
     private static SearchSource CreateSource(string sessionId, string logicalId, CodexCaseFileInfo file, string? hash, string text, string kind, string locator, int? pageNumber, string? entryPath) => new()
     {
         SourceId = $"current:{sessionId}:{logicalId}:{StableHash(locator)}",
-        SourceType = "CurrentCase",
+        SourceType = file.Kind == CodexCaseFileKind.GptHandoff ? "GptHandoff" : "CurrentCase",
         Title = file.FileName,
         DocumentTitle = file.FileName,
         Text = text,

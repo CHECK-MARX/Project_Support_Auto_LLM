@@ -22,4 +22,10 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\SupportCaseManager.App\ChatGpt\GptCaseRegistrationService.cs" Link="ChatGpt\GptCaseRegistrationService.cs" />
+    <Compile Include="..\SupportCaseManager.App\ChatGpt\ChatGptHistorySearchService.cs" Link="ChatGpt\ChatGptHistorySearchService.cs" />
+    <Compile Include="..\SupportCaseManager.App\Dialogs\GptHandoffImportPreviewDialog.cs" Link="Dialogs\GptHandoffImportPreviewDialog.cs" />
+  </ItemGroup>
+
 </Project>

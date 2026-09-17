@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _caseRefreshCts;
     private CancellationTokenSource? _caseTabPreloadCts;
     private CancellationTokenSource? _closedSearchCts;
+    private CancellationTokenSource? _gptRegistrationHydrationCts;
     private readonly Dictionary<string, DirectoryScanCacheRoot> _directoryScanCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, List<CaseRecord>> _caseTabCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DateTime> _caseTabRefreshedAtUtc = new(StringComparer.OrdinalIgnoreCase);
@@ -240,6 +241,9 @@ public partial class MainWindow : Window
             _caseRefreshCts?.Cancel();
             _caseRefreshCts?.Dispose();
             _caseRefreshCts = null;
+            _gptRegistrationHydrationCts?.Cancel();
+            _gptRegistrationHydrationCts?.Dispose();
+            _gptRegistrationHydrationCts = null;
             _closedSearchCts?.Cancel();
             _closedSearchCts?.Dispose();
             _closedSearchCts = null;
@@ -3446,6 +3450,8 @@ public partial class MainWindow : Window
             return false;
         }
 
+        record.GptRegistration = FindExistingGptRegistration(record, product.BasePath, product.ClosedPath);
+
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
 
         if (Directory.Exists(newPath))
@@ -3573,6 +3579,8 @@ public partial class MainWindow : Window
             MessageBox.Show(this, "移動先フォルダが設定された保存先の範囲外です。", "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
             return false;
         }
+
+        record.GptRegistration = FindExistingGptRegistration(record, sourceProduct.BasePath, sourceProduct.ClosedPath);
 
         Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
         if (Directory.Exists(newPath))
@@ -3755,7 +3763,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            SetCurrentCase(record);
+            SetCurrentCase(HydrateGptRegistration(record));
             NoteEditorTextBox.Clear();
             _isNotePreviewActive = false;
             _notePreviewBody = string.Empty;
@@ -3898,6 +3906,8 @@ public partial class MainWindow : Window
             error = "案件情報の解析に失敗しました。";
             return false;
         }
+
+        record.GptRegistration = FindExistingGptRegistration(record, product.BasePath, product.ClosedPath);
 
         var category = ResolveCategoryFromFolder(baseRoot, closedRoot, folderPath, record.Category);
         var targetDir = useYearFolder
@@ -5376,6 +5386,31 @@ public partial class MainWindow : Window
             NoteFilePath = GetNoteFilePath(),
             SelectedText = NoteEditorTextBox.SelectedText ?? string.Empty,
             CurrentNoteText = NoteEditorTextBox.Text ?? string.Empty,
+            GptHandoff = BuildGptHandoffContext(),
+        };
+    }
+
+    private GptHandoffContext BuildGptHandoffContext()
+    {
+        var registration = _currentCase?.GptRegistration;
+        if (registration is null)
+        {
+            return new GptHandoffContext();
+        }
+
+        return new GptHandoffContext
+        {
+            SupportId = registration.SupportId,
+            Product = registration.Product,
+            TargetGptKey = registration.TargetGptKey,
+            TargetGptDisplayName = registration.TargetGptDisplayName,
+            ConversationUrl = registration.ConversationUrl,
+            RegisteredAt = registration.RegisteredAt,
+            LinkMode = registration.LinkMode,
+            RegistrationState = registration.RegistrationState,
+            LastImportedHash = registration.LastImportedHash,
+            LastImportedAt = registration.LastImportedAt,
+            ImportVersion = registration.ImportVersion,
         };
     }
 
@@ -5401,6 +5436,8 @@ public partial class MainWindow : Window
 
     private void SetCurrentCase(CaseRecord record, bool persist = true)
     {
+        var selectionStarted = Stopwatch.StartNew();
+        record = HydrateGptRegistration(record);
         _currentCase = record;
         CompanyTextBox.Text = record.Company;
         SupportTextBox.Text = record.SupportNumber;
@@ -5433,6 +5470,157 @@ public partial class MainWindow : Window
         EnsureCaseNotes(record);
         UpdateNoteFileLabel();
         UpdateGptRegistrationUi();
+        _logger.Debug($"Case selection UI applied: {record.SupportNumber} ({selectionStarted.ElapsedMilliseconds}ms)");
+        _ = HydrateGptRegistrationAsync(record);
+    }
+
+    private CaseRecord HydrateGptRegistration(CaseRecord record)
+    {
+        var lookupStarted = Stopwatch.StartNew();
+        if (record.GptRegistration.IsRegistered ||
+            string.IsNullOrWhiteSpace(record.NormalizedSupport))
+        {
+            return record;
+        }
+
+        if (_caseCache.TryGetValue(record.FolderPath, out var cached) && cached.GptRegistration.IsRegistered)
+        {
+            record.GptRegistration = cached.GptRegistration.Clone();
+            return record;
+        }
+
+        if (_currentCase is not null &&
+            string.Equals(_currentCase.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase) &&
+            _currentCase.GptRegistration.IsRegistered)
+        {
+            record.GptRegistration = _currentCase.GptRegistration.Clone();
+            return record;
+        }
+
+        _logger.Debug($"Case selection GPT lookup deferred: {record.SupportNumber} ({lookupStarted.ElapsedMilliseconds}ms, cache miss)");
+        return record;
+    }
+
+    private async Task HydrateGptRegistrationAsync(CaseRecord record)
+    {
+        if (record.GptRegistration.IsRegistered || string.IsNullOrWhiteSpace(record.NormalizedSupport))
+        {
+            return;
+        }
+
+        var roots = new[] { _activeProduct?.BasePath, _activeProduct?.ClosedPath }
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Select(path => path!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (roots.Length == 0)
+        {
+            return;
+        }
+
+        _gptRegistrationHydrationCts?.Cancel();
+        _gptRegistrationHydrationCts?.Dispose();
+        _gptRegistrationHydrationCts = new CancellationTokenSource();
+        var token = _gptRegistrationHydrationCts.Token;
+        var started = Stopwatch.StartNew();
+        try
+        {
+            var registration = await Task.Run(() => FindRegisteredGptRegistrationOnDisk(record.SupportNumber, roots, token), token);
+            if (registration == null || token.IsCancellationRequested)
+            {
+                _logger.Debug($"Case selection GPT lookup completed without registration: {record.SupportNumber} ({started.ElapsedMilliseconds}ms)");
+                return;
+            }
+
+            await Dispatcher.InvokeAsync(() =>
+            {
+                if (_currentCase == null ||
+                    !string.Equals(_currentCase.FolderPath, record.FolderPath, StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(_currentCase.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+
+                _currentCase.GptRegistration = registration;
+                _caseCache[_currentCase.FolderPath] = _currentCase;
+                UpdateGptRegistrationUi();
+            });
+            _logger.Debug($"Case selection GPT lookup completed: {record.SupportNumber} ({started.ElapsedMilliseconds}ms, background)");
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer case selection superseded this lookup.
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning($"案件選択時のGPT登録確認をバックグラウンドで完了できませんでした: {ex.Message}");
+        }
+    }
+
+    private GptCaseRegistration? FindRegisteredGptRegistrationOnDisk(
+        string supportNumber,
+        IEnumerable<string> configuredRoots,
+        CancellationToken cancellationToken)
+    {
+        foreach (var root in configuredRoots)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var repository = new CaseRepository(_logger);
+                repository.SetBasePath(root);
+                var indexed = repository.FindBySupport(supportNumber);
+                if (indexed?.GptRegistration.IsRegistered == true)
+                {
+                    return indexed.GptRegistration.Clone();
+                }
+            }
+            catch (ArgumentException)
+            {
+                // An unavailable optional product root must not block selection.
+            }
+        }
+
+        return null;
+    }
+
+    private GptCaseRegistration FindExistingGptRegistration(
+        CaseRecord record,
+        params string?[] configuredRoots)
+    {
+        if (_caseCache.TryGetValue(record.FolderPath, out var cached) && cached.GptRegistration.IsRegistered)
+        {
+            return cached.GptRegistration.Clone();
+        }
+
+        if (_currentCase is not null &&
+            string.Equals(_currentCase.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase) &&
+            _currentCase.GptRegistration.IsRegistered)
+        {
+            return _currentCase.GptRegistration.Clone();
+        }
+
+        foreach (var root in configuredRoots
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var repository = new CaseRepository(_logger);
+                repository.SetBasePath(root);
+                var indexed = repository.FindBySupport(record.SupportNumber);
+                if (indexed?.GptRegistration.IsRegistered == true)
+                {
+                    return indexed.GptRegistration.Clone();
+                }
+            }
+            catch (ArgumentException)
+            {
+                // An unavailable optional root must not block a folder move.
+            }
+        }
+
+        return new GptCaseRegistration();
     }
 
     private void SelectCategory(string category)

@@ -139,6 +139,9 @@ public class RepositoryTests
                 RegisteredAt = "2026-09-16T12:00:00+09:00",
                 LinkMode = GptRegistrationLinkModes.CreatedByApp,
                 RegistrationState = GptRegistrationStates.Registered,
+                LastImportedHash = "ABC123",
+                LastImportedAt = "2026-09-16T21:30:00+09:00",
+                ImportVersion = 3,
             },
         };
         repository.UpdateCaseEntry(indexed);
@@ -147,10 +150,56 @@ public class RepositoryTests
 
         Assert.True(loaded.GptRegistration.IsRegistered);
         Assert.Equal("https://chatgpt.com/c/existing", loaded.GptRegistration.ConversationUrl);
+        Assert.Equal("ABC123", loaded.GptRegistration.LastImportedHash);
+        Assert.Equal("2026-09-16T21:30:00+09:00", loaded.GptRegistration.LastImportedAt);
+        Assert.Equal(3, loaded.GptRegistration.ImportVersion);
         using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(temp.Path, "cases-index.json")));
         Assert.Equal(
             "REGISTERED",
             document.RootElement[0].GetProperty("gpt_registration").GetProperty("registration_state").GetString());
+    }
+
+    [Fact]
+    public void AllCases_ReassociatesGptRegistrationWhenFolderWasRenamed()
+    {
+        using var temp = new TempDirectory();
+        var currentFolderName = "20260916(ABC_00018303)対応中_20260917";
+        var currentFolderPath = Path.Combine(temp.Path, currentFolderName);
+        Directory.CreateDirectory(currentFolderPath);
+
+        var oldFolderPath = Path.Combine(temp.Path, "20260916(ABC_00018303)調査中_20260916");
+        var index = new CaseRecord(
+            "ABC", "00018303", "調査中", "20260916", Path.GetFileName(oldFolderPath), oldFolderPath,
+            "2026-09-16T00:00:00Z")
+        {
+            GptRegistration = new GptCaseRegistration
+            {
+                SupportId = "00018303",
+                Product = "Checkmarx",
+                TargetGptKey = "checkmarx",
+                TargetGptDisplayName = "Vulnerability Scanner Assistant",
+                ConversationUrl = "https://chatgpt.com/c/existing",
+                RegisteredAt = "2026-09-16T12:00:00+09:00",
+                LinkMode = GptRegistrationLinkModes.CreatedByApp,
+                RegistrationState = GptRegistrationStates.Registered,
+            },
+        };
+
+        var repository = new CaseRepository(NullLogger.Instance);
+        repository.SetBasePath(temp.Path);
+        repository.UpdateCaseEntry(index);
+
+        var loaded = Assert.Single(repository.AllCases());
+
+        Assert.Equal(currentFolderPath, loaded.FolderPath);
+        Assert.True(loaded.GptRegistration.IsRegistered);
+        Assert.Equal("https://chatgpt.com/c/existing", loaded.GptRegistration.ConversationUrl);
+
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(temp.Path, "cases-index.json")));
+        Assert.Equal(currentFolderPath, document.RootElement[0].GetProperty("folder_path").GetString());
+        Assert.Equal(
+            "https://chatgpt.com/c/existing",
+            document.RootElement[0].GetProperty("gpt_registration").GetProperty("conversation_url").GetString());
     }
 
     [Fact]

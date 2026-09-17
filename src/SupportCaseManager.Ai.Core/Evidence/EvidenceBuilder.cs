@@ -144,6 +144,7 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
                 "OfficialDoc" => 3,
                 "PastAnswer" => 4,
                 "PastCaseNote" => 5,
+                "GptHandoff" => 7,
                 _ => 6,
             };
         }
@@ -157,6 +158,7 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
                 "ExactPastAnswer" => 3,
                 "PastAnswer" => 4,
                 "PastCaseNote" => 5,
+                "GptHandoff" => 7,
                 _ => 6,
             };
         }
@@ -168,13 +170,14 @@ public sealed class EvidenceBuilder : IEvidenceBuilder
             "ExactPastAnswer" => 3,
             "PastAnswer" => 4,
             "PastCaseNote" => 5,
+            "GptHandoff" => 7,
             _ => 6,
         };
     }
 
     private static bool IsPastSource(string? sourceType)
     {
-        return sourceType is "ExactPastAnswer" or "PastAnswer" or "PastCaseNote";
+        return sourceType is "ExactPastAnswer" or "PastAnswer" or "PastCaseNote" or "GptHandoff";
     }
 
     private static bool IsNearDuplicate(string left, string right)

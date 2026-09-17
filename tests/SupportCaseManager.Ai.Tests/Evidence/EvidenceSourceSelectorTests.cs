@@ -59,6 +59,33 @@ public sealed class EvidenceSourceSelectorTests
         Assert.Equal(["overview", "setup", "verify"], selected.Select(static source => source.SourceId));
     }
 
+    [Fact]
+    public void Select_ExcludesGptHandoffFromOfficialDocumentationQuestion()
+    {
+        var sources = new[]
+        {
+            CreateSource("official", "Release Notes", "Version 9.8 is supported.", 0.8) with { SourceType = "OfficialDoc" },
+            CreateSource("handoff", "GPT Handoff", "Version 9.9 is supported.", 0.99) with { SourceType = "GptHandoff" },
+        };
+        var facts = new FactResolutionResult
+        {
+            Classification = new QuestionClassificationResult
+            {
+                QuestionTypes = [QuestionTypes.LatestVersionQuestion],
+            },
+        };
+
+        var selected = EvidenceSourceSelector.Select(
+            sources,
+            new CaseContext { ProductName = "HelixQAC" },
+            facts,
+            maxItems: 3,
+            maxPromptChars: 6000);
+
+        Assert.Contains(selected, source => source.SourceId == "official");
+        Assert.DoesNotContain(selected, source => source.SourceId == "handoff");
+    }
+
     private static SearchSource CreateSource(string id, string title, string text, double score)
     {
         return new SearchSource

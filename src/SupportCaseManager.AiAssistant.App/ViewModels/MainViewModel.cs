@@ -23,9 +23,14 @@ using SupportCaseManager.Ai.Core.Ranking;
 using SupportCaseManager.Ai.Core.Search;
 using SupportCaseManager.Ai.Core.Settings;
 using SupportCaseManager.AiAssistant.App.Appearance;
+using SupportCaseManager.AiAssistant.App.GptHandoff;
 using SupportCaseManager.AiAssistant.App.Launch;
 using SupportCaseManager.AiAssistant.App.Llm;
 using SupportCaseManager.Core.Config;
+using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Repository;
+using SupportCaseManager.App.ChatGpt;
+using SupportCaseManager.App.Dialogs;
 using WinForms = System.Windows.Forms;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
@@ -88,6 +93,8 @@ public sealed class MainViewModel : ObservableObject
     private readonly IRustEvidenceSelectorWorkerClient persistentRustEvidenceSelectorWorkerClient;
     private readonly CurrentCaseEvidenceService currentCaseEvidenceService;
     private readonly Func<string, bool> confirmReplyAppend;
+    private readonly GptHandoffImportController gptHandoffImportController;
+    private readonly Action<string, MessageBoxImage> showGptHandoffMessage;
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
@@ -228,6 +235,9 @@ public sealed class MainViewModel : ObservableObject
     private string knowledgeStatusText = "未作成";
     private string modelResolutionSource = ModelResolutionSources.Unresolved;
     private string requestedModel = string.Empty;
+    private GptHandoffContext gptHandoffContext = new();
+    private string gptHandoffStatusText = "未利用";
+    private bool gptHandoffOperationInProgress;
     private string effectiveModel = string.Empty;
     private string fallbackModel = string.Empty;
     private string modelFallbackReason = string.Empty;
@@ -268,7 +278,11 @@ public sealed class MainViewModel : ObservableObject
         ILlmClientFactory? llmClientFactory = null,
         IRustEvidenceSelectorWorkerClient? persistentRustEvidenceSelectorWorkerClient = null,
         CurrentCaseEvidenceService? currentCaseEvidenceService = null,
-        Func<string, bool>? confirmReplyAppend = null)
+        Func<string, bool>? confirmReplyAppend = null,
+        Func<string>? readGptHandoffClipboardText = null,
+        Func<GptHandoffSnapshot, bool>? confirmGptHandoffImport = null,
+        Func<CaseRecord, GptHandoffSnapshot, CancellationToken, Task<GptHandoffImportResult>>? importGptHandoffSnapshot = null,
+        Action<string, MessageBoxImage>? showGptHandoffMessage = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -293,6 +307,12 @@ public sealed class MainViewModel : ObservableObject
             new RustEvidenceSelectorWorkerClient();
         this.currentCaseEvidenceService = currentCaseEvidenceService ?? new CurrentCaseEvidenceService();
         this.confirmReplyAppend = confirmReplyAppend ?? ConfirmReplyAppend;
+        this.showGptHandoffMessage = showGptHandoffMessage ?? ShowGptHandoffMessage;
+        gptHandoffImportController = new GptHandoffImportController(
+            readGptHandoffClipboardText ?? ReadGptHandoffClipboardText,
+            confirmGptHandoffImport ?? ConfirmGptHandoffImport,
+            importGptHandoffSnapshot ?? ((caseRecord, snapshot, cancellationToken) =>
+                new GptHandoffImportService().ImportAsync(caseRecord, snapshot, cancellationToken)));
 
         LoadSettingsCommand = new AsyncRelayCommand(LoadSettingsAsync);
         SaveSettingsCommand = new AsyncRelayCommand(SaveSettingsAsync);
@@ -356,6 +376,8 @@ public sealed class MainViewModel : ObservableObject
         SaveDraftCommand = new AsyncRelayCommand(SaveDraftAsync);
         WriteTestLogCommand = new AsyncRelayCommand(WriteTestLogAsync);
         OpenLogCommand = new RelayCommand(OpenLog);
+        CreateGptHandoffCommand = new AsyncRelayCommand(CreateGptHandoffAsync, () => GptHandoffAvailable);
+        ImportGptHandoffCommand = new AsyncRelayCommand(ImportGptHandoffAsync, () => GptHandoffAvailable);
 
         Notes.Add(new NoteSnapshot
         {
@@ -1159,7 +1181,14 @@ public sealed class MainViewModel : ObservableObject
     public string SupportNumber
     {
         get => supportNumber;
-        set => SetProperty(ref supportNumber, value);
+        set
+        {
+            if (SetProperty(ref supportNumber, value))
+            {
+                OnPropertyChanged(nameof(GptHandoffAvailable));
+                UpdateGptHandoffStatus();
+            }
+        }
     }
 
     public string Status
@@ -1553,6 +1582,19 @@ public sealed class MainViewModel : ObservableObject
 
     public string OperationProgressText => $"{OperationStage} {OperationProgressPercent}%";
 
+    public string GptHandoffStatusText
+    {
+        get => gptHandoffStatusText;
+        private set => SetProperty(ref gptHandoffStatusText, value);
+    }
+
+    public bool GptHandoffAvailable =>
+        !gptHandoffOperationInProgress &&
+        GptHandoffRegistrationResolver.IsRegisteredForCurrentCase(
+            gptHandoffContext,
+            SupportNumber,
+            ProductName);
+
     public string LogFilePath => Path.Combine(EffectiveAiDataFolder(), "logs", "AiAssistant.log");
 
     public AsyncRelayCommand LoadSettingsCommand { get; }
@@ -1608,6 +1650,8 @@ public sealed class MainViewModel : ObservableObject
     public AsyncRelayCommand SaveDraftCommand { get; }
     public AsyncRelayCommand WriteTestLogCommand { get; }
     public RelayCommand OpenLogCommand { get; }
+    public AsyncRelayCommand CreateGptHandoffCommand { get; }
+    public AsyncRelayCommand ImportGptHandoffCommand { get; }
     public RelayCommand SelectCodexExecutableCommand { get; }
     public RelayCommand SelectRagLabEvidenceFileCommand { get; }
     public RelayCommand SelectRagLabBaselineReadinessFileCommand { get; }
@@ -1719,6 +1763,9 @@ public sealed class MainViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        gptHandoffContext = context.GptHandoff ?? new GptHandoffContext();
+        UpdateGptHandoffStatus();
+
         if (!string.IsNullOrWhiteSpace(context.SupportToolSettingsFilePath))
         {
             SupportToolSettingsFilePath = context.SupportToolSettingsFilePath;
@@ -1772,6 +1819,228 @@ public sealed class MainViewModel : ObservableObject
         RefreshProductContextComputedProperties();
         codex?.RefreshCaseSelection();
         UpdatePromptSummary();
+    }
+
+    private async Task CreateGptHandoffAsync()
+    {
+        if (!TryBuildRegisteredCase(out var caseRecord, out var error))
+        {
+            StatusMessage = error;
+            return;
+        }
+
+        gptHandoffOperationInProgress = true;
+        UpdateGptHandoffStatus();
+        try
+        {
+            var result = await new GptCaseRegistrationService().SendHandoffPromptAsync(caseRecord);
+            StatusMessage = result.Message;
+            LastOperationResult = result.Succeeded
+                ? "GPT引継ぎ情報の作成依頼を送信しました。"
+                : "GPT引継ぎ情報の作成依頼は送信されませんでした。";
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            StatusMessage = $"GPT引継ぎ情報を依頼できませんでした: {ex.Message}";
+        }
+        finally
+        {
+            gptHandoffOperationInProgress = false;
+            UpdateGptHandoffStatus();
+        }
+    }
+
+    internal async Task ImportGptHandoffAsync()
+    {
+        gptHandoffOperationInProgress = true;
+        UpdateGptHandoffStatus();
+        try
+        {
+            if (!TryBuildRegisteredCase(out var caseRecord, out var error))
+            {
+                StatusMessage = error;
+                showGptHandoffMessage(error, MessageBoxImage.Warning);
+                return;
+            }
+
+            var execution = await gptHandoffImportController.ExecuteAsync(caseRecord);
+            StatusMessage = execution.Message;
+            if (execution.Status == GptHandoffImportExecutionStatus.Cancelled)
+            {
+                LastOperationResult = execution.Message;
+                return;
+            }
+
+            if (execution.Status == GptHandoffImportExecutionStatus.Rejected || execution.ImportResult is null)
+            {
+                LastOperationResult = "GPT引継ぎ情報を取り込めませんでした。";
+                showGptHandoffMessage(execution.Message, MessageBoxImage.Warning);
+                return;
+            }
+
+            var result = execution.ImportResult;
+            if (result.Status == GptHandoffImportStatus.Imported)
+            {
+                gptHandoffContext = gptHandoffContext with
+                {
+                    LastImportedHash = result.LastImportedHash,
+                    LastImportedAt = result.LastImportedAt,
+                    ImportVersion = result.ImportVersion,
+                };
+                caseRecord.GptRegistration.LastImportedHash = result.LastImportedHash;
+                caseRecord.GptRegistration.LastImportedAt = result.LastImportedAt;
+                caseRecord.GptRegistration.ImportVersion = result.ImportVersion;
+                StatusMessage = TryPersistGptHandoffRegistration(caseRecord)
+                    ? result.Message
+                    : "引継ぎ履歴は保存しましたが、GPT登録metadataを更新できませんでした。";
+            }
+            else
+            {
+                StatusMessage = result.Message;
+            }
+
+            LastOperationResult = "GPT引継ぎ情報の取込処理が完了しました。";
+            var icon = result.Status is GptHandoffImportStatus.Imported or GptHandoffImportStatus.NoChange
+                ? MessageBoxImage.Information
+                : MessageBoxImage.Warning;
+            showGptHandoffMessage(StatusMessage, icon);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            StatusMessage = $"GPT引継ぎ情報を取り込めませんでした: {ex.Message}";
+            LastOperationResult = "GPT引継ぎ情報を取り込めませんでした。";
+            showGptHandoffMessage(StatusMessage, MessageBoxImage.Error);
+        }
+        finally
+        {
+            gptHandoffOperationInProgress = false;
+            UpdateGptHandoffStatus();
+        }
+    }
+
+    private static string ReadGptHandoffClipboardText()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            return dispatcher.Invoke(ReadGptHandoffClipboardTextCore);
+        }
+
+        return ReadGptHandoffClipboardTextCore();
+    }
+
+    private static string ReadGptHandoffClipboardTextCore()
+    {
+        if (Thread.CurrentThread.GetApartmentState() != ApartmentState.STA)
+        {
+            throw new InvalidOperationException("Clipboardを読み取るUIスレッドを確認できませんでした。");
+        }
+
+        if (System.Windows.Clipboard.ContainsText(System.Windows.TextDataFormat.UnicodeText))
+        {
+            return System.Windows.Clipboard.GetText(System.Windows.TextDataFormat.UnicodeText);
+        }
+
+        return System.Windows.Clipboard.ContainsText(System.Windows.TextDataFormat.Text)
+            ? System.Windows.Clipboard.GetText(System.Windows.TextDataFormat.Text)
+            : string.Empty;
+    }
+
+    private static bool ConfirmGptHandoffImport(GptHandoffSnapshot snapshot)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            return dispatcher.Invoke(() => ConfirmGptHandoffImport(snapshot));
+        }
+
+        var preview = new GptHandoffImportPreviewDialog(snapshot)
+        {
+            Owner = System.Windows.Application.Current?.MainWindow,
+        };
+        return preview.ShowDialog() == true;
+    }
+
+    private static void ShowGptHandoffMessage(string message, MessageBoxImage icon)
+    {
+        var owner = System.Windows.Application.Current?.MainWindow;
+        if (owner is null)
+        {
+            System.Windows.MessageBox.Show(message, "GPT引継ぎ情報", MessageBoxButton.OK, icon);
+            return;
+        }
+
+        System.Windows.MessageBox.Show(owner, message, "GPT引継ぎ情報", MessageBoxButton.OK, icon);
+    }
+
+    private bool TryBuildRegisteredCase(out CaseRecord caseRecord, out string error)
+    {
+        caseRecord = null!;
+        error = string.Empty;
+        if (string.IsNullOrWhiteSpace(CaseFolderPath) || !Directory.Exists(CaseFolderPath))
+        {
+            error = "案件フォルダを確認できません。";
+            return false;
+        }
+
+        caseRecord = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(CaseFolderPath))!;
+        if (caseRecord is null)
+        {
+            error = "案件情報を解析できません。";
+            return false;
+        }
+
+        if (!GptHandoffRegistrationResolver.TryResolve(
+                gptHandoffContext,
+                caseRecord.SupportNumber,
+                ProductName,
+                out var registration,
+                out error))
+        {
+            return false;
+        }
+
+        caseRecord.GptRegistration = registration;
+        return true;
+    }
+
+    private bool TryPersistGptHandoffRegistration(CaseRecord caseRecord)
+    {
+        foreach (var root in new[] { BaseFolder, CloseFolder }
+                     .Where(path => !string.IsNullOrWhiteSpace(path))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                if (!CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(
+                        caseRecord.FolderPath,
+                        [root],
+                        out _))
+                {
+                    continue;
+                }
+
+                var repository = new CaseRepository(SupportCaseManager.Core.Logging.NullLogger.Instance);
+                repository.SetBasePath(root);
+                if (repository.TryUpdateCaseEntry(caseRecord))
+                {
+                    return true;
+                }
+            }
+            catch (ArgumentException)
+            {
+                // Try the other configured case root.
+            }
+        }
+
+        return false;
+    }
+
+    private void UpdateGptHandoffStatus()
+    {
+        GptHandoffStatusText = GptHandoffAvailable ? "登録済み" : "未利用";
+        CreateGptHandoffCommand?.RaiseCanExecuteChanged();
+        ImportGptHandoffCommand?.RaiseCanExecuteChanged();
     }
 
     private async Task LoadSettingsAsync()

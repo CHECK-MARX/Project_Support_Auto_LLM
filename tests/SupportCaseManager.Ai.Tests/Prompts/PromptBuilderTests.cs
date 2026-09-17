@@ -193,6 +193,29 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void Build_LabelsGptHandoffAsSupplementalAndNotFormalProductEvidence()
+    {
+        var request = CreateRequest() with
+        {
+            Settings = new AiAssistantSettings { MaxPromptChars = 12000 },
+            Sources =
+            [
+                CreateSource("handoff") with
+                {
+                    SourceType = "GptHandoff",
+                    Text = "メーカー担当者 Chen Chen / 未解決事項 顧客同意確認",
+                },
+            ],
+        };
+
+        var messages = new PromptBuilder().Build(request);
+
+        Assert.Contains("案件継続用の補助情報", messages.UserPrompt, StringComparison.Ordinal);
+        Assert.Contains("GptHandoff単独で製品仕様", messages.UserPrompt, StringComparison.Ordinal);
+        Assert.Contains("sourceType: GptHandoff", messages.UserPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Build_StreamCompoundQuestionRequiresDirectStructuredSynthesis()
     {
         var request = CreateRequest() with

@@ -4,6 +4,7 @@ namespace SupportCaseManager.Ai.Core.Codex;
 
 public enum CodexCaseFileKind
 {
+    GptHandoff,
     CustomerInquiry,
     Screenshot,
     Log,
@@ -170,6 +171,12 @@ public sealed class CodexCaseFileScanner : ICodexCaseFileScanner
 
     private static CodexCaseFileKind Classify(string fileName, string extension)
     {
+        if (extension.Equals(".txt", StringComparison.OrdinalIgnoreCase) &&
+            fileName.StartsWith("GPT連携内容_", StringComparison.OrdinalIgnoreCase))
+        {
+            return CodexCaseFileKind.GptHandoff;
+        }
+
         if (fileName.Contains("相談", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("問い合わせ", StringComparison.OrdinalIgnoreCase)
             || fileName.Contains("inquiry", StringComparison.OrdinalIgnoreCase))

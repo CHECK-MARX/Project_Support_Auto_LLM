@@ -1024,6 +1024,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Text="サポートID" />
                                 <TextBlock Grid.Column="1" Text="{Binding SupportNumber}" TextWrapping="Wrap" />
@@ -1059,6 +1060,16 @@
                                                  Value="{Binding Codex.ProgressPercent, Mode=OneWay}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1" Margin="12,0,0,0" Text="{Binding Codex.ProgressText, Mode=OneWay}" />
                                 </Grid>
+
+                                <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="GPT引継ぎ" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding GptHandoffStatusText, Mode=OneWay}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <Button Content="GPT引継ぎ情報を作成"
+                                            Command="{Binding CreateGptHandoffCommand}" />
+                                    <Button Content="GPT引継ぎ情報を取り込む"
+                                            Margin="8,0,0,0"
+                                            Command="{Binding ImportGptHandoffCommand}" />
+                                </StackPanel>
                             </Grid>
                         </GroupBox>
 

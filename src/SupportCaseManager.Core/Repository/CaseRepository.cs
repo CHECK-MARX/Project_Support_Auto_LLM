@@ -68,7 +68,7 @@ public sealed class CaseRepository
     public List<CaseRecord> AllCases()
     {
         var filesystem = ScanFolders();
-        var indexed = FilterIndexForCurrentBase(_caseIndex);
+        var indexed = FilterIndexForCurrentBase(_caseIndex, filesystem);
         var merged = MergeCases(indexed, filesystem);
         _caseIndex = merged.Select(item => item.CloneWith(isFromFolder: false)).ToList();
         SaveIndex();
@@ -363,7 +363,9 @@ public sealed class CaseRepository
         return combined;
     }
 
-    private List<CaseRecord> FilterIndexForCurrentBase(IEnumerable<CaseRecord> records)
+    private List<CaseRecord> FilterIndexForCurrentBase(
+        IEnumerable<CaseRecord> records,
+        IReadOnlyCollection<CaseRecord> filesystemCases)
     {
         if (string.IsNullOrWhiteSpace(_basePath))
         {
@@ -373,15 +375,24 @@ public sealed class CaseRepository
         var filtered = new List<CaseRecord>();
         foreach (var record in records)
         {
-            if (!CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(
+            if (CaseFolderPathPolicy.TryNormalizeExistingFolderWithinRoots(
                     record.FolderPath,
                     [_basePath],
-                    out var folderPath))
+                    out _))
             {
+                filtered.Add(record);
                 continue;
             }
 
-            filtered.Add(record);
+            // A renamed/moved case may still be present in the filesystem scan.
+            // Keep only the stale index entry that can be safely re-associated by
+            // its stable support number; unrelated missing cases remain excluded.
+            if (!string.IsNullOrWhiteSpace(record.NormalizedSupport) &&
+                filesystemCases.Any(folder =>
+                    string.Equals(folder.NormalizedSupport, record.NormalizedSupport, StringComparison.OrdinalIgnoreCase)))
+            {
+                filtered.Add(record);
+            }
         }
 
         return filtered;
