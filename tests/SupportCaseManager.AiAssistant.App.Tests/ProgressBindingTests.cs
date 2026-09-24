@@ -5,6 +5,23 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 public sealed class ProgressBindingTests
 {
     [Fact]
+    public void MainWindow_SendButtonAndCtrlEnterUseTheSameUiCommand()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var sendButton = Assert.Single(document.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            element.Attribute("Content")?.Value == "送信");
+        var ctrlEnter = Assert.Single(document.Descendants(), element =>
+            element.Name.LocalName == "KeyBinding" &&
+            element.Attribute("Key")?.Value == "Enter" &&
+            element.Attribute("Modifiers")?.Value == "Control");
+
+        Assert.Equal("{Binding Codex.SendFromUiCommand}", sendButton.Attribute("Command")?.Value);
+        Assert.Equal("OnCodexSendButtonClick", sendButton.Attribute("Click")?.Value);
+        Assert.Equal(sendButton.Attribute("Command")?.Value, ctrlEnter.Attribute("Command")?.Value);
+    }
+
+    [Fact]
     public void MainWindow_ProgressBarUsesOneWayBindingForReadOnlyProgress()
     {
         var document = XDocument.Load(FindMainWindowPath());

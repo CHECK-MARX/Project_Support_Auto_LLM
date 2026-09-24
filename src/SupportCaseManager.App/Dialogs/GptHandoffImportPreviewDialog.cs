@@ -19,8 +19,11 @@ public sealed class GptHandoffImportPreviewDialog : Window
         MinWidth = 720;
         MinHeight = 540;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        SetResourceReference(BackgroundProperty, "AppBackgroundBrush");
+        SetResourceReference(ForegroundProperty, "AppForegroundBrush");
 
         var root = new Grid { Margin = new Thickness(16) };
+        root.SetResourceReference(System.Windows.Controls.Panel.BackgroundProperty, "AppBackgroundBrush");
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });

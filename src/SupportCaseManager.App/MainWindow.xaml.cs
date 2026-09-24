@@ -138,7 +138,8 @@ public partial class MainWindow : Window
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
         _chatGptHistorySearchService = chatGptHistorySearchService ?? new ChatGptHistorySearchService();
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
-        _gptCaseRegistrationService = gptCaseRegistrationService ?? new GptCaseRegistrationService();
+        _gptCaseRegistrationService = gptCaseRegistrationService ??
+            new GptCaseRegistrationService(new GptConversationService(new ChatGptBrowserGateway(viewModel.Logger)));
         _gptHandoffBriefBuilder = gptHandoffBriefBuilder ?? new GptCaseHandoffBriefBuilder();
         _config = viewModel.Config;
         _repository = viewModel.Repository;

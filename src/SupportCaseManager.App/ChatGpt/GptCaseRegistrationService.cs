@@ -261,6 +261,17 @@ public sealed class GptCaseRegistrationService
             return guard;
         }
 
+        if (string.IsNullOrWhiteSpace(approvedBrief) ||
+            !System.Text.RegularExpressions.Regex.IsMatch(
+                approvedBrief,
+                $@"(?m)^Support ID[：:]\s*{System.Text.RegularExpressions.Regex.Escape(caseRecord.SupportNumber)}\s*$"))
+        {
+            return new GptRegistrationUpdate(
+                GptRegistrationUpdateStatus.Failed,
+                null,
+                "登録内容に現在案件のSupport IDがありません。送信していません。");
+        }
+
         GptConversationCreationResult result;
         try
         {

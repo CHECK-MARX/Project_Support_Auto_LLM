@@ -35,7 +35,7 @@ using WinForms = System.Windows.Forms;
 
 namespace SupportCaseManager.AiAssistant.App.ViewModels;
 
-public sealed class MainViewModel : ObservableObject
+public sealed partial class MainViewModel : ObservableObject
 {
     private static readonly HashSet<string> AutoSavedProperties =
     [
@@ -376,6 +376,8 @@ public sealed class MainViewModel : ObservableObject
         SaveDraftCommand = new AsyncRelayCommand(SaveDraftAsync);
         WriteTestLogCommand = new AsyncRelayCommand(WriteTestLogAsync);
         OpenLogCommand = new RelayCommand(OpenLog);
+        RunQuickDiagnosticCommand = new AsyncRelayCommand(RunQuickDiagnosticAsync);
+        CancelQuickDiagnosticCommand = new RelayCommand(CancelQuickDiagnostic);
         CreateGptHandoffCommand = new AsyncRelayCommand(CreateGptHandoffAsync, () => GptHandoffAvailable);
         ImportGptHandoffCommand = new AsyncRelayCommand(ImportGptHandoffAsync, () => GptHandoffAvailable);
 
@@ -435,6 +437,7 @@ public sealed class MainViewModel : ObservableObject
         codex = codexViewModel ?? throw new ArgumentNullException(nameof(codexViewModel));
         OnPropertyChanged(nameof(Codex));
         codex.RefreshCaseSelection();
+        codex.OnCaseLoaded(BuildCodexCaseSnapshot());
     }
 
     public (string? Model, string? ReasoningEffort) GetCaseCodexSelection()
@@ -1818,6 +1821,7 @@ public sealed class MainViewModel : ObservableObject
         currentCaseContext = BuildCurrentCaseContext();
         RefreshProductContextComputedProperties();
         codex?.RefreshCaseSelection();
+        codex?.OnCaseLoaded(BuildCodexCaseSnapshot());
         UpdatePromptSummary();
     }
 
@@ -3673,6 +3677,7 @@ public sealed class MainViewModel : ObservableObject
         ReplaceNotes(context.Notes);
         ApplyPreferredCustomerReplyDraft(context.Notes);
         codex?.RefreshCaseSelection();
+        codex?.OnCaseLoaded(BuildCodexCaseSnapshot());
     }
 
     private void ApplyPreferredCustomerInquiry(IReadOnlyList<NoteSnapshot> notes)

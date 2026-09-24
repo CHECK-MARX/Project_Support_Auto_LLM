@@ -90,7 +90,7 @@ public sealed class GptCaseRegistrationServiceTests
             conversation,
             () => new DateTimeOffset(2026, 9, 16, 12, 0, 0, TimeSpan.FromHours(9)));
 
-        var result = await service.RegisterNewAsync(Case(), "Checkmarx", Target, "approved brief");
+        var result = await service.RegisterNewAsync(Case(), "Checkmarx", Target, "Support ID：00018303\napproved brief");
 
         Assert.Equal(GptRegistrationUpdateStatus.Registered, result.Status);
         Assert.NotNull(result.Registration);
@@ -118,6 +118,32 @@ public sealed class GptCaseRegistrationServiceTests
     }
 
     [Fact]
+    public async Task RegisterNew_BlocksBriefWithoutCurrentSupportIdBeforeBrowserCall()
+    {
+        var conversation = new FakeConversationService();
+
+        var result = await new GptCaseRegistrationService(conversation)
+            .RegisterNewAsync(Case(), "Checkmarx", Target, "Support ID：00018949\n別案件の情報");
+
+        Assert.Equal(GptRegistrationUpdateStatus.Failed, result.Status);
+        Assert.Null(result.Registration);
+        Assert.Equal(0, conversation.CreateCalls);
+    }
+
+    [Fact]
+    public async Task RegisterNew_RejectsCurrentIdOnlyInUnrelatedHistory()
+    {
+        var conversation = new FakeConversationService();
+
+        var result = await new GptCaseRegistrationService(conversation)
+            .RegisterNewAsync(Case(), "Checkmarx", Target,
+                "Support ID：00018949\n過去の履歴には00018303も含まれています。");
+
+        Assert.Equal(GptRegistrationUpdateStatus.Failed, result.Status);
+        Assert.Equal(0, conversation.CreateCalls);
+    }
+
+    [Fact]
     public async Task RegisterNew_PostSendUrlFailureRequiresRelinkWithoutRetry()
     {
         var conversation = new FakeConversationService(new(
@@ -126,7 +152,7 @@ public sealed class GptCaseRegistrationServiceTests
             "missing URL"));
 
         var result = await new GptCaseRegistrationService(conversation)
-            .RegisterNewAsync(Case(), "Checkmarx", Target, "brief");
+            .RegisterNewAsync(Case(), "Checkmarx", Target, "Support ID：00018303\nbrief");
 
         Assert.Equal(GptRegistrationUpdateStatus.NeedsRelink, result.Status);
         Assert.Equal(GptRegistrationStates.NeedsRelink, result.Registration?.RegistrationState);
@@ -142,7 +168,7 @@ public sealed class GptCaseRegistrationServiceTests
             string.Empty));
 
         var result = await new GptCaseRegistrationService(conversation)
-            .RegisterNewAsync(Case(), "Checkmarx", Target, "brief");
+            .RegisterNewAsync(Case(), "Checkmarx", Target, "Support ID：00018303\nbrief");
 
         Assert.Equal(GptRegistrationUpdateStatus.NeedsRelink, result.Status);
         Assert.Equal(GptRegistrationStates.NeedsRelink, result.Registration?.RegistrationState);
