@@ -63,4 +63,7 @@ public sealed record class AiAssistantLaunchContext
 
     [JsonPropertyName("noteEditorTransferPipeName")]
     public string NoteEditorTransferPipeName { get; init; } = string.Empty;
+
+    [JsonPropertyName("gptHandoff")]
+    public GptHandoffContext GptHandoff { get; init; } = new();
 }

@@ -969,7 +969,8 @@ public static partial class AnswerPostProcessor
         return string.Equals(sourceType, "PastCase", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(sourceType, "PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(sourceType, "PastAnswer", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(sourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase);
+            string.Equals(sourceType, "ExactPastAnswer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(sourceType, "GptHandoff", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string BuildNoDirectEvidenceCustomerReply(AnswerDraftRequest request)

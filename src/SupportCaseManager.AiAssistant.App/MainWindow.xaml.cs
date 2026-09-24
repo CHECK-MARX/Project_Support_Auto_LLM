@@ -23,6 +23,14 @@ public partial class MainWindow : Window
         Closing += OnClosing;
     }
 
+    private async void OnCodexSendButtonClick(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Codex is { } codex)
+        {
+            await codex.RecordSendUiClickAsync();
+        }
+    }
+
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
         if (allowClose || shutdownComplete)

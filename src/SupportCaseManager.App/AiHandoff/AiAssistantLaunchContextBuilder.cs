@@ -36,6 +36,7 @@ public sealed class AiAssistantLaunchContextBuilder : IAiAssistantLaunchContextB
             CurrentNoteText = currentNoteText,
             InquiryText = inquiryText,
             AdditionalInstruction = Normalize(state.AdditionalInstruction),
+            GptHandoff = state.GptHandoff ?? new GptHandoffContext(),
         };
     }
 

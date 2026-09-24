@@ -9,6 +9,448 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 public sealed class CodexChatViewModelTests
 {
     [Fact]
+    public void CaseSwitch_ClearsEditedPresetButSameCaseRetainsIt()
+    {
+        using var temp = new TempDirectory();
+        var viewModel = CreateViewModel(temp, new FakeClient());
+        var caseA = new CodexCaseSnapshot
+        {
+            SupportId = "00010001", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var caseB = caseA with { SupportId = "00010002" };
+        var preset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+
+        viewModel.OnCaseLoaded(caseA);
+        viewModel.SelectedPreset = preset;
+        viewModel.PromptInput += "株式会社Aの担当者への回答を含める";
+        viewModel.OnCaseLoaded(caseA with { SupportId = "10001", CaseFolder = Path.Combine(temp.Path, "renamed") });
+        Assert.Contains("株式会社A", viewModel.PromptInput);
+
+        viewModel.OnCaseLoaded(caseB);
+        Assert.Null(viewModel.SelectedPreset);
+        Assert.Equal(string.Empty, viewModel.PromptInput);
+        Assert.DoesNotContain("株式会社A", viewModel.PromptInput);
+
+        viewModel.SelectedPreset = preset;
+        Assert.Equal(preset.Prompt, viewModel.PromptInput);
+        Assert.DoesNotContain("株式会社A", viewModel.PromptInput);
+    }
+
+    [Fact]
+    public async Task CustomerReplyPreset_ReselectionLoadsGenericTextAndSendsEditedInstruction()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        var customerPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+        var otherPreset = viewModel.PromptPresets.Single(item => item.Name == "案件全体を調査");
+
+        viewModel.SelectedPreset = customerPreset;
+        viewModel.PromptInput = "前案件の具体的な文章";
+        viewModel.SelectedPreset = otherPreset;
+        viewModel.SelectedPreset = customerPreset;
+        Assert.Equal(customerPreset.Prompt, viewModel.PromptInput);
+        Assert.DoesNotContain("前案件", viewModel.PromptInput);
+
+        viewModel.PromptInput += " 今回は未解決事項を先に記載してください。";
+        await viewModel.InitializeAsync();
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.Contains("今回は未解決事項を先に記載してください。", fakeClient.LastTurnText);
+        Assert.Contains(customerPreset.Prompt, fakeClient.LastTurnText);
+    }
+
+    [Fact]
+    public async Task GuiSend_DisconnectedShowsReasonAndConnectEnablesSending()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "調査してください";
+
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("Codex未接続", viewModel.SendAvailabilityMessage);
+        viewModel.SendFromUiCommand.Execute(null);
+        Assert.Equal(0, fakeClient.TurnCount);
+
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("Thread", viewModel.SendAvailabilityMessage);
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1", TimeSpan.FromSeconds(5));
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null), viewModel.SendAvailabilityMessage);
+        Assert.Equal(string.Empty, viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_NewInvestigationReevaluatesCommandAndTemplateEditsStayEnabled()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.OnCaseLoaded(new CodexCaseSnapshot
+        {
+            SupportId = "0001", ProductName = "HelixQAC", CaseFolder = temp.Path,
+        });
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+
+        var changed = 0;
+        viewModel.SendFromUiCommand.CanExecuteChanged += (_, _) => changed++;
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.True(changed > 0);
+        viewModel.PromptInput += " 今回の追加指示を優先してください。";
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Equal(string.Empty, viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_CustomerReplyPresetClickReachesCodexWithOrderedBreadcrumbs()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient { HoldTurn = true };
+        var logger = new FakeLogger(temp.Path);
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), logger, () => snapshot,
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+        viewModel.PromptInput += "\n資料は案件サイトにアップロード済みです。";
+        await viewModel.RecordSendUiClickAsync();
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null), viewModel.SendAvailabilityMessage);
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        var stages = logger.Entries.Where(entry => entry.Category == "send-path")
+            .Select(entry => entry.Message.Split(';')[0]).ToArray();
+        Assert.Contains("SEND_UI_CLICK", stages);
+        Assert.Contains("SEND_COMMAND_EXECUTE_ALLOWED", stages);
+        Assert.Contains("SEND_COMMAND_EXECUTE", stages);
+        Assert.Contains("SEND_GUARD_START", stages);
+        Assert.Contains("SEND_CASE_OK", stages);
+        Assert.Contains("SEND_THREAD_OK", stages);
+        Assert.Contains("SEND_PROMPT_OK", stages);
+        Assert.Contains("SEND_ROUTE_RESOLVED=BASELINE_CHAT", stages);
+        Assert.Contains("SEND_PIPELINE_ENTER", stages);
+        Assert.Contains("CODEX_SEND_START", stages);
+        Assert.DoesNotContain(logger.Entries, entry => entry.Message.Contains("アップロード済み", StringComparison.Ordinal));
+
+        viewModel.SendFromUiCommand.Execute(null);
+        Assert.Equal(1, client.TurnCount);
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("SEND_COMMAND_EXECUTE_BLOCKED", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GuiSend_GuardChangeDuringClickShowsReasonInsteadOfSilentlyReturning()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var logger = new FakeLogger(temp.Path);
+        var current = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var invalid = current with { SupportId = string.Empty };
+        var guardCalls = 0;
+        var changeDuringExecute = false;
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), logger,
+            () => changeDuringExecute && ++guardCalls >= 2 ? invalid : current,
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.PromptInput = "調査してください";
+
+        changeDuringExecute = true;
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => !string.IsNullOrEmpty(viewModel.ErrorText), TimeSpan.FromSeconds(5));
+
+        Assert.Contains("現在案件を確認できません", viewModel.ErrorText);
+        Assert.Equal(0, client.TurnCount);
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("SEND_BLOCKED=GUARD", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GuiSend_CodexExceptionIsVisibleAndLogged()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient { TurnException = new InvalidOperationException("transport unavailable") };
+        var logger = new FakeLogger(temp.Path);
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), logger,
+            () => new CodexCaseSnapshot
+            {
+                SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+            },
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.PromptInput = "調査してください";
+
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ErrorText.Contains("transport unavailable", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("CODEX_SEND_START", StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("SEND_EXCEPTION=InvalidOperationException", StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, entry => entry.Category == "ui-operation");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task GuiSend_CaseTemplateFilesAndDefaultArtifactNameDoNotBlockCustomerReply(bool historyHasContent)
+    {
+        using var temp = new TempDirectory();
+        var inquiry = Path.Combine(temp.Path, "お客様ご相談内容_00018949.txt");
+        await File.WriteAllTextAsync(inquiry, "現在のお客様からの問い合わせです。");
+        var history = historyHasContent ? "過去の連絡内容" : string.Empty;
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "メーカー連携内容_00018949.txt"), history);
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様への返信案_00018949.txt"), history);
+        var client = new FakeClient { HoldTurn = true };
+        var logger = new FakeLogger(temp.Path);
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), logger,
+            () => new CodexCaseSnapshot
+            {
+                SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+                InquiryFile = inquiry, InquiryText = "現在のお客様からの問い合わせです。",
+            },
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+        viewModel.PromptInput += "\n資料はサイトにアップロード済みです。";
+
+        Assert.Equal("Inquiry_Details_EN.xlsx", viewModel.ArtifactOutputFileName);
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.DoesNotContain(logger.Entries, entry => entry.Message.StartsWith("SEND_BLOCKED=MANUFACTURER_FOLLOWUP_PENDING", StringComparison.Ordinal));
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("CODEX_SEND_START", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GuiSend_ConfirmedFollowUpContextStillBlocksCustomerReply()
+    {
+        using var temp = new TempDirectory();
+        var inquiry = Path.Combine(temp.Path, "お客様ご相談内容_00018742.txt");
+        var delta = Path.Combine(temp.Path, "追加問い合わせ内容.xlsx");
+        await File.WriteAllTextAsync(inquiry, "当初の問い合わせです。");
+        await File.WriteAllBytesAsync(delta, [1, 2, 3]);
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "メーカー連携内容_00018742.txt"), "過去のメーカー連絡です。");
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様への返信案_00018742.txt"), "過去のお客様返信です。");
+        var client = new FakeClient();
+        var logger = new FakeLogger(temp.Path);
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), logger,
+            () => new CodexCaseSnapshot
+            {
+                SupportId = "00018742", ProductName = "Checkmarx", CaseFolder = temp.Path,
+                InquiryFile = inquiry, InquiryText = "当初の問い合わせです。",
+            },
+            () => "fake.exe", _ => true, _ => true, _ => { },
+            excelTranslationService: new FakeExcelTranslationService(),
+            artifactPromptComposer: new ArtifactPromptComposer(temp.Path));
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "追加問い合わせ内容.xlsxを英訳して別名保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        Assert.Equal(delta, viewModel.ArtifactSourceFile);
+
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.WarningText.Contains("メーカー確認待ち", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, client.TurnCount);
+        Assert.Contains("メーカー確認待ち", viewModel.ErrorText, StringComparison.Ordinal);
+        Assert.Contains(logger.Entries, entry => entry.Message.StartsWith("SEND_BLOCKED=MANUFACTURER_FOLLOWUP_PENDING", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GuiSend_SameCaseFolderRenameDoesNotBlockActiveThread()
+    {
+        using var temp = new TempDirectory();
+        var oldFolder = Path.Combine(temp.Path, "old");
+        var newFolder = Path.Combine(temp.Path, "renamed");
+        Directory.CreateDirectory(oldFolder);
+        Directory.CreateDirectory(newFolder);
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = oldFolder,
+        };
+        var client = new FakeClient();
+        var viewModel = CreateDynamicViewModel(temp, client, () => snapshot);
+        viewModel.OnCaseLoaded(snapshot);
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.PromptInput = "調査してください";
+
+        snapshot = snapshot with { CaseFolder = newFolder, Status = "更新済み" };
+        viewModel.OnCaseLoaded(snapshot);
+
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null), viewModel.SendAvailabilityMessage);
+        Assert.Equal(string.Empty, viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_SameFolderDifferentCaseIsBlockedWithReason()
+    {
+        using var temp = new TempDirectory();
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var client = new FakeClient();
+        var viewModel = CreateDynamicViewModel(temp, client, () => snapshot);
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        snapshot = snapshot with { SupportId = "00018950" };
+        viewModel.OnCaseLoaded(snapshot);
+        viewModel.PromptInput = "調査してください";
+
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_SameSupportIdDifferentProductIsBlocked()
+    {
+        using var temp = new TempDirectory();
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var client = new FakeClient();
+        var viewModel = CreateDynamicViewModel(temp, client, () => snapshot);
+        viewModel.OnCaseLoaded(snapshot);
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        snapshot = snapshot with { ProductName = "Klocwork" };
+        viewModel.OnCaseLoaded(snapshot);
+        viewModel.PromptInput = "調査してください";
+
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_EmptyPromptAndActiveTurnShowTheirOwnReasons()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient { HoldTurn = true };
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1" &&
+            viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("送信内容がありません", viewModel.SendAvailabilityMessage);
+        viewModel.PromptInput = "調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("処理中", viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task GuiSend_AfterCaseSwitchDoesNotUsePreviousCaseThread()
+    {
+        using var temp = new TempDirectory();
+        var folderA = Path.Combine(temp.Path, "case-a");
+        var folderB = Path.Combine(temp.Path, "case-b");
+        Directory.CreateDirectory(folderA);
+        Directory.CreateDirectory(folderB);
+        var snapshot = new CodexCaseSnapshot { SupportId = "00010001", ProductName = "Checkmarx", CaseFolder = folderA };
+        var fakeClient = new FakeClient();
+        var viewModel = new CodexChatViewModel(
+            fakeClient, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(), new FakeLogger(temp.Path),
+            () => snapshot, () => "fake.exe", _ => true, _ => true, _ => { });
+        viewModel.OnCaseLoaded(snapshot);
+        await viewModel.InitializeAsync();
+        viewModel.ConnectCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.WorkingDirectory == folderA, TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(() => viewModel.StartNewCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+
+        snapshot = snapshot with { SupportId = "00010002", CaseFolder = folderB };
+        viewModel.OnCaseLoaded(snapshot);
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
+
+        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
+        viewModel.StartNewCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.WorkingDirectory == folderB, TimeSpan.FromSeconds(5));
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+    }
+
+    [Fact]
     public void FinalReviewCommand_IsDisabledUntilCurrentCaseThreadExists()
     {
         using var temp = new TempDirectory();
@@ -431,6 +873,143 @@ public sealed class CodexChatViewModelTests
         string expected)
     {
         Assert.Equal(expected, NaturalLanguageOperationResolver.Resolve(instruction).ToString());
+    }
+
+    [Theory]
+    [InlineData("メーカーへ依頼済みです。回答は9月24日以降になります。その旨をお客様へ連絡してください。", nameof(NaturalLanguageOperation.CustomerStatusUpdate), nameof(NaturalLanguageRecipient.Customer), false)]
+    [InlineData("メーカーへ確認中です。回答待ちであることをお客様へ連絡してください。", nameof(NaturalLanguageOperation.CustomerStatusUpdate), nameof(NaturalLanguageRecipient.Customer), false)]
+    [InlineData("メーカーからまだ回答がありません。お客様へ進捗連絡メールを作成してください。", nameof(NaturalLanguageOperation.CustomerStatusUpdate), nameof(NaturalLanguageRecipient.Customer), false)]
+    [InlineData("以下のメーカー回答を踏まえて、お客様への回答を作成してください。", nameof(NaturalLanguageOperation.CustomerReply), nameof(NaturalLanguageRecipient.Customer), true)]
+    [InlineData("以下のメーカー回答に対してメーカーへ御礼返信を作成してください。", nameof(NaturalLanguageOperation.ManufacturerReply), nameof(NaturalLanguageRecipient.Manufacturer), true)]
+    [InlineData("以下のメーカー回答を日本語にしてください。", nameof(NaturalLanguageOperation.ManufacturerResponseTranslation), nameof(NaturalLanguageRecipient.Unspecified), true)]
+    [InlineData("このエラーの原因を教えてください。", nameof(NaturalLanguageOperation.NormalChat), nameof(NaturalLanguageRecipient.Unspecified), false)]
+    [InlineData("メーカーへこの内容を確認するメールを作成してください。", nameof(NaturalLanguageOperation.ManufacturerAsk), nameof(NaturalLanguageRecipient.Manufacturer), false)]
+    [InlineData("メーカーへ依頼済みである旨のお客様向けメールを作成してください。", nameof(NaturalLanguageOperation.CustomerStatusUpdate), nameof(NaturalLanguageRecipient.Customer), false)]
+    public void NaturalLanguageOperationResolver_PrioritizesRecipientAndResponseRequirement(
+        string instruction,
+        string expectedOperation,
+        string expectedRecipient,
+        bool requiresManufacturerResponse)
+    {
+        var result = NaturalLanguageOperationResolver.ResolveIntent(instruction);
+
+        Assert.Equal(expectedOperation, result.Operation.ToString());
+        Assert.Equal(expectedRecipient, result.Recipient.ToString());
+        Assert.Equal(requiresManufacturerResponse, result.RequiresManufacturerResponse);
+    }
+
+    [Fact]
+    public async Task CustomerStatusUpdate_WithManufacturerResponseWords_RemainsBaselineChat()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedPreset = null;
+        viewModel.JapaneseManufacturerDraft = "既存の日本語メーカー案";
+        viewModel.EnglishManufacturerDraft = "Existing manufacturer draft";
+        var artifactStateBefore = viewModel.ArtifactStateText;
+        var artifactSourceBefore = viewModel.ArtifactSourceFile;
+        var artifactOutputBefore = viewModel.ArtifactOutputPlanText;
+        viewModel.PromptInput = """
+            メーカーには依頼済みです。
+            メーカーからの回答について、祭日を挟んで9月24日以降の回答となることを
+            ご理解賜りますようお願い申し上げます。
+            お客様への返信メールを日本語で丁寧に作成してください。
+            """;
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.DoesNotContain("MANUFACTURER_RESPONSE_INCOMPLETE", viewModel.WarningText, StringComparison.Ordinal);
+        Assert.Equal("既存の日本語メーカー案", viewModel.JapaneseManufacturerDraft);
+        Assert.Equal("Existing manufacturer draft", viewModel.EnglishManufacturerDraft);
+        Assert.Equal(artifactStateBefore, viewModel.ArtifactStateText);
+        Assert.Equal(artifactSourceBefore, viewModel.ArtifactSourceFile);
+        Assert.Equal(artifactOutputBefore, viewModel.ArtifactOutputPlanText);
+    }
+
+    [Fact]
+    public async Task ExplicitCustomerStatusInstruction_OverridesGenericSelectedPreset()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(preset => preset.Name == "案件全体を調査");
+        viewModel.PromptInput = "メーカーへ確認中です。回答待ちであることをお客様へ連絡してください。";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.DoesNotContain("MANUFACTURER_RESPONSE_INCOMPLETE", viewModel.WarningText, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
+    }
+
+    [Fact]
+    public async Task ExplicitCustomerStatusInstruction_OverridesManufacturerSelectedPreset()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedPreset = viewModel.PromptPresets.Single(
+            preset => preset.Name == "メーカー回答へ返信する（御礼・受領）");
+        viewModel.PromptInput = "メーカーへ依頼済みです。回答は9月24日以降になる見込みであることをお客様へ連絡してください。";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.DoesNotContain("MANUFACTURER_RESPONSE_INCOMPLETE", viewModel.WarningText, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
+    }
+
+    [Fact]
+    public async Task CustomerReply_RequiringManufacturerResponse_StopsWhenResponseIsMissing()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = "以下のメーカー回答を踏まえて、お客様への回答を作成してください。";
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(
+            () => viewModel.WarningText.Contains("MANUFACTURER_RESPONSE_INCOMPLETE", StringComparison.Ordinal),
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal(0, fakeClient.TurnCount);
+    }
+
+    [Fact]
+    public async Task CustomerReply_RequiringManufacturerResponse_UsesInlineResponseInBaselineChat()
+    {
+        using var temp = new TempDirectory();
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.SelectedPreset = null;
+        viewModel.PromptInput = """
+            以下のメーカー回答を踏まえて、お客様への回答を作成してください。
+
+            We support HelixQAC 1.0.
+            Regards
+            Jim Weber | Technical Support Engineer
+            """;
+
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.TechnicalAnswer == "回答です。", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, fakeClient.TurnCount);
+        Assert.DoesNotContain("MANUFACTURER_RESPONSE_INCOMPLETE", viewModel.WarningText, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.JapaneseManufacturerDraft);
+        Assert.Equal(string.Empty, viewModel.EnglishManufacturerDraft);
     }
 
     [Fact]
@@ -1465,6 +2044,22 @@ public sealed class CodexChatViewModelTests
             artifactPromptComposer: new ArtifactPromptComposer(temp.Path));
     }
 
+    private static CodexChatViewModel CreateDynamicViewModel(
+        TempDirectory temp,
+        FakeClient fakeClient,
+        Func<CodexCaseSnapshot> caseProvider) => new(
+            fakeClient,
+            new CodexCaseFileScanner(),
+            new CodexPromptComposer(temp.Path),
+            new CodexSessionStore(Path.Combine(temp.Path, "sessions.json")),
+            new CodexTechnicalValueDiffDetector(),
+            new FakeLogger(temp.Path),
+            caseProvider,
+            () => "fake.exe",
+            _ => true,
+            _ => true,
+            _ => { });
+
     private static CodexChatViewModel CreateViewModelWithSelection(
         TempDirectory temp,
         FakeClient fakeClient,
@@ -1563,6 +2158,8 @@ public sealed class CodexChatViewModelTests
         public string LastTurnText { get; private set; } = string.Empty;
         public IReadOnlyList<string> LastImagePaths { get; private set; } = [];
         public int TurnCount { get; private set; }
+        public bool HoldTurn { get; init; }
+        public Exception? TurnException { get; init; }
         public string LastRequestedModel { get; private set; } = string.Empty;
         public string LastRequestedReasoningEffort { get; private set; } = string.Empty;
         public IReadOnlyList<CodexModelInfo> Models { get; set; } =
@@ -1615,12 +2212,21 @@ public sealed class CodexChatViewModelTests
             string? reasoningEffort = null,
             CancellationToken cancellationToken = default)
         {
+            if (TurnException is not null)
+            {
+                throw TurnException;
+            }
             TurnCount++;
             LastRequestedModel = model ?? LastRequestedModel;
             LastRequestedReasoningEffort = reasoningEffort ?? string.Empty;
             LastTurnText = text;
             LastImagePaths = localImagePaths?.ToArray() ?? [];
             CurrentTurnId = "turn-1";
+            if (HoldTurn)
+            {
+                return Task.FromResult(new CodexTurnStartResult("turn-1", model ?? "fake", reasoningEffort ?? "medium"));
+            }
+
             var response = responses.Count > 0 ? responses.Dequeue() : "回答です。";
             AgentMessageDelta?.Invoke(this, new CodexAgentMessageDeltaEventArgs("thread-1", "turn-1", "item-1", response));
             CurrentTurnId = null;

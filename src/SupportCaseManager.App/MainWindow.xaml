@@ -89,6 +89,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
 
                                 <TextBlock Text="受付日" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" />

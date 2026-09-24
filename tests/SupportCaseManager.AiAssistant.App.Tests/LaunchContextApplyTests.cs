@@ -15,6 +15,8 @@ using SupportCaseManager.Ai.Core.Settings;
 using SupportCaseManager.AiAssistant.App.Appearance;
 using SupportCaseManager.AiAssistant.App.Launch;
 using SupportCaseManager.AiAssistant.App.ViewModels;
+using SupportCaseManager.Core.Cases;
+using System.Windows;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
@@ -118,6 +120,73 @@ public sealed class LaunchContextApplyTests
         Assert.Equal(context.SupportNumber, services.ViewModel.SupportNumber);
         Assert.Equal(context.Status, services.ViewModel.Status);
         Assert.Equal("2026-06-02", services.ViewModel.ReceptionDate);
+    }
+
+    [Fact]
+    public async Task ImportGptHandoffAsync_RegisteredLaunchContextReachesClipboardAndSavesCurrentCase()
+    {
+        var root = Directory.CreateTempSubdirectory("ai-assistant-gpt-import-");
+        var caseFolder = Directory.CreateDirectory(Path.Combine(
+            root.FullName,
+            "20260728(Company_00018303)調査中_20260917"));
+        try
+        {
+            var context = CreateContext() with
+            {
+                ProductName = "Checkmarx",
+                BaseFolder = root.FullName,
+                CloseFolder = string.Empty,
+                CaseFolderPath = caseFolder.FullName,
+                SupportNumber = "00018303",
+                Status = "調査中",
+                GptHandoff = new GptHandoffContext
+                {
+                    SupportId = "00018303",
+                    Product = "Checkmarx",
+                    TargetGptKey = "checkmarx",
+                    TargetGptDisplayName = "Vulnerability Scanner Assistant",
+                    ConversationUrl = "https://chatgpt.com/c/6a70b0a5-1018-83ee-b405-11a2a80326f4",
+                    RegisteredAt = "2026-09-16T22:49:35+09:00",
+                    LinkMode = GptRegistrationLinkModes.ExistingChatLinked,
+                    RegistrationState = GptRegistrationStates.Registered,
+                },
+            };
+            var clipboardReads = 0;
+            var previews = 0;
+            var messages = new List<string>();
+            var services = CreateViewModel(
+                context,
+                CreateSettings(),
+                readGptHandoffClipboardText: () =>
+                {
+                    clipboardReads++;
+                    return ValidGptHandoffClipboard();
+                },
+                confirmGptHandoffImport: _ =>
+                {
+                    previews++;
+                    return true;
+                },
+                importGptHandoffSnapshot: (caseRecord, snapshot, cancellationToken) =>
+                    new GptHandoffImportService(
+                        () => new DateTimeOffset(2026, 9, 17, 9, 0, 0, TimeSpan.FromHours(9)))
+                        .ImportAsync(caseRecord, snapshot, cancellationToken),
+                showGptHandoffMessage: (message, _) => messages.Add(message));
+            services.ViewModel.ApplyLaunchContext(context);
+
+            Assert.True(services.ViewModel.GptHandoffAvailable);
+            await services.ViewModel.ImportGptHandoffAsync();
+
+            Assert.Equal(1, clipboardReads);
+            Assert.Equal(1, previews);
+            Assert.Contains("GPT引継ぎ情報を取り込みました。", messages);
+            Assert.True(File.Exists(Path.Combine(caseFolder.FullName, "GPT連携内容_00018303.txt")));
+            Assert.True(services.ViewModel.GptHandoffAvailable);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
     }
 
     [Fact]
@@ -511,7 +580,11 @@ public sealed class LaunchContextApplyTests
         AiAssistantSettings settings,
         Exception? launchException = null,
         CaseContext? caseContext = null,
-        IReadOnlyList<SearchSource>? supportAnswers = null)
+        IReadOnlyList<SearchSource>? supportAnswers = null,
+        Func<string>? readGptHandoffClipboardText = null,
+        Func<GptHandoffSnapshot, bool>? confirmGptHandoffImport = null,
+        Func<CaseRecord, GptHandoffSnapshot, CancellationToken, Task<GptHandoffImportResult>>? importGptHandoffSnapshot = null,
+        Action<string, MessageBoxImage>? showGptHandoffMessage = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var settingsStore = new FakeSettingsStore(settings);
@@ -534,7 +607,11 @@ public sealed class LaunchContextApplyTests
             _ => new FakeAnswerService(),
             new FakeDraftStore(),
             _ => logger,
-            new NoopAppearanceService());
+            new NoopAppearanceService(),
+            readGptHandoffClipboardText: readGptHandoffClipboardText,
+            confirmGptHandoffImport: confirmGptHandoffImport,
+            importGptHandoffSnapshot: importGptHandoffSnapshot,
+            showGptHandoffMessage: showGptHandoffMessage);
 
         return new TestServices(viewModel, logger, settingsStore, launchReader);
     }
@@ -590,6 +667,25 @@ public sealed class LaunchContextApplyTests
         var task = Assert.IsAssignableFrom<Task>(method.Invoke(viewModel, []));
         await task;
     }
+
+    private static string ValidGptHandoffClipboard() => $$"""
+        {{GptHandoffFormat.StartMarker}}
+        【メーカー担当者】
+        Ivo
+        【新たに判明した事項】
+        設定手順を確認済み
+        【現在の未解決事項】
+        最終確認待ち
+        【解決済みに変更した事項】
+        なし
+        【メーカー最新回答の要旨】
+        回答あり
+        【お客様対応上の注意事項】
+        推測しない
+        【現在の次アクション】
+        メーカー回答を確認
+        {{GptHandoffFormat.EndMarker}}
+        """;
 
     private static async Task<T> InvokePrivateTaskResultAsync<T>(
         MainViewModel viewModel,

@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
+using SupportCaseManager.Core.Cases;
 using WpfApplication = System.Windows.Application;
 using WpfClipboard = System.Windows.Clipboard;
 
@@ -70,6 +71,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private string promptInput = string.Empty;
     private string currentManufacturerResponseCandidate = string.Empty;
     private CodexPromptPreset? selectedPreset;
+    private (string SupportId, string Product)? promptCaseIdentity;
     private string warningText = string.Empty;
     private string errorText = string.Empty;
     private string technicalAnswer = string.Empty;
@@ -186,6 +188,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         StartNewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(StartNewAsync), CanStartThread);
         ResumeCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ResumeAsync), () => CanStartThread() && hasPreviousSession);
         SendCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(SendAsync), CanSend);
+        SendFromUiCommand = new AsyncRelayCommand(
+            () => ExecuteGuardedAsync(SendFromUiAsync),
+            () => CanSendFromUi,
+            ObserveSendCommandAsync);
         StopCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(StopAsync), () => turnActive);
         RefreshFilesCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(RefreshFilesAsync), () => !turnActive);
         ApplyReplyCommand = new RelayCommand(ApplyLatestReply, HasLatestAnswer);
@@ -230,6 +236,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     public AsyncRelayCommand StartNewCommand { get; }
     public AsyncRelayCommand ResumeCommand { get; }
     public AsyncRelayCommand SendCommand { get; }
+    public AsyncRelayCommand SendFromUiCommand { get; }
     public AsyncRelayCommand StopCommand { get; }
     public AsyncRelayCommand RefreshFilesCommand { get; }
     public RelayCommand ApplyReplyCommand { get; }
@@ -568,6 +575,121 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         await FindPreviousSessionAsync().ConfigureAwait(false);
     }
 
+    public string SendAvailabilityMessage => SendBlockReason();
+
+    public bool CanSendFromUi => string.IsNullOrEmpty(SendBlockReason());
+
+    public async Task RecordSendUiClickAsync()
+    {
+        var reason = SendBlockReason();
+        await LogSendStageAsync("SEND_UI_CLICK");
+        if (!string.IsNullOrEmpty(reason))
+        {
+            ErrorText = reason;
+            await LogSendStageAsync("SEND_BLOCKED=UI_COMMAND_DISABLED");
+        }
+    }
+
+    private async Task ObserveSendCommandAsync(bool allowed)
+    {
+        await LogSendStageAsync(allowed ? "SEND_COMMAND_EXECUTE_ALLOWED" : "SEND_COMMAND_EXECUTE_BLOCKED");
+        if (!allowed)
+        {
+            var reason = SendBlockReason();
+            RunOnUi(() => ErrorText = string.IsNullOrEmpty(reason)
+                ? "送信処理中です。完了後に再試行してください。"
+                : reason);
+        }
+    }
+
+    private async Task SendFromUiAsync()
+    {
+        await LogSendStageAsync("SEND_COMMAND_EXECUTE");
+        try
+        {
+            await LogSendStageAsync("SEND_GUARD_START");
+            var reason = SendBlockReason();
+            if (!string.IsNullOrEmpty(reason))
+            {
+                RunOnUi(() => ErrorText = reason);
+                await LogSendStageAsync("SEND_BLOCKED=GUARD");
+                return;
+            }
+
+            await LogSendStageAsync("SEND_CASE_OK");
+            await LogSendStageAsync("SEND_THREAD_OK");
+            await LogSendStageAsync("SEND_PROMPT_OK");
+            await SendAsync();
+        }
+        catch (Exception ex)
+        {
+            await LogSendStageAsync($"SEND_EXCEPTION={ex.GetType().Name}");
+            throw;
+        }
+    }
+
+    private async Task LogSendStageAsync(string stage)
+    {
+        try
+        {
+            var supportId = currentSnapshot?.SupportId ?? string.Empty;
+            var threadId = client.CurrentThreadId ?? string.Empty;
+            var shortThreadId = threadId.Length <= 8 ? threadId : threadId[..8];
+            await logger.WriteAsync("send-path", $"{stage}; supportId={supportId}; thread={shortThreadId}; promptLength={PromptInput.Length}");
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceError($"Send-path diagnostics failed: {ex.GetType().Name}");
+        }
+    }
+
+    private string SendBlockReason()
+    {
+        var snapshot = caseProvider();
+        if (string.IsNullOrWhiteSpace(snapshot.SupportId) ||
+            (snapshot.ProductId is null && string.IsNullOrWhiteSpace(snapshot.ProductName)) ||
+            string.IsNullOrWhiteSpace(snapshot.CaseFolder))
+            return "現在案件を確認できません。案件を読み直してください。";
+        if (!caseFolderReady)
+            return string.IsNullOrWhiteSpace(CaseFolderSendStatus)
+                ? "案件フォルダを確認できません。案件ファイルを再読込してください。"
+                : CaseFolderSendStatus;
+        if (turnActive)
+            return "処理中です。完了後に送信してください。";
+        if (ConnectionState is not (CodexConnectionState.Connected or CodexConnectionState.Completed)
+            || client.ConnectionInfo is null)
+            return "Codex未接続です。『新しい調査』または『前回の続きから再開』で接続してください。";
+        if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
+            return "Codex Threadがありません。『新しい調査』または『前回の続きから再開』を実行してください。";
+        if (!IsCurrentCaseThread(snapshot))
+            return "現在案件のThreadではありません。『新しい調査』または『前回の続きから再開』で切り替えてください。";
+        if (string.IsNullOrWhiteSpace(PromptInput))
+            return "送信内容がありません。指示を入力してください。";
+        return string.Empty;
+    }
+
+    private bool IsCurrentCaseThread(CodexCaseSnapshot snapshot)
+    {
+        if (currentSnapshot is null || currentSession is null ||
+            !string.Equals(currentSession.CodexThreadId, client.CurrentThreadId, StringComparison.Ordinal) ||
+            !string.Equals(
+                CaseNaming.NormalizeSupportNumber(currentSnapshot.SupportId),
+                CaseNaming.NormalizeSupportNumber(snapshot.SupportId),
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(
+                CaseNaming.NormalizeSupportNumber(currentSession.SupportId),
+                CaseNaming.NormalizeSupportNumber(snapshot.SupportId),
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (currentSnapshot.ProductId is { } threadProduct && snapshot.ProductId is { } currentProduct)
+            return threadProduct == currentProduct;
+
+        return !string.IsNullOrWhiteSpace(currentSnapshot.ProductName) &&
+            !string.IsNullOrWhiteSpace(snapshot.ProductName) &&
+            string.Equals(currentSnapshot.ProductName.Trim(), snapshot.ProductName.Trim(), StringComparison.OrdinalIgnoreCase);
+    }
+
     public void RefreshCaseSelection()
     {
         var savedSelection = caseCodexSelectionProvider?.Invoke() ?? (null, null);
@@ -576,6 +698,29 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             SetCaseModelSelection(savedSelection.Model, persist: false);
             SetCaseReasoningSelection(savedSelection.ReasoningEffort, persist: false);
             RebuildCaseSelectionOptions();
+        });
+    }
+
+    public void OnCaseLoaded(CodexCaseSnapshot snapshot)
+    {
+        var supportId = CaseNaming.NormalizeSupportNumber(snapshot.SupportId);
+        if (string.IsNullOrWhiteSpace(supportId))
+            supportId = snapshot.CaseFolder.Trim().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToUpperInvariant();
+        var product = snapshot.ProductName.Trim().ToUpperInvariant();
+        var identity = (SupportId: supportId, Product: product);
+        if (promptCaseIdentity == identity)
+        {
+            RunOnUi(RaiseCommandStates);
+            return;
+        }
+
+        promptCaseIdentity = identity;
+        RunOnUi(() =>
+        {
+            SelectedPreset = null;
+            PromptInput = string.Empty;
+            currentManufacturerResponseCandidate = string.Empty;
+            RaiseCommandStates();
         });
     }
 
@@ -1106,6 +1251,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 : result.ReasoningEffort;
             ConnectionDetails = "新しい読み取り専用Threadを開始しました。指示を送信できます。";
             OnPropertyChanged(nameof(CodexSelectionStatus));
+            RaiseCommandStates();
         });
         await PersistSessionAsync("ready").ConfigureAwait(false);
     }
@@ -1163,6 +1309,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     : result.ReasoningEffort;
                 ConnectionDetails = "前回のCodex Threadを再開しました。追加質問を送信できます。";
                 OnPropertyChanged(nameof(CodexSelectionStatus));
+                RaiseCommandStates();
             });
             await PersistSessionAsync("resumed").ConfigureAwait(false);
         }
@@ -1175,36 +1322,72 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private async Task SendAsync()
     {
+        await LogSendStageAsync("SEND_PIPELINE_ENTER");
         var instruction = CodexPromptPreset.NormalizeLegacyPrompt(PromptInput);
         var selectedPresetKey = ResolveSelectedPresetKey();
-        var naturalLanguageOperation = SelectedPreset is null
-            ? NaturalLanguageOperationResolver.Resolve(instruction)
-            : NaturalLanguageOperation.NormalChat;
-        if (string.Equals(selectedPresetKey, CodexPromptPreset.ReplyToManufacturerKey, StringComparison.Ordinal))
+        var naturalLanguageIntent = NaturalLanguageOperationResolver.ResolveIntent(instruction);
+        var selectedPresetIsUnedited = SelectedPreset is not null
+            && string.Equals(
+                instruction,
+                CodexPromptPreset.NormalizeLegacyPrompt(SelectedPreset.Prompt),
+                StringComparison.Ordinal);
+        if (selectedPresetIsUnedited
+            && string.Equals(selectedPresetKey, CodexPromptPreset.ReplyToManufacturerKey, StringComparison.Ordinal))
         {
             instruction = CodexPromptPreset.ManufacturerReplyPrompt;
+            naturalLanguageIntent = new(
+                NaturalLanguageOperation.ManufacturerReply,
+                NaturalLanguageRecipient.Manufacturer,
+                true);
         }
-        else if (string.Equals(selectedPresetKey, CodexPromptPreset.AskManufacturerKey, StringComparison.Ordinal))
+        else if (selectedPresetIsUnedited
+            && string.Equals(selectedPresetKey, CodexPromptPreset.AskManufacturerKey, StringComparison.Ordinal))
         {
             instruction = CodexPromptPreset.ManufacturerConfirmationPrompt;
+            naturalLanguageIntent = new(
+                NaturalLanguageOperation.ManufacturerAsk,
+                NaturalLanguageRecipient.Manufacturer,
+                false);
         }
         if (string.IsNullOrWhiteSpace(instruction))
         {
+            RunOnUi(() => ErrorText = "送信内容がありません。指示を入力してください。");
+            await LogSendStageAsync("SEND_BLOCKED=EMPTY_NORMALIZED_PROMPT");
             return;
         }
 
+        var naturalLanguageOperation = naturalLanguageIntent.Operation;
         if (naturalLanguageOperation == NaturalLanguageOperation.ManufacturerResponseTranslation)
         {
+            await LogSendStageAsync("SEND_ROUTE_RESOLVED=MANUFACTURER_RESPONSE_TRANSLATION");
             RecordGuiSendRoute("MANUFACTURER_RESPONSE_TRANSLATION", "NONE");
             await TranslateManufacturerResponseAsync(instruction).ConfigureAwait(false);
             return;
         }
 
-        if (IsCustomerReplyRequest(instruction) && IsManufacturerFollowUpPending())
+        if (naturalLanguageOperation == NaturalLanguageOperation.CustomerReply
+            && naturalLanguageIntent.RequiresManufacturerResponse
+            && string.IsNullOrWhiteSpace(FindLatestImmediateManufacturerResponse()))
         {
+            await LogSendStageAsync("SEND_BLOCKED=MANUFACTURER_RESPONSE_REQUIRED");
+            RunOnUi(() =>
+            {
+                WarningText = "MANUFACTURER_RESPONSE_INCOMPLETE: このお客様向け回答ではメーカー回答本文の利用が明示されています。回答本文をチャットへ貼り付けてください。";
+                ErrorText = "必要なメーカー回答本文を確認できないため、送信していません。";
+                ConnectionDetails = "必要なメーカー回答本文を確認できないため、送信していません。";
+            });
+            return;
+        }
+
+        if ((naturalLanguageOperation == NaturalLanguageOperation.CustomerReply
+                || IsCustomerReplyRequest(instruction))
+            && IsManufacturerFollowUpPending())
+        {
+            await LogSendStageAsync("SEND_BLOCKED=MANUFACTURER_FOLLOWUP_PENDING");
             RunOnUi(() =>
             {
                 WarningText = "現在の案件はメーカー確認待ちです。先にメーカー向け確認メール案を作成してください。";
+                ErrorText = WarningText;
                 ConnectionDetails = "案件ステージにより、お客様向け回答案の生成を停止しました。";
             });
             return;
@@ -1214,6 +1397,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             || naturalLanguageOperation is NaturalLanguageOperation.ManufacturerAsk
                 or NaturalLanguageOperation.ManufacturerReply)
         {
+            await LogSendStageAsync("SEND_ROUTE_RESOLVED=MANUFACTURER");
             var manufacturerIntent = naturalLanguageOperation == NaturalLanguageOperation.ManufacturerReply
                 || IsManufacturerReplyRequest(instruction)
                     ? ManufacturerCommunicationIntent.ReplyToManufacturer
@@ -1228,6 +1412,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
 
         // This is the BASELINE_CHAT path: only the ordinary technical answer is updated.
+        await LogSendStageAsync("SEND_ROUTE_RESOLVED=BASELINE_CHAT");
 
         if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
         {
@@ -1237,7 +1422,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         currentSnapshot = caseProvider();
         if (!string.Equals(scannedCaseFolder, currentSnapshot.CaseFolder, StringComparison.OrdinalIgnoreCase))
         {
+            await LogSendStageAsync("SEND_FILE_REFRESH_START");
             await RefreshFilesAsync().ConfigureAwait(false);
+            await LogSendStageAsync("SEND_FILE_REFRESH_RESULT");
         }
 
         var firstTurn = !hasSentInitialContext;
@@ -1251,11 +1438,14 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             : string.Empty;
         var selectedFiles = Files.Where(static file => file.IsSelected && file.CanSendToCodex).ToArray();
         RunOnUi(() => ConnectionDetails = "選択した添付ファイルを読み取り、文字コード変換と本文抽出を行っています。");
+        await LogSendStageAsync("SEND_ATTACHMENT_READ_START");
         var attachmentRead = await attachmentContentReader.ReadAsync(
             currentSnapshot.CaseFolder,
             selectedFiles.Select(static file => file.File).ToArray()).ConfigureAwait(false);
+        await LogSendStageAsync("SEND_ATTACHMENT_READ_RESULT");
         string prompt;
         IReadOnlyList<string> compositionWarnings = [];
+        await LogSendStageAsync("SEND_PROMPT_COMPOSE_START");
         if (firstTurn)
         {
             var ragLabEvidence = await LoadRagLabEvidenceSafelyAsync(currentSnapshot).ConfigureAwait(false);
@@ -1295,6 +1485,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         {
             prompt = promptComposer.ComposeFollowUpPrompt(instruction, attachmentRead.Contents);
         }
+        await LogSendStageAsync("SEND_PROMPT_COMPOSE_RESULT");
 
         var preparationWarnings = attachmentRead.Warnings.Concat(compositionWarnings).Distinct().ToArray();
         RunOnUi(() =>
@@ -1345,11 +1536,13 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         activeTurnStartedTimestamp = Stopwatch.GetTimestamp();
         try
         {
+            await LogSendStageAsync("CODEX_SEND_START");
             var turn = await client.StartTurnAsync(
                 prompt,
                 imagePaths,
                 model: firstTurn ? requestedModel : null,
                 reasoningEffort: firstTurn ? requestedReasoningEffort : null).ConfigureAwait(false);
+            await LogSendStageAsync("CODEX_SEND_RESULT");
             if (firstTurn
                 && !string.IsNullOrWhiteSpace(turn.Model)
                 && !string.Equals(turn.Model, requestedModel, StringComparison.OrdinalIgnoreCase))
@@ -1382,6 +1575,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 currentSession = currentSession with { LastTurnId = turn.TurnId, LastUsedAt = DateTimeOffset.Now, SessionStatus = "running" };
                 await PersistSessionAsync("running").ConfigureAwait(false);
             }
+            await LogSendStageAsync("SEND_COMPLETE");
         }
         catch
         {
@@ -1958,13 +2152,17 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         var source = ResolveCurrentCustomerDeltaSource(snapshot);
         var hasDelta = !string.IsNullOrWhiteSpace(source);
         var hasOutboundAttachment = TryGetPendingManufacturerAttachment(snapshot, out _, out _, out _)
-            || !string.IsNullOrWhiteSpace(ArtifactOutputFileName);
+            || (artifactPlan is not null
+                && string.Equals(artifactPlan.SourceFullPath, source, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(artifactPlan.Request.OutputFileName));
         var previousManufacturerContact = Files.Any(file =>
-            file.FileName.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
-            || file.RelativePath.Contains("manufacturer", StringComparison.OrdinalIgnoreCase));
+            file.File.Size > 0
+            && (file.FileName.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
+                || file.RelativePath.Contains("manufacturer", StringComparison.OrdinalIgnoreCase)));
         var previousCustomerReply = Files.Any(file =>
-            file.FileName.Contains("お客様への返信案", StringComparison.OrdinalIgnoreCase)
-            || file.RelativePath.Contains("customerreplydraft", StringComparison.OrdinalIgnoreCase));
+            file.File.Size > 0
+            && (file.FileName.Contains("お客様への返信案", StringComparison.OrdinalIgnoreCase)
+                || file.RelativePath.Contains("customerreplydraft", StringComparison.OrdinalIgnoreCase)));
         return hasDelta && hasOutboundAttachment && previousManufacturerContact && previousCustomerReply;
     }
 
@@ -2179,7 +2377,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private void RaiseCommandStates()
     {
+        OnPropertyChanged(nameof(SendAvailabilityMessage));
+        OnPropertyChanged(nameof(CanSendFromUi));
         SendCommand.RaiseCanExecuteChanged();
+        SendFromUiCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();
         StartNewCommand.RaiseCanExecuteChanged();
         ResumeCommand.RaiseCanExecuteChanged();

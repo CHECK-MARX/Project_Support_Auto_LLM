@@ -1024,6 +1024,7 @@
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <TextBlock Text="サポートID" />
                                 <TextBlock Grid.Column="1" Text="{Binding SupportNumber}" TextWrapping="Wrap" />
@@ -1059,6 +1060,16 @@
                                                  Value="{Binding Codex.ProgressPercent, Mode=OneWay}" VerticalAlignment="Center" />
                                     <TextBlock Grid.Column="1" Margin="12,0,0,0" Text="{Binding Codex.ProgressText, Mode=OneWay}" />
                                 </Grid>
+
+                                <StackPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="GPT引継ぎ" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <TextBlock Text="{Binding GptHandoffStatusText, Mode=OneWay}" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                    <Button Content="GPT引継ぎ情報を作成"
+                                            Command="{Binding CreateGptHandoffCommand}" />
+                                    <Button Content="GPT引継ぎ情報を取り込む"
+                                            Margin="8,0,0,0"
+                                            Command="{Binding ImportGptHandoffCommand}" />
+                                </StackPanel>
                             </Grid>
                         </GroupBox>
 
@@ -1210,7 +1221,7 @@
                                          TextWrapping="Wrap"
                                          VerticalScrollBarVisibility="Auto">
                                     <TextBox.InputBindings>
-                                        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding Codex.SendCommand}" />
+                                        <KeyBinding Key="Enter" Modifiers="Control" Command="{Binding Codex.SendFromUiCommand}" />
                                     </TextBox.InputBindings>
                                 </TextBox>
 
@@ -1220,15 +1231,21 @@
                                            Foreground="{DynamicResource AppWarningBrush}"
                                            TextWrapping="Wrap" />
 
-                                <WrapPanel Grid.Row="4" Margin="0,8,0,0">
-                                    <Button Content="送信" Command="{Binding Codex.SendCommand}" />
-                                    <Button Content="中止" Command="{Binding Codex.StopCommand}" />
-                                    <Button Content="回答をコピー" Command="{Binding Codex.CopyAnswerCommand}" />
-                                    <Button Content="WPFノート編集に送る（コピー）" Command="{Binding Codex.SendToWpfNoteCommand}" />
-                                    <Button Content="Codexで最終レビュー"
-                                            Command="{Binding Codex.FinalReviewCommand}"
-                                            ToolTip="先にCodex調査タブでこの案件の調査を開始してください" />
-                                </WrapPanel>
+                                <StackPanel Grid.Row="4" Margin="0,8,0,0">
+                                    <TextBlock Text="{Binding Codex.SendAvailabilityMessage, Mode=OneWay}"
+                                               TextWrapping="Wrap" Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                                    <WrapPanel>
+                                        <Button Content="送信" Command="{Binding Codex.SendFromUiCommand}"
+                                                Click="OnCodexSendButtonClick"
+                                                ToolTip="{Binding Codex.SendAvailabilityMessage, Mode=OneWay}" />
+                                        <Button Content="中止" Command="{Binding Codex.StopCommand}" />
+                                        <Button Content="回答をコピー" Command="{Binding Codex.CopyAnswerCommand}" />
+                                        <Button Content="WPFノート編集に送る（コピー）" Command="{Binding Codex.SendToWpfNoteCommand}" />
+                                        <Button Content="Codexで最終レビュー"
+                                                Command="{Binding Codex.FinalReviewCommand}"
+                                                ToolTip="先にCodex調査タブでこの案件の調査を開始してください" />
+                                    </WrapPanel>
+                                </StackPanel>
                             </Grid>
                         </GroupBox>
 
@@ -1630,6 +1647,27 @@
             <TabItem Header="{DynamicResource LogsDiagnosticsTabHeader}">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel Margin="8">
+                        <GroupBox Header="クイック診断">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="クイック診断を実行" Command="{Binding RunQuickDiagnosticCommand}" />
+                                    <Button Content="中止" Command="{Binding CancelQuickDiagnosticCommand}" />
+                                    <TextBlock Text="{Binding QuickDiagnosticState}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding QuickDiagnosticOverall}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                    <TextBlock Text="{Binding QuickDiagnosticElapsed}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <DataGrid ItemsSource="{Binding QuickDiagnosticItems}" SelectedItem="{Binding SelectedQuickDiagnosticItem, Mode=TwoWay}"
+                                          AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                          MinHeight="260" MaxHeight="380" Margin="0,8,0,0">
+                                    <DataGrid.Columns>
+                                        <DataGridTextColumn Header="項目" Binding="{Binding Name}" Width="240" />
+                                        <DataGridTextColumn Header="判定" Binding="{Binding StatusText}" Width="90" />
+                                        <DataGridTextColumn Header="理由" Binding="{Binding Detail}" Width="*" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <TextBlock Text="{Binding SelectedQuickDiagnosticItem.Detail}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                            </StackPanel>
+                        </GroupBox>
                         <GroupBox Header="案件別Codex設定">
                             <TextBox Text="{Binding Codex.CaseSettingsDiagnostics, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" />
                         </GroupBox>

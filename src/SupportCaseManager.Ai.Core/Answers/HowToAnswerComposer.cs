@@ -408,7 +408,8 @@ public static partial class HowToAnswerComposer
     private static bool IsPastCase(string sourceType) =>
         sourceType.Equals("PastCase", StringComparison.OrdinalIgnoreCase) ||
         sourceType.Equals("PastCaseNote", StringComparison.OrdinalIgnoreCase) ||
-        sourceType.Equals("PastAnswer", StringComparison.OrdinalIgnoreCase);
+        sourceType.Equals("PastAnswer", StringComparison.OrdinalIgnoreCase) ||
+        sourceType.Equals("GptHandoff", StringComparison.OrdinalIgnoreCase);
 
     private static IReadOnlyList<string> FindBestEvidenceSentence(
         IReadOnlyList<SearchSource> sources,

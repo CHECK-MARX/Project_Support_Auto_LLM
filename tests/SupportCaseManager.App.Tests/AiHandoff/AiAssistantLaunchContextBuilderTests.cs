@@ -1,3 +1,4 @@
+using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.App.AiHandoff;
 
 namespace SupportCaseManager.App.Tests.AiHandoff;
@@ -58,5 +59,30 @@ public class AiAssistantLaunchContextBuilderTests
         });
 
         Assert.Equal("問い合わせ本文", context.InquiryText);
+    }
+
+    [Fact]
+    public void BuildFromCurrentState_PreservesGptHandoffRegistrationMetadata()
+    {
+        var context = new AiAssistantLaunchContextBuilder().BuildFromCurrentState(
+            new AiAssistantCurrentState
+            {
+                SupportNumber = "00018303",
+                GptHandoff = new GptHandoffContext
+                {
+                    SupportId = "00018303",
+                    Product = "Checkmarx",
+                    TargetGptKey = "checkmarx",
+                    TargetGptDisplayName = "Vulnerability Scanner Assistant",
+                    ConversationUrl = "https://chatgpt.com/c/existing",
+                    RegistrationState = "REGISTERED",
+                    LinkMode = "EXISTING_CHAT_LINKED",
+                    RegisteredAt = "2026-09-16T12:00:00+09:00",
+                },
+            });
+
+        Assert.Equal("00018303", context.GptHandoff.SupportId);
+        Assert.Equal("https://chatgpt.com/c/existing", context.GptHandoff.ConversationUrl);
+        Assert.Equal("REGISTERED", context.GptHandoff.RegistrationState);
     }
 }

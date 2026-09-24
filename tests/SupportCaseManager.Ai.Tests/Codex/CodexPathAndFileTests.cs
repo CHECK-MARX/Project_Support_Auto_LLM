@@ -40,6 +40,37 @@ public sealed class CodexPathAndFileTests
     }
 
     [Fact]
+    public async Task ScannerAndReader_ClassifyGptHandoffAndExposeOnlyEffectiveSnapshot()
+    {
+        using var root = new TempDirectory();
+        var path = Path.Combine(root.Path, "GPT連携内容_00018303.txt");
+        await File.WriteAllTextAsync(path, """
+            *****追記部_2026/09/16 20:00:00(GPT取込)******
+            【メーカー担当者】
+            Chen Chen
+
+            【現在の未解決事項】
+            古い未解決事項
+            --------------------------------------------------
+            *****追記部_2026/09/16 21:00:00(GPT取込)******
+            【現在の未解決事項】
+            現在の未解決事項
+            --------------------------------------------------
+            """);
+
+        var scan = await new CodexCaseFileScanner().ScanAsync(root.Path);
+        var file = Assert.Single(scan.Files);
+        var read = await new CodexAttachmentContentReader().ReadAsync(root.Path, scan.Files);
+        var content = Assert.Single(read.Contents);
+
+        Assert.Equal(CodexCaseFileKind.GptHandoff, file.Kind);
+        Assert.Equal("GptHandoff", content.ContentType);
+        Assert.Contains("Chen Chen", content.Content, StringComparison.Ordinal);
+        Assert.Contains("現在の未解決事項", content.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("古い未解決事項", content.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task AttachmentReader_NormalizesCommonEncodingsAndExtractsImportantLargeLogLines()
     {
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);

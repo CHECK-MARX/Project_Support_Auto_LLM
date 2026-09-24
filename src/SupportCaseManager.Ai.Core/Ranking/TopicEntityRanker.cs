@@ -381,6 +381,7 @@ public static partial class TopicEntityRanker
         if (value.Contains("manufacturerreply", StringComparison.Ordinal)) return 0.78;
         if (value.Contains("verifiedpastanswer", StringComparison.Ordinal) || value.Contains("exactpastanswer", StringComparison.Ordinal)) return 0.70;
         if (value.Contains("pastcase", StringComparison.Ordinal) || value.Contains("pastanswer", StringComparison.Ordinal)) return 0.56;
+        if (value.Contains("gpthandoff", StringComparison.Ordinal)) return 0.40;
         if (value.Contains("internalnote", StringComparison.Ordinal)) return 0.35;
         return 0.45;
     }

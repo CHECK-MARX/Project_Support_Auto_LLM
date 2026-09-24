@@ -5,6 +5,23 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 public sealed class ProgressBindingTests
 {
     [Fact]
+    public void MainWindow_SendButtonAndCtrlEnterUseTheSameUiCommand()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var sendButton = Assert.Single(document.Descendants(), element =>
+            element.Name.LocalName == "Button" &&
+            element.Attribute("Content")?.Value == "送信");
+        var ctrlEnter = Assert.Single(document.Descendants(), element =>
+            element.Name.LocalName == "KeyBinding" &&
+            element.Attribute("Key")?.Value == "Enter" &&
+            element.Attribute("Modifiers")?.Value == "Control");
+
+        Assert.Equal("{Binding Codex.SendFromUiCommand}", sendButton.Attribute("Command")?.Value);
+        Assert.Equal("OnCodexSendButtonClick", sendButton.Attribute("Click")?.Value);
+        Assert.Equal(sendButton.Attribute("Command")?.Value, ctrlEnter.Attribute("Command")?.Value);
+    }
+
+    [Fact]
     public void MainWindow_ProgressBarUsesOneWayBindingForReadOnlyProgress()
     {
         var document = XDocument.Load(FindMainWindowPath());
@@ -43,12 +60,15 @@ public sealed class ProgressBindingTests
     }
 
     [Fact]
-    public void MainWindow_ReplyActionsRemainAndUnusedMemoActionsAreRemoved()
+    public void MainWindow_ManufacturerDraftActionsRemainAndUnusedMemoActionsAreRemoved()
     {
         var xaml = File.ReadAllText(FindMainWindowPath());
 
-        Assert.Contains("この回答を返信案へ追記", xaml, StringComparison.Ordinal);
-        Assert.Contains("返信案反映を元に戻す", xaml, StringComparison.Ordinal);
+        Assert.Contains("メーカー向け確認メール案（日本語・編集可能）", xaml, StringComparison.Ordinal);
+        Assert.Contains("メーカー向け確認メール案（英語・編集可能）", xaml, StringComparison.Ordinal);
+        Assert.Contains("Codex.CopyJapaneseManufacturerDraftCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("Codex.CopyEnglishManufacturerDraftCommand", xaml, StringComparison.Ordinal);
+        Assert.Contains("Codex.SendEnglishManufacturerDraftToWpfNoteCommand", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("この回答を調査メモへ反映", xaml, StringComparison.Ordinal);
         Assert.DoesNotContain("メモ反映を元に戻す", xaml, StringComparison.Ordinal);
         Assert.Contains("先にCodex調査タブでこの案件の調査を開始してください", xaml, StringComparison.Ordinal);
@@ -128,6 +148,22 @@ public sealed class ProgressBindingTests
         {
             Assert.Contains(attributes, attribute => attribute.Value.Contains(bindingName, StringComparison.Ordinal));
         }
+    }
+
+    [Fact]
+    public void MainWindow_GptHandoffButtonsBindToViewModelCommands()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var buttons = document.Descendants()
+            .Where(element => element.Name.LocalName == "Button")
+            .ToList();
+
+        Assert.Contains(buttons, button =>
+            string.Equals(button.Attribute("Content")?.Value, "GPT引継ぎ情報を作成", StringComparison.Ordinal) &&
+            button.Attribute("Command")?.Value.Contains("CreateGptHandoffCommand", StringComparison.Ordinal) == true);
+        Assert.Contains(buttons, button =>
+            string.Equals(button.Attribute("Content")?.Value, "GPT引継ぎ情報を取り込む", StringComparison.Ordinal) &&
+            button.Attribute("Command")?.Value.Contains("ImportGptHandoffCommand", StringComparison.Ordinal) == true);
     }
 
     [Fact]
