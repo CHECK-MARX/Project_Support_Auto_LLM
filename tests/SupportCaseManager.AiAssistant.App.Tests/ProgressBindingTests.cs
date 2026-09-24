@@ -5,6 +5,30 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 public sealed class ProgressBindingTests
 {
     [Fact]
+    public void MainWindow_GptPolishCommandsAreAudienceSpecific()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var buttons = document.Descendants().Where(element => element.Name.LocalName == "Button").ToArray();
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "お客様向け回答案をGPTで推敲"
+            && button.Attribute("Command")?.Value == "{Binding GptPolishCustomerCommand}");
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "メーカー英語案をGPTで推敲"
+            && button.Attribute("Command")?.Value == "{Binding GptPolishManufacturerCommand}");
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "この回答をGPTで推敲"
+            && button.Attribute("Command")?.Value == "{Binding GptPolishTechnicalAnswerCommand}");
+        Assert.Contains(document.Descendants().Where(element => element.Name.LocalName == "GroupBox"
+                && element.Attribute("Header")?.Value == "Codex技術回答案（編集可能）"),
+            group => group.Descendants().Any(element => element.Name.LocalName == "Button"
+                && element.Attribute("Command")?.Value == "{Binding GptPolishTechnicalAnswerCommand}"));
+        Assert.Contains(document.Descendants().Where(element => element.Name.LocalName == "GroupBox"
+                && element.Attribute("Header")?.Value == "メーカー向け確認メール案（英語・編集可能）"),
+            group => group.Descendants().Any(element => element.Name.LocalName == "Button"
+                && element.Attribute("Command")?.Value == "{Binding GptPolishManufacturerCommand}"));
+        Assert.Contains(XDocument.Load(FindMainWindowPath()).Descendants(), element =>
+            element.Name.LocalName == "CheckBox" && element.Attribute("Content")?.Value == "Quality Review"
+            && element.Attribute("IsChecked")?.Value == "{Binding QualityReviewEnabled}");
+    }
+
+    [Fact]
     public void MainWindow_SendButtonAndCtrlEnterUseTheSameUiCommand()
     {
         var document = XDocument.Load(FindMainWindowPath());
@@ -19,6 +43,27 @@ public sealed class ProgressBindingTests
         Assert.Equal("{Binding Codex.SendFromUiCommand}", sendButton.Attribute("Command")?.Value);
         Assert.Equal("OnCodexSendButtonClick", sendButton.Attribute("Click")?.Value);
         Assert.Equal(sendButton.Attribute("Command")?.Value, ctrlEnter.Attribute("Command")?.Value);
+    }
+
+    [Fact]
+    public void MainWindow_CodexOperationsAreStateConditionalAndExplainTheirPurpose()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var buttons = document.Descendants().Where(element => element.Name.LocalName == "Button").ToArray();
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "新しい調査を開始"
+            && button.Attribute("ToolTip")?.Value?.Contains("別に新しいCodex Thread", StringComparison.Ordinal) == true);
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "前回の続きから再開"
+            && button.Attribute("Visibility")?.Value.Contains("ShowResumeButton", StringComparison.Ordinal) == true);
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "Codexへ接続"
+            && button.Attribute("Visibility")?.Value.Contains("ShowConnectButton", StringComparison.Ordinal) == true);
+        Assert.Contains(buttons, button => button.Attribute("Content")?.Value == "再接続"
+            && button.Attribute("Visibility")?.Value.Contains("ShowReconnectButton", StringComparison.Ordinal) == true);
+        Assert.Contains(document.Descendants(), element => element.Name.LocalName == "Expander"
+            && element.Attribute("Header")?.Value == "補助操作");
+        Assert.Contains(document.Descendants().SelectMany(element => element.Attributes()), attribute =>
+            attribute.Value.Contains("Codex.SendAvailabilityMessage", StringComparison.Ordinal));
+        Assert.Contains(document.Descendants().SelectMany(element => element.Attributes()), attribute =>
+            attribute.Value.Contains("GptPolishStatusText", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -147,6 +192,29 @@ public sealed class ProgressBindingTests
                  })
         {
             Assert.Contains(attributes, attribute => attribute.Value.Contains(bindingName, StringComparison.Ordinal));
+        }
+    }
+
+    [Fact]
+    public void MainWindow_ReadOnlyCodexStatusRunsUseOneWayBinding()
+    {
+        var document = XDocument.Load(FindMainWindowPath());
+        var runTextAttributes = document.Descendants()
+            .Where(element => element.Name.LocalName == "Run")
+            .SelectMany(element => element.Attributes())
+            .Where(attribute => attribute.Name.LocalName == "Text")
+            .ToArray();
+
+        foreach (var property in new[]
+        {
+            "Codex.ConnectionStateText",
+            "Codex.CurrentThreadStatusText",
+            "GptHandoffStatusText",
+        })
+        {
+            var run = Assert.Single(runTextAttributes,
+                attribute => attribute.Value.Contains(property, StringComparison.Ordinal));
+            Assert.Contains("Mode=OneWay", run.Value, StringComparison.Ordinal);
         }
     }
 

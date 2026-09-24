@@ -16,12 +16,169 @@ using SupportCaseManager.AiAssistant.App.Appearance;
 using SupportCaseManager.AiAssistant.App.Launch;
 using SupportCaseManager.AiAssistant.App.ViewModels;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Quality;
+using SupportCaseManager.App.ChatGpt;
 using System.Windows;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class LaunchContextApplyTests
 {
+    [Fact]
+    public async Task GptPolishUsesRegisteredExistingConversationAndCurrentDraft()
+    {
+        var root = Directory.CreateTempSubdirectory("ai-assistant-gpt-polish-");
+        var caseFolder = Directory.CreateDirectory(Path.Combine(root.FullName,
+            "20260728(Company_00018303)調査中_20260917"));
+        try
+        {
+            const string conversation = "https://chatgpt.com/c/6a70b0a5-1018-83ee-b405-11a2a80326f4";
+            var context = CreateContext() with
+            {
+                ProductName = "Checkmarx", BaseFolder = root.FullName, CloseFolder = string.Empty,
+                CaseFolderPath = caseFolder.FullName, SupportNumber = "00018303",
+                GptHandoff = new GptHandoffContext
+                {
+                    SupportId = "00018303", Product = "Checkmarx", TargetGptKey = "checkmarx",
+                    ConversationUrl = conversation, RegistrationState = GptRegistrationStates.Registered,
+                },
+            };
+            var conversationService = new FakePolishConversationService();
+            var services = CreateViewModel(context, CreateSettings(), gptPolishConversationService: conversationService);
+            services.ViewModel.ApplyLaunchContext(context);
+            services.ViewModel.CustomerReplyDraft = "今回のお客様向け初稿です。";
+
+            await services.ViewModel.GptPolishAsync(QualityAudience.Customer);
+
+            Assert.Equal(conversation, conversationService.SentUrl);
+            Assert.Contains("今回のお客様向け初稿", conversationService.SentMessage);
+            Assert.Contains("GPTへ推敲依頼を送信しました。", services.ViewModel.GptPolishStatusText);
+            Assert.Equal(0, conversationService.CreateCalls);
+
+            services.ViewModel.SupportNumber = "00099999";
+            await services.ViewModel.GptPolishAsync(QualityAudience.Customer);
+            Assert.Equal(1, conversationService.SendCalls);
+            Assert.Contains("Support ID", services.ViewModel.GptPolishStatusText);
+
+            services.ViewModel.SupportNumber = "00018303";
+            conversationService.ThrowOnSend = true;
+            await services.ViewModel.GptPolishAsync(QualityAudience.Customer);
+            Assert.Contains("送信されませんでした", services.ViewModel.GptPolishStatusText);
+            Assert.Equal(0, conversationService.CreateCalls);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GptPolishTargetsCodexTechnicalAnswerAndManufacturerEnglishDraftSeparately()
+    {
+        var root = Directory.CreateTempSubdirectory("ai-assistant-gpt-polish-targets-");
+        var caseFolder = Directory.CreateDirectory(Path.Combine(root.FullName,
+            "20260728(Company_00018303)調査中_20260917"));
+        try
+        {
+            const string conversation = "https://chatgpt.com/c/6a70b0a5-1018-83ee-b405-11a2a80326f4";
+            var context = CreateContext() with
+            {
+                ProductName = "Checkmarx", BaseFolder = root.FullName, CloseFolder = string.Empty,
+                CaseFolderPath = caseFolder.FullName, SupportNumber = "00018303",
+                GptHandoff = new GptHandoffContext
+                {
+                    SupportId = "00018303", Product = "Checkmarx", TargetGptKey = "checkmarx",
+                    ConversationUrl = conversation, RegistrationState = GptRegistrationStates.Registered,
+                },
+            };
+            var service = new FakePolishConversationService();
+            var services = CreateViewModel(context, CreateSettings(), gptPolishConversationService: service);
+            services.ViewModel.ApplyLaunchContext(context);
+            services.ViewModel.CustomerReplyDraft = "顧客回答欄の別内容";
+
+            await services.ViewModel.GptPolishTechnicalAnswerAsync("編集後のCodex技術回答案");
+
+            Assert.Equal(conversation, service.SentUrl);
+            Assert.Contains("編集後のCodex技術回答案", service.SentMessage);
+            Assert.DoesNotContain("顧客回答欄の別内容", service.SentMessage);
+            Assert.Contains("製品仕様、バージョン、コマンド、パス", service.SentMessage);
+            Assert.Equal(0, service.CreateCalls);
+
+            await services.ViewModel.GptPolishManufacturerAsync("編集後のメーカー英語案");
+
+            Assert.Equal(conversation, service.SentUrl);
+            Assert.Contains("編集後のメーカー英語案", service.SentMessage);
+            Assert.DoesNotContain("編集後のCodex技術回答案", service.SentMessage);
+            Assert.DoesNotContain("顧客回答欄の別内容", service.SentMessage);
+            Assert.Contains("メーカー向け英語メール案", service.SentMessage);
+            Assert.Equal(2, service.SendCalls);
+            Assert.Equal(0, service.CreateCalls);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task GptPolishMissingDraftNamesItsTarget()
+    {
+        var context = CreateContext();
+        var services = CreateViewModel(context, CreateSettings());
+        services.ViewModel.ApplyLaunchContext(context);
+
+        await services.ViewModel.GptPolishTechnicalAnswerAsync(" ");
+        Assert.Contains("Codex技術回答案がありません", services.ViewModel.GptPolishStatusText);
+
+        await services.ViewModel.GptPolishManufacturerAsync(null);
+        Assert.Contains("メーカー英語案がありません", services.ViewModel.GptPolishStatusText);
+    }
+
+    [Fact]
+    public async Task GptPolishMissingDraftRegistrationAndConversationUrlExplainFailure()
+    {
+        var root = Directory.CreateTempSubdirectory("ai-assistant-gpt-polish-guards-");
+        var caseFolder = Directory.CreateDirectory(Path.Combine(root.FullName, "20260728(Company_00018303)調査中"));
+        try
+        {
+            var service = new FakePolishConversationService();
+            var unregistered = CreateContext() with
+            {
+                ProductName = "Checkmarx", CaseFolderPath = caseFolder.FullName,
+                SupportNumber = "00018303",
+            };
+            var first = CreateViewModel(unregistered, CreateSettings(), gptPolishConversationService: service);
+            first.ViewModel.ApplyLaunchContext(unregistered);
+            first.ViewModel.CustomerReplyDraft = string.Empty;
+            await first.ViewModel.GptPolishAsync(QualityAudience.Customer);
+            Assert.Contains("回答案がありません", first.ViewModel.GptPolishStatusText);
+
+            first.ViewModel.CustomerReplyDraft = "推敲対象の案";
+            await first.ViewModel.GptPolishAsync(QualityAudience.Customer);
+            Assert.Contains("GPT未登録", first.ViewModel.GptPolishStatusText);
+            Assert.Equal(0, service.SendCalls);
+
+            var missingUrlContext = unregistered with
+            {
+                GptHandoff = new GptHandoffContext
+                {
+                    SupportId = "00018303", Product = "Checkmarx",
+                    RegistrationState = GptRegistrationStates.Registered,
+                },
+            };
+            var second = CreateViewModel(missingUrlContext, CreateSettings(), gptPolishConversationService: service);
+            second.ViewModel.ApplyLaunchContext(missingUrlContext);
+            second.ViewModel.CustomerReplyDraft = "推敲対象の案";
+            await second.ViewModel.GptPolishAsync(QualityAudience.Customer);
+            Assert.Contains("Conversation URL", second.ViewModel.GptPolishStatusText);
+            Assert.Equal(0, service.SendCalls);
+        }
+        finally
+        {
+            root.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public async Task InitializeFromCommandLineAsync_AppliesProductAndKeepsProductKnowledge()
     {
@@ -584,7 +741,8 @@ public sealed class LaunchContextApplyTests
         Func<string>? readGptHandoffClipboardText = null,
         Func<GptHandoffSnapshot, bool>? confirmGptHandoffImport = null,
         Func<CaseRecord, GptHandoffSnapshot, CancellationToken, Task<GptHandoffImportResult>>? importGptHandoffSnapshot = null,
-        Action<string, MessageBoxImage>? showGptHandoffMessage = null)
+        Action<string, MessageBoxImage>? showGptHandoffMessage = null,
+        IGptConversationService? gptPolishConversationService = null)
     {
         var logger = new CapturingDiagnosticLogger();
         var settingsStore = new FakeSettingsStore(settings);
@@ -611,7 +769,8 @@ public sealed class LaunchContextApplyTests
             readGptHandoffClipboardText: readGptHandoffClipboardText,
             confirmGptHandoffImport: confirmGptHandoffImport,
             importGptHandoffSnapshot: importGptHandoffSnapshot,
-            showGptHandoffMessage: showGptHandoffMessage);
+            showGptHandoffMessage: showGptHandoffMessage,
+            gptPolishConversationService: gptPolishConversationService);
 
         return new TestServices(viewModel, logger, settingsStore, launchReader);
     }
@@ -960,6 +1119,34 @@ public sealed class LaunchContextApplyTests
             LastErrorMessage = exception is null
                 ? message
                 : $"{message}: {exception.GetType().Name}: {exception.Message}";
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class FakePolishConversationService : IGptConversationService
+    {
+        public string SentUrl { get; private set; } = string.Empty;
+        public string SentMessage { get; private set; } = string.Empty;
+        public int SendCalls { get; private set; }
+        public int CreateCalls { get; private set; }
+        public bool ThrowOnSend { get; set; }
+
+        public Task<GptConversationCreationResult> CreateConversationAsync(
+            ProductGptTarget target, string approvedBrief, CancellationToken cancellationToken = default)
+        {
+            CreateCalls++;
+            throw new InvalidOperationException("Creation must not be called.");
+        }
+
+        public Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
+
+        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken = default)
+        {
+            SendCalls++;
+            if (ThrowOnSend) throw new InvalidOperationException("conversation mismatch");
+            SentUrl = conversationUrl;
+            SentMessage = message;
             return Task.CompletedTask;
         }
     }

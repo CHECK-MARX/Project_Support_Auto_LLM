@@ -6,6 +6,7 @@ using System.Text;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Quality;
 using WpfApplication = System.Windows.Application;
 using WpfClipboard = System.Windows.Clipboard;
 
@@ -147,7 +148,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         Action<string?, string?>? caseCodexSelectionUpdated = null,
         Action<string>? clipboardWriter = null,
         ManufacturerDraftPairParser? manufacturerDraftPairParser = null,
-        ManufacturerRecipientResolver? manufacturerRecipientResolver = null)
+        ManufacturerRecipientResolver? manufacturerRecipientResolver = null,
+        QualityMemoryStore? qualityMemoryStore = null)
     {
         this.client = client;
         this.fileScanner = fileScanner;
@@ -166,6 +168,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         this.clipboardWriter = clipboardWriter ?? WpfClipboard.SetText;
         this.manufacturerDraftPairParser = manufacturerDraftPairParser ?? new ManufacturerDraftPairParser();
         this.manufacturerRecipientResolver = manufacturerRecipientResolver ?? new ManufacturerRecipientResolver();
+        this.qualityMemoryStore = qualityMemoryStore ?? new QualityMemoryStore();
         this.undoApplication = undoApplication;
         this.canUndoApplication = canUndoApplication ?? (_ => false);
         this.codexSelectionProvider = codexSelectionProvider;
@@ -258,11 +261,21 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             if (SetProperty(ref connectionState, value))
             {
                 OnPropertyChanged(nameof(ConnectionStateText));
+                OnPropertyChanged(nameof(ShowConnectButton));
+                OnPropertyChanged(nameof(ShowReconnectButton));
             }
         }
     }
 
     public string ConnectionStateText => ConnectionState.ToJapanese();
+    public bool ShowConnectButton => ConnectionState == CodexConnectionState.Disconnected;
+    public bool ShowReconnectButton => ConnectionState is CodexConnectionState.ReconnectRequired
+        or CodexConnectionState.AuthenticationRequired or CodexConnectionState.Error;
+    public bool ShowResumeButton => hasPreviousSession;
+    public string CurrentThreadStatusText => string.IsNullOrWhiteSpace(client.CurrentThreadId)
+        ? "なし"
+        : currentSnapshot is not null && IsCurrentCaseThread(caseProvider()) ? "現在案件"
+        : "案件不一致";
     public int ProgressPercent => ConnectionState switch
     {
         CodexConnectionState.Disconnected => 0,
@@ -441,7 +454,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     public string ThreadId
     {
         get => threadId;
-        private set => SetProperty(ref threadId, value);
+        private set
+        {
+            if (!SetProperty(ref threadId, value)) return;
+            OnPropertyChanged(nameof(CurrentThreadStatusText));
+        }
     }
 
     public string PromptInput
@@ -1323,6 +1340,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private async Task SendAsync()
     {
         await LogSendStageAsync("SEND_PIPELINE_ENTER");
+        activeQualityIntent = string.Empty;
         var instruction = CodexPromptPreset.NormalizeLegacyPrompt(PromptInput);
         var selectedPresetKey = ResolveSelectedPresetKey();
         var naturalLanguageIntent = NaturalLanguageOperationResolver.ResolveIntent(instruction);
@@ -1413,6 +1431,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
         // This is the BASELINE_CHAT path: only the ordinary technical answer is updated.
         await LogSendStageAsync("SEND_ROUTE_RESOLVED=BASELINE_CHAT");
+        activeQualityIntent = naturalLanguageOperation == NaturalLanguageOperation.CustomerStatusUpdate
+            ? "CUSTOMER_STATUS_UPDATE"
+            : naturalLanguageOperation == NaturalLanguageOperation.CustomerReply || IsCustomerReplyRequest(instruction)
+                ? "CUSTOMER_REPLY" : string.Empty;
 
         if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
         {
@@ -1485,6 +1507,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         {
             prompt = promptComposer.ComposeFollowUpPrompt(instruction, attachmentRead.Contents);
         }
+        if (!string.IsNullOrWhiteSpace(activeQualityIntent))
+            prompt = AppendQualityStylePrompt(prompt, currentSnapshot, QualityAudience.Customer, activeQualityIntent);
         await LogSendStageAsync("SEND_PROMPT_COMPOSE_RESULT");
 
         var preparationWarnings = attachmentRead.Warnings.Concat(compositionWarnings).Distinct().ToArray();
@@ -1798,6 +1822,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 else if (!isArtifactTurn)
                 {
                     TechnicalAnswer = currentAssistantMessage.Text;
+                    if (eventArgs.Status.Equals("completed", StringComparison.OrdinalIgnoreCase)
+                        && !string.IsNullOrWhiteSpace(activeQualityIntent))
+                        _ = SaveQualityDraftSafelyAsync(currentSnapshot ?? caseProvider(),
+                            QualityAudience.Customer, activeQualityIntent, TechnicalAnswer);
                 }
 
                 if (!isArtifactTurn
@@ -1928,6 +1956,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             activeExistingEvidenceSourceTypes = [];
             activeRagLabEvidence = [];
             hasPreviousSession = previous is not null && !string.IsNullOrWhiteSpace(previous.CodexThreadId);
+            OnPropertyChanged(nameof(ShowResumeButton));
             if (hasPreviousSession)
             {
                 Messages.Clear();
@@ -2379,6 +2408,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     {
         OnPropertyChanged(nameof(SendAvailabilityMessage));
         OnPropertyChanged(nameof(CanSendFromUi));
+        OnPropertyChanged(nameof(CurrentThreadStatusText));
         SendCommand.RaiseCanExecuteChanged();
         SendFromUiCommand.RaiseCanExecuteChanged();
         StopCommand.RaiseCanExecuteChanged();

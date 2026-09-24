@@ -7,6 +7,7 @@ using Microsoft.Win32;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
+using SupportCaseManager.Core.Quality;
 using FormsDialogResult = System.Windows.Forms.DialogResult;
 using FormsFolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
 using WpfOpenFileDialog = Microsoft.Win32.OpenFileDialog;
@@ -620,7 +621,10 @@ public sealed partial class CodexChatViewModel
             };
             RunOnUi(() => OnPropertyChanged(nameof(ManufacturerRecipientText)));
         }
-        var prompt = artifactPromptComposer.ComposeSimpleBilingualManufacturerMailPrompt(context);
+        var prompt = AppendQualityStylePrompt(
+            artifactPromptComposer.ComposeSimpleBilingualManufacturerMailPrompt(context), snapshot,
+            QualityAudience.Manufacturer,
+            intent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "MANUFACTURER_REPLY" : "MANUFACTURER_ASK");
         var promptParity = context.ProtectedValues.EvaluatePromptInjection(prompt);
         var runtimeDiagnostic = BuildManufacturerRuntimeDiagnostic(context, promptParity);
         RunOnUi(() =>
@@ -695,10 +699,15 @@ public sealed partial class CodexChatViewModel
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray(),
         };
+        await SaveQualityDraftSafelyAsync(snapshot, QualityAudience.Manufacturer,
+            intent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "MANUFACTURER_REPLY" : "MANUFACTURER_ASK",
+            senderNormalizedPair.EnglishDraft).ConfigureAwait(false);
         RunOnUi(() =>
         {
             JapaneseManufacturerDraft = senderNormalizedPair.JapaneseDraft;
             EnglishManufacturerDraft = senderNormalizedPair.EnglishDraft;
+            if (QualityReviewEnabled)
+                ManufacturerFollowUpScopeText += $"{Environment.NewLine}Quality Review: {QualityStyleReviewer.Review(senderNormalizedPair.EnglishDraft, instructionOverride, qualityLastRetrievalCount)}";
             lastJapaneseManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(JapaneseManufacturerDraft);
             lastEnglishManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(EnglishManufacturerDraft);
             lastTechnicalAnswerChanged = !string.Equals(

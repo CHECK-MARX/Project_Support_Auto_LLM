@@ -11,6 +11,26 @@ namespace SupportCaseManager.Ai.Tests.Indexing;
 public class AiCaseIndexBuilderTests
 {
     [Fact]
+    public async Task GptHandoffIsExcludedFromGenericPastCaseIndex()
+    {
+        using var temp = new TempDirectory();
+        var sourceFolder = Path.Combine(temp.Path, "closed");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var caseFolder = CreateCaseFolder(sourceFolder);
+        await File.WriteAllTextAsync(Path.Combine(caseFolder, "お客様ご相談内容_00001234.txt"), "通常の相談内容");
+        await File.WriteAllTextAsync(Path.Combine(caseFolder, "GPT連携内容_00001234.txt"), "GPTからの引継ぎ内容");
+
+        var builder = CreateBuilder();
+        await builder.BuildAsync(sourceFolder, aiIndexFolder);
+        Assert.DoesNotContain((await ReadIndexAsync(Path.Combine(aiIndexFolder, AiCaseIndexBuilder.IndexFileName))).Notes,
+            note => AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath));
+
+        await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        Assert.DoesNotContain((await ReadIndexAsync(Path.Combine(aiIndexFolder, AiCaseIndexBuilder.IndexFileName))).Notes,
+            note => AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath));
+    }
+
+    [Fact]
     public async Task BuildAsync_WritesIndexUnderAiIndexFolder()
     {
         using var temp = new TempDirectory();

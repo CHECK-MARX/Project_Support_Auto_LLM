@@ -3,11 +3,13 @@ using System.IO;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Evidence;
+using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.AiAssistant.App.GptHandoff;
 using SupportCaseManager.AiAssistant.App.ViewModels;
 using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Config;
 using SupportCaseManager.Core.Notes;
+using SupportCaseManager.Core.Quality;
 using SupportCaseManager.App.ChatGpt;
 
 namespace SupportCaseManager.AiAssistant.App.Diagnostics;
@@ -36,7 +38,12 @@ public sealed record QuickDiagnosticSnapshot(
     CaseContext? CurrentCase,
     GptHandoffContext Registration,
     IReadOnlyList<NoteSnapshot> Notes,
-    IReadOnlyList<SearchSource> Evidence);
+    IReadOnlyList<SearchSource> Evidence,
+    string AiIndexFolder = "",
+    bool HasPolishableDraft = false,
+    bool QualityReviewEnabled = false,
+    int QualityLastRetrievalCount = 0,
+    string QualityStorePath = "");
 
 internal sealed class QuickDiagnosticService
 {
@@ -161,6 +168,58 @@ internal sealed class QuickDiagnosticService
             unregistered ? "UNREGISTERED" : registrationValid ? $"{support} / {snapshot.Product} / REGISTERED" : "登録情報のSupport ID・製品・URLを確認できません");
         Add("GPT Conversation URL", registrationStatus,
             unregistered ? "未登録のため対象外" : registrationValid ? "Conversation URL形式を確認" : "Conversation URLまたは登録識別が不正");
+
+        Check();
+        try
+        {
+            var store = new QualityMemoryStore(string.IsNullOrWhiteSpace(snapshot.QualityStorePath)
+                ? null : snapshot.QualityStorePath);
+            var memory = store.Load();
+            var approved = memory.Records.Where(static record => record.ApprovedByUser).ToArray();
+            var directionsValid = memory.Records.All(static record => record.ApprovedByUser &&
+                (record.Audience == QualityAudience.Customer && record.Direction == QualityDirection.CustomerOutbound
+                || record.Audience == QualityAudience.Manufacturer && record.Direction == QualityDirection.ManufacturerOutbound));
+            var safeStyles = memory.Records.All(static record => string.Equals(record.ReusableStyleText,
+                QualityStyleSummary.Build(record.ApprovedText, record.Audience), StringComparison.Ordinal));
+            var retrieved = hasCase ? store.Retrieve(snapshot.Product, QualityAudience.Customer, "CUSTOMER_REPLY") : [];
+            Add("Quality Memory Store", QuickDiagnosticStatus.Pass,
+                $"Records: {memory.Records.Count} / Customer: {approved.Count(record => record.Audience == QualityAudience.Customer)} / Manufacturer: {approved.Count(record => record.Audience == QualityAudience.Manufacturer)} / Reviewer: {(snapshot.QualityReviewEnabled ? "ON" : "OFF")}");
+            Add("Quality Memory Index", QuickDiagnosticStatus.Pass, "専用JSON storeを直接検索。一般PastCase索引とは分離");
+            Add("Approved-only check", directionsValid ? QuickDiagnosticStatus.Pass : QuickDiagnosticStatus.Fail,
+                directionsValid ? "明示承認済みOutboundのみ" : "未承認または方向不正のrecordあり");
+            Add("PII-safe reusable text", safeStyles ? QuickDiagnosticStatus.Pass : QuickDiagnosticStatus.Fail,
+                safeStyles ? "構造要約のみを確認" : "保存済み要約が安全な構造要約と一致しません");
+            Add("Quality retrieval", retrieved.Count <= 3 ? QuickDiagnosticStatus.Pass : QuickDiagnosticStatus.Fail,
+                $"Last retrieval: {snapshot.QualityLastRetrievalCount} examples / 現在条件: {retrieved.Count}件");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException)
+        {
+            Add("Quality Memory Store", QuickDiagnosticStatus.Fail, $"読込不可 ({ex.GetType().Name})");
+            foreach (var name in new[] { "Quality Memory Index", "Approved-only check", "PII-safe reusable text", "Quality retrieval" })
+                Add(name, QuickDiagnosticStatus.Warn, "store未確認");
+        }
+        var genericIndexPath = string.IsNullOrWhiteSpace(snapshot.AiIndexFolder) ? string.Empty
+            : Path.Combine(snapshot.AiIndexFolder, AiCaseIndexBuilder.IndexFileName);
+        if (string.IsNullOrWhiteSpace(genericIndexPath) || !File.Exists(genericIndexPath))
+            Add("GptHandoff duplicate indexing", QuickDiagnosticStatus.Warn, "一般過去案件index未作成または場所未設定");
+        else
+        {
+            try
+            {
+                var index = JsonSerializer.Deserialize<AiIndexDocument>(File.ReadAllText(genericIndexPath));
+                var duplicateCount = index?.Notes.Count(note => AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath)) ?? 0;
+                Add("GptHandoff duplicate indexing", duplicateCount == 0 ? QuickDiagnosticStatus.Pass : QuickDiagnosticStatus.Warn,
+                    duplicateCount == 0 ? "一般索引にGPT引継ぎノートなし" : $"既存索引に{duplicateCount}件残存。検索時除外し、再索引で除去");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            {
+                Add("GptHandoff duplicate indexing", QuickDiagnosticStatus.Warn, $"索引読取不可 ({ex.GetType().Name})");
+            }
+        }
+        Add("GPT polish prerequisites", !hasCase || !snapshot.HasPolishableDraft || !registrationValid
+                ? QuickDiagnosticStatus.Warn : QuickDiagnosticStatus.Pass,
+            !hasCase ? "案件未選択" : !registrationValid ? "登録済みConversationを確認できません"
+                : !snapshot.HasPolishableDraft ? "推敲対象の案なし" : "案件登録・Conversation・案を確認");
 
         Check();
         var handoffPath = folderExists && !string.IsNullOrWhiteSpace(support)

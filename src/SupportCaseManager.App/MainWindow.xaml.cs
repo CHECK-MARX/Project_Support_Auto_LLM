@@ -31,6 +31,7 @@ using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Config;
 using SupportCaseManager.Core.Logging;
 using SupportCaseManager.Core.Notes;
+using SupportCaseManager.Core.Quality;
 using SupportCaseManager.Core.Repository;
 
 namespace SupportCaseManager.App;
@@ -5287,6 +5288,62 @@ public partial class MainWindow : Window
     private async void OnAiAssistantOpen(object sender, RoutedEventArgs e)
     {
         await OpenAiAssistantAsync();
+    }
+
+    private async void OnQualityMemoryApprove(object sender, RoutedEventArgs e)
+    {
+        if (_currentCase is null || _activeProduct is null || _currentNote.Key is not ("reply" or "vendor"))
+        {
+            MessageBox.Show(this, "案件と返信案またはメーカー連携ノートを選択してください。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var path = GetNoteFilePath();
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, "保存済みノートがありません。先に追記保存してください。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var supportId = _currentCase.SupportNumber;
+            var product = _activeProduct.DisplayName;
+            var latest = CaseNoteHistoryParser.PickLatest(CaseNoteHistoryParser.Parse(await File.ReadAllTextAsync(path)));
+            if (latest is null || !latest.Header.StartsWith("*****追記部_", StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(latest.Body))
+            {
+                MessageBox.Show(this, "登録できる保存済み文章がありません。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var audience = _currentNote.Key == "vendor" ? QualityAudience.Manufacturer : QualityAudience.Customer;
+            var preview = new QualityMemoryApprovalDialog(product, audience, Path.GetFileName(path), latest.Body)
+            {
+                Owner = this,
+            };
+            if (preview.ShowDialog() != true) return;
+            if (_currentCase?.SupportNumber != supportId || _activeProduct?.DisplayName != product
+                || !string.Equals(GetNoteFilePath(), path, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("確認中に案件またはノートが切り替わりました。再度確認してください。");
+            var stillLatest = CaseNoteHistoryParser.PickLatest(CaseNoteHistoryParser.Parse(await File.ReadAllTextAsync(path)));
+            if (stillLatest?.Index != latest.Index || QualityMemoryStore.Hash(stillLatest.Body) != QualityMemoryStore.Hash(latest.Body))
+                throw new InvalidOperationException("確認中にノートが変更されました。再度確認してください。");
+
+            var store = new QualityMemoryStore(Path.Combine(Path.GetDirectoryName(_config.SettingsPath)!, "quality-memory-v1.json"));
+            var request = new QualityApprovalRequest(
+                product, audience, preview.Intent,
+                audience == QualityAudience.Customer ? QualityDirection.CustomerOutbound : QualityDirection.ManufacturerOutbound,
+                supportId, path,
+                latest.Timestamp.HasValue ? new DateTimeOffset(latest.Timestamp.Value) : null,
+                QualityMemoryStore.Hash(latest.Body), latest.Body, preview.Origin);
+            var approved = await store.ApproveAsync(request);
+            _viewModel.StatusMessage = $"品質改善に登録しました。ID: {approved.Id}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or JsonException)
+        {
+            MessageBox.Show(this, $"品質改善への登録を完了できませんでした: {ex.Message}", "品質改善", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async Task OpenAiAssistantAsync()

@@ -8,6 +8,23 @@ namespace SupportCaseManager.Ai.Tests.Search;
 public class AiCaseKeywordSearcherTests
 {
     [Fact]
+    public async Task LegacyIndexDoesNotReturnGptHandoffAsPastCaseNote()
+    {
+        using var temp = new TempDirectory();
+        await WriteIndexAsync(temp.Path,
+        [
+            CreateNote("handoff", "00001234", "GPT引継ぎ", "対象語の回答",
+                noteFilePath: @"D:\Cases\GPT連携内容_00001234.txt"),
+            CreateNote("normal", "00001234", "通常ノート", "対象語の回答"),
+        ]);
+
+        var results = await new AiCaseKeywordSearcher().SearchAsync(temp.Path, "対象語");
+
+        Assert.Single(results);
+        Assert.Equal("normal", results[0].SourceId);
+    }
+
+    [Fact]
     public async Task SearchAsync_ReturnsMatchingPastCaseNote()
     {
         using var temp = new TempDirectory();

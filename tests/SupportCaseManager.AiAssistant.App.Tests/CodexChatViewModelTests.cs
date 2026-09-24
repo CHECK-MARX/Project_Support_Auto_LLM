@@ -3,6 +3,7 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.AiAssistant.App.ViewModels;
+using SupportCaseManager.Core.Quality;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
@@ -70,6 +71,9 @@ public sealed class CodexChatViewModelTests
         await viewModel.InitializeAsync();
         viewModel.PromptInput = "調査してください";
 
+        Assert.True(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
+        Assert.False(viewModel.ShowResumeButton);
         Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
         Assert.Contains("Codex未接続", viewModel.SendAvailabilityMessage);
         viewModel.SendFromUiCommand.Execute(null);
@@ -77,12 +81,33 @@ public sealed class CodexChatViewModelTests
 
         viewModel.ConnectCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+        Assert.False(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
         Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
         Assert.Contains("Thread", viewModel.SendAvailabilityMessage);
         viewModel.StartNewCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ThreadId == "thread-1", TimeSpan.FromSeconds(5));
         Assert.True(viewModel.SendFromUiCommand.CanExecute(null), viewModel.SendAvailabilityMessage);
         Assert.Equal(string.Empty, viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task CodexOperationButtonsFollowConnectionAndPreviousThreadState()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
+        Assert.False(viewModel.ShowResumeButton);
+
+        client.SetState(CodexConnectionState.Error);
+        Assert.False(viewModel.ShowConnectButton);
+        Assert.True(viewModel.ShowReconnectButton);
+
+        client.SetState(CodexConnectionState.Connected);
+        Assert.False(viewModel.ShowReconnectButton);
     }
 
     [Fact]
@@ -1542,6 +1567,8 @@ public sealed class CodexChatViewModelTests
         Assert.Equal("saved-thread", viewModel.ThreadId);
         Assert.Equal("saved-model", viewModel.Model);
         Assert.True(viewModel.ResumeCommand.CanExecute(null));
+        Assert.True(viewModel.ShowResumeButton);
+        Assert.Equal("なし", viewModel.CurrentThreadStatusText);
         Assert.Contains("チャット履歴を復元しました", viewModel.PreviousSessionStatus);
     }
 
@@ -1759,6 +1786,12 @@ public sealed class CodexChatViewModelTests
     public async Task ArtifactCommands_RequirePlanThenCreateExcelAndManufacturerMail()
     {
         using var temp = new TempDirectory();
+        var qualityStore = new QualityMemoryStore(Path.Combine(temp.Path, "quality-memory.json"));
+        const string approvedMail = "Please review the attached guide for Example Customer.\n\nPlease confirm the next action.";
+        await qualityStore.ApproveAsync(new QualityApprovalRequest(
+            "Checkmarx", QualityAudience.Manufacturer, "MANUFACTURER_ASK",
+            QualityDirection.ManufacturerOutbound, "00018290", "manufacturer-note.txt", null,
+            QualityMemoryStore.Hash(approvedMail), approvedMail));
         var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
         await File.WriteAllBytesAsync(source, [1, 2, 3]);
         var fakeClient = new FakeClient();
@@ -1793,7 +1826,8 @@ public sealed class CodexChatViewModelTests
                 noteText = text;
                 return Task.FromResult(true);
             },
-            clipboardWriter: text => copiedText = text);
+            clipboardWriter: text => copiedText = text,
+            qualityMemoryStore: qualityStore);
         viewModel.PromptInput = "問い合わせ内容.xlsxを英語に翻訳して別名で保存してください";
         await viewModel.InitializeAsync();
 
@@ -1864,6 +1898,8 @@ public sealed class CodexChatViewModelTests
         Assert.Contains("Protected Values Injected:", viewModel.ManufacturerFollowUpScopeText);
         Assert.Contains("Protected Values Missing: 0", viewModel.ManufacturerFollowUpScopeText);
         Assert.Contains("Protected Value Parity: PASS", viewModel.ManufacturerFollowUpScopeText);
+        Assert.Contains("STYLE_EXAMPLES_ONLY", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Example Customer", fakeClient.LastTurnText, StringComparison.Ordinal);
         Assert.DoesNotContain(temp.Path, viewModel.ManufacturerFollowUpScopeText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Test Company", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
         Assert.Null(noteText);
@@ -2168,6 +2204,12 @@ public sealed class CodexChatViewModelTests
         public void EnqueueResponse(string response)
         {
             responses.Enqueue(response);
+        }
+
+        public void SetState(CodexConnectionState state)
+        {
+            State = state;
+            StateChanged?.Invoke(this, state);
         }
 
         public Task<CodexConnectionInfo> ConnectAsync(string? configuredExecutablePath, CancellationToken cancellationToken = default)

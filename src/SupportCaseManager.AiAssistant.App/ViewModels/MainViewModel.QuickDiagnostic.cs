@@ -47,7 +47,10 @@ public sealed partial class MainViewModel
             caseSnapshot.SupportId, caseSnapshot.ProductName, caseSnapshot.CaseFolder,
             BaseFolder, CloseFolder, caseSnapshot.ProductPromptFilePath,
             caseSnapshot.SupportToolSettingsFilePath, currentCaseContext,
-            gptHandoffContext, Notes.ToArray(), caseSnapshot.Evidence.ToArray());
+            gptHandoffContext, Notes.ToArray(), caseSnapshot.Evidence.ToArray(),
+            AiIndexFolder,
+            !string.IsNullOrWhiteSpace(CustomerReplyDraft) || !string.IsNullOrWhiteSpace(Codex?.EnglishManufacturerDraft),
+            QualityReviewEnabled, QualityLastRetrievalCount, qualityMemoryStore.FilePath);
 
         using var cancellation = new CancellationTokenSource();
         quickDiagnosticCancellation = cancellation;

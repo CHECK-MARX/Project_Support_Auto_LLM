@@ -26,6 +26,10 @@ public sealed record class AnswerDraftRequest
     [JsonPropertyName("productInstruction")]
     public string ProductInstruction { get; init; } = string.Empty;
 
+    [JsonPropertyName("qualityStyleExamples")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? QualityStyleExamples { get; init; }
+
     [JsonPropertyName("attachmentFileNames")]
     public IReadOnlyList<string> AttachmentFileNames { get; init; } = [];
 

@@ -165,11 +165,15 @@
                                         Grid.Column="1"
                                         HorizontalAlignment="Left"
                                         Content="Codexへ接続"
-                                        Command="{Binding Codex.ConnectCommand}" />
+                                        Command="{Binding Codex.ConnectCommand}"
+                                        Visibility="{Binding Codex.ShowConnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ToolTip="Codex未接続時に接続します。" />
                                 <Button Grid.Row="1"
                                         Grid.Column="2"
                                         Content="再接続"
-                                        Command="{Binding Codex.ReconnectCommand}" />
+                                        Command="{Binding Codex.ReconnectCommand}"
+                                        Visibility="{Binding Codex.ShowReconnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ToolTip="Codex接続に問題がある場合に再接続します。" />
 
                                 <TextBlock Grid.Row="2" Text="Codexバージョン" />
                                 <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2"
@@ -549,6 +553,8 @@
                             <CheckBox Content="質問適合性を考慮した根拠選定" IsChecked="{Binding UseQuestionAwareEvidenceSelection}" Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource UseAnswerQualityGateLabel}"
                                       IsChecked="{Binding UseAnswerQualityGate}"
+                                      Margin="12,0,0,0" />
+                            <CheckBox Content="Quality Review" IsChecked="{Binding QualityReviewEnabled}"
                                       Margin="12,0,0,0" />
                             <CheckBox Content="{DynamicResource UsePhase175QualityControlsLabel}"
                                       IsChecked="{Binding UsePhase175QualityControls}"
@@ -1129,13 +1135,30 @@
                             </Grid>
                         </GroupBox>
 
-                        <WrapPanel Margin="0,0,0,8">
-                            <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}" />
-                            <Button Content="新しい調査" Command="{Binding Codex.StartNewCommand}" />
-                            <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}" />
-                            <Button Content="再接続" Command="{Binding Codex.ReconnectCommand}" />
-                            <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}" />
+                        <TextBlock Margin="0,4,0,8" FontWeight="SemiBold">
+                            <Run Text="Codex: " /><Run Text="{Binding Codex.ConnectionStateText, Mode=OneWay}" />
+                            <Run Text="  |  Thread: " /><Run Text="{Binding Codex.CurrentThreadStatusText, Mode=OneWay}" />
+                            <Run Text="  |  GPT: " /><Run Text="{Binding GptHandoffStatusText, Mode=OneWay}" />
+                        </TextBlock>
+                        <TextBlock Margin="0,0,0,6" Text="通常は指示を入力して「送信」します。別のThreadを始める場合だけ下の操作を使ってください。"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource AppMutedForegroundBrush}" />
+                        <WrapPanel Margin="0,0,0,4">
+                            <Button Content="新しい調査を開始" Command="{Binding Codex.StartNewCommand}"
+                                    ToolTip="現在案件について、現在のThreadとは別に新しいCodex Threadを開始します。" />
+                            <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}"
+                                    Visibility="{Binding Codex.ShowResumeButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    ToolTip="この案件の前回Threadを再開します。" />
+                            <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}"
+                                    Visibility="{Binding Codex.ShowConnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    ToolTip="Codex未接続時に接続します。" />
+                            <Button Content="再接続" Command="{Binding Codex.ReconnectCommand}"
+                                    Visibility="{Binding Codex.ShowReconnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                    ToolTip="Codex接続が切れた場合に再接続します。" />
                         </WrapPanel>
+                        <Expander Header="補助操作" Margin="0,0,0,8">
+                            <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}"
+                                    ToolTip="案件フォルダ内のファイルを再読込します。" />
+                        </Expander>
 
                         <TextBlock Text="{Binding Codex.PreviousSessionStatus, Mode=OneWay}" TextWrapping="Wrap"
                                    Foreground="{DynamicResource AppMutedForegroundBrush}" />
@@ -1457,6 +1480,10 @@
                                                             Command="{Binding Codex.CopyEnglishManufacturerDraftCommand}" />
                                                     <Button Content="WPFノート編集に送る（英語）"
                                                             Command="{Binding Codex.SendEnglishManufacturerDraftToWpfNoteCommand}" />
+                                                    <Button Content="メーカー英語案をGPTで推敲" Command="{Binding GptPolishManufacturerCommand}"
+                                                            ToolTip="現在の英語案を登録済みGPTへ送り、文章の推敲を依頼します。回答は自動で取り込みません。" />
+                                                    <TextBlock Text="{Binding GptPolishStatusText}" Margin="0,8,0,0"
+                                                               VerticalAlignment="Center" TextWrapping="Wrap" />
                                                 </WrapPanel>
                                             </StackPanel>
                                         </GroupBox>
@@ -1466,12 +1493,18 @@
                         </Expander>
 
                         <GroupBox Header="Codex技術回答案（編集可能）">
-                            <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                     IsReadOnly="False"
-                                     AcceptsReturn="True"
-                                     TextWrapping="Wrap"
-                                     VerticalScrollBarVisibility="Auto"
-                                     MinHeight="140" />
+                            <StackPanel>
+                                <TextBox Text="{Binding Codex.TechnicalAnswer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         IsReadOnly="False"
+                                         AcceptsReturn="True"
+                                         TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         MinHeight="140" />
+                                <Button Content="この回答をGPTで推敲"
+                                        Command="{Binding GptPolishTechnicalAnswerCommand}"
+                                        HorizontalAlignment="Left" Margin="0,8,0,0"
+                                        ToolTip="Codex技術回答案の現在の編集内容を登録済みGPTへ送り、お客様向け文章として推敲を依頼します。回答は自動で取り込みません。" />
+                            </StackPanel>
                         </GroupBox>
                         <GroupBox Header="レビュー後の回答案">
                             <TextBox Text="{Binding Codex.ReviewAnswer, Mode=OneWay}"
@@ -1544,12 +1577,18 @@
                         </Expander>
 
                         <GroupBox Header="{DynamicResource CustomerReplyDraftHeader}">
+                            <StackPanel>
                             <TextBox Text="{Binding CustomerReplyDraft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      AcceptsReturn="True"
                                      IsReadOnly="False"
                                      TextWrapping="Wrap"
                                      VerticalScrollBarVisibility="Auto"
                                      MinHeight="150" />
+                            <Button Content="お客様向け回答案をGPTで推敲" Command="{Binding GptPolishCustomerCommand}"
+                                    HorizontalAlignment="Left" Margin="0,8,0,0"
+                                    ToolTip="現在のお客様向け回答案を登録済みGPTへ送り、文章の推敲を依頼します。回答は自動で取り込みません。" />
+                            <TextBlock Text="{Binding GptPolishStatusText}" Margin="0,8,0,0" TextWrapping="Wrap" />
+                            </StackPanel>
                         </GroupBox>
 
                         <GroupBox Header="回答可能判定">
@@ -1668,6 +1707,8 @@
                                 <TextBlock Text="{Binding SelectedQuickDiagnosticItem.Detail}" TextWrapping="Wrap" Margin="0,8,0,0" />
                             </StackPanel>
                         </GroupBox>
+
+                        <TextBlock Text="{Binding QualityReviewText}" TextWrapping="Wrap" Margin="0,4,0,4" />
                         <GroupBox Header="案件別Codex設定">
                             <TextBox Text="{Binding Codex.CaseSettingsDiagnostics, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" />
                         </GroupBox>

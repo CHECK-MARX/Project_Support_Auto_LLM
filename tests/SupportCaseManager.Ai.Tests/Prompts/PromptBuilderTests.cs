@@ -6,6 +6,39 @@ namespace SupportCaseManager.Ai.Tests.Prompts;
 public class PromptBuilderTests
 {
     [Fact]
+    public void StyleExamplesAreSeparateFromEvidenceAndAbsentByDefault()
+    {
+        var baseline = new PromptBuilder().Build(CreateRequest());
+        var withStyle = new PromptBuilder().Build(CreateRequest() with
+        {
+            QualityStyleExamples = ["丁寧な日本語の業務メールとして書く。"],
+        });
+
+        Assert.DoesNotContain("STYLE_EXAMPLES_ONLY", baseline.UserPrompt);
+        Assert.Contains("STYLE_EXAMPLES_ONLY", withStyle.UserPrompt);
+        Assert.Contains("技術的事実や顧客固有情報を現在案件へコピーしてはいけません", withStyle.UserPrompt);
+        Assert.Equal(baseline.Diagnostics.EvidenceCount, withStyle.Diagnostics.EvidenceCount);
+    }
+
+    [Fact]
+    public void StyleExamplesCannotDisplaceTheUserInstructionAtPromptLimit()
+    {
+        var request = CreateRequest() with { UserInstruction = "今回の明示指示を優先してください。" };
+        var baseline = new PromptBuilder().Build(request);
+        var tight = request with
+        {
+            Settings = new AiAssistantSettings { MaxPromptChars = baseline.Diagnostics.FinalPromptChars },
+        };
+        var withStyle = new PromptBuilder().Build(tight with
+        {
+            QualityStyleExamples = ["丁寧な文章構成にする。"],
+        });
+        var withoutStyle = new PromptBuilder().Build(tight);
+        Assert.Equal(withoutStyle.UserPrompt, withStyle.UserPrompt);
+        Assert.Contains("今回の明示指示", withStyle.UserPrompt);
+    }
+
+    [Fact]
     public void Build_IncludesInstructionNotToAssertWithoutEvidence()
     {
         var builder = new PromptBuilder();

@@ -170,6 +170,7 @@
                                 <Button x:Name="NotePreviewAllButton" Content="ノートをプレビュー" Margin="8,0,0,0" Click="OnNotePreviewAll" />
                                 <Button x:Name="NotePreviewButton" Content="プレビュー" Margin="8,0,0,0" Click="OnNotePreviewLatest" />
                                 <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
+                                <Button Content="品質改善に登録" Margin="8,0,0,0" Click="OnQualityMemoryApprove" />
                                 <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
                                 <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
                                 <Button x:Name="AiAssistantOpenButton" Content="AI回答支援で開く" Margin="16,0,0,0" Click="OnAiAssistantOpen" />

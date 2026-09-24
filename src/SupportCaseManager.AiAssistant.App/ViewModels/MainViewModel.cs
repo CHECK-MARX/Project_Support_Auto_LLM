@@ -29,6 +29,7 @@ using SupportCaseManager.AiAssistant.App.Llm;
 using SupportCaseManager.Core.Config;
 using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Repository;
+using SupportCaseManager.Core.Quality;
 using SupportCaseManager.App.ChatGpt;
 using SupportCaseManager.App.Dialogs;
 using WinForms = System.Windows.Forms;
@@ -95,6 +96,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly Func<string, bool> confirmReplyAppend;
     private readonly GptHandoffImportController gptHandoffImportController;
     private readonly Action<string, MessageBoxImage> showGptHandoffMessage;
+    private readonly QualityMemoryStore qualityMemoryStore = new();
+    private readonly IGptConversationService gptPolishConversationService;
     private CancellationTokenSource? autoSaveCancellation;
     private CancellationTokenSource? generationCancellation;
     private bool settingsLoaded;
@@ -236,7 +239,7 @@ public sealed partial class MainViewModel : ObservableObject
     private string modelResolutionSource = ModelResolutionSources.Unresolved;
     private string requestedModel = string.Empty;
     private GptHandoffContext gptHandoffContext = new();
-    private string gptHandoffStatusText = "未利用";
+    private string gptHandoffStatusText = "未登録";
     private bool gptHandoffOperationInProgress;
     private string effectiveModel = string.Empty;
     private string fallbackModel = string.Empty;
@@ -282,7 +285,8 @@ public sealed partial class MainViewModel : ObservableObject
         Func<string>? readGptHandoffClipboardText = null,
         Func<GptHandoffSnapshot, bool>? confirmGptHandoffImport = null,
         Func<CaseRecord, GptHandoffSnapshot, CancellationToken, Task<GptHandoffImportResult>>? importGptHandoffSnapshot = null,
-        Action<string, MessageBoxImage>? showGptHandoffMessage = null)
+        Action<string, MessageBoxImage>? showGptHandoffMessage = null,
+        IGptConversationService? gptPolishConversationService = null)
     {
         this.settingsStore = settingsStore;
         this.caseContextBuilder = caseContextBuilder;
@@ -308,6 +312,7 @@ public sealed partial class MainViewModel : ObservableObject
         this.currentCaseEvidenceService = currentCaseEvidenceService ?? new CurrentCaseEvidenceService();
         this.confirmReplyAppend = confirmReplyAppend ?? ConfirmReplyAppend;
         this.showGptHandoffMessage = showGptHandoffMessage ?? ShowGptHandoffMessage;
+        this.gptPolishConversationService = gptPolishConversationService ?? new GptConversationService();
         gptHandoffImportController = new GptHandoffImportController(
             readGptHandoffClipboardText ?? ReadGptHandoffClipboardText,
             confirmGptHandoffImport ?? ConfirmGptHandoffImport,
@@ -380,6 +385,9 @@ public sealed partial class MainViewModel : ObservableObject
         CancelQuickDiagnosticCommand = new RelayCommand(CancelQuickDiagnostic);
         CreateGptHandoffCommand = new AsyncRelayCommand(CreateGptHandoffAsync, () => GptHandoffAvailable);
         ImportGptHandoffCommand = new AsyncRelayCommand(ImportGptHandoffAsync, () => GptHandoffAvailable);
+        GptPolishCustomerCommand = new AsyncRelayCommand(GptPolishCustomerAsync);
+        GptPolishManufacturerCommand = new AsyncRelayCommand(GptPolishManufacturerAsync);
+        GptPolishTechnicalAnswerCommand = new AsyncRelayCommand(GptPolishTechnicalAnswerAsync);
 
         Notes.Add(new NoteSnapshot
         {
@@ -435,6 +443,7 @@ public sealed partial class MainViewModel : ObservableObject
     public void AttachCodex(CodexChatViewModel codexViewModel)
     {
         codex = codexViewModel ?? throw new ArgumentNullException(nameof(codexViewModel));
+        codex.QualityReviewEnabled = QualityReviewEnabled;
         OnPropertyChanged(nameof(Codex));
         codex.RefreshCaseSelection();
         codex.OnCaseLoaded(BuildCodexCaseSnapshot());
@@ -1655,6 +1664,9 @@ public sealed partial class MainViewModel : ObservableObject
     public RelayCommand OpenLogCommand { get; }
     public AsyncRelayCommand CreateGptHandoffCommand { get; }
     public AsyncRelayCommand ImportGptHandoffCommand { get; }
+    public AsyncRelayCommand GptPolishCustomerCommand { get; }
+    public AsyncRelayCommand GptPolishManufacturerCommand { get; }
+    public AsyncRelayCommand GptPolishTechnicalAnswerCommand { get; }
     public RelayCommand SelectCodexExecutableCommand { get; }
     public RelayCommand SelectRagLabEvidenceFileCommand { get; }
     public RelayCommand SelectRagLabBaselineReadinessFileCommand { get; }
@@ -2042,7 +2054,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void UpdateGptHandoffStatus()
     {
-        GptHandoffStatusText = GptHandoffAvailable ? "登録済み" : "未利用";
+        GptHandoffStatusText = GptHandoffAvailable ? "登録済み" : "未登録";
         CreateGptHandoffCommand?.RaiseCanExecuteChanged();
         ImportGptHandoffCommand?.RaiseCanExecuteChanged();
     }
@@ -3101,6 +3113,8 @@ public sealed partial class MainViewModel : ObservableObject
 
             SetOperationProgress(90, "回答案を整形しています");
             ApplyDraftResult(lastResult);
+            ReviewCustomerQualityDraft();
+            await SaveCustomerQualityDraftSafelyAsync();
             GenerationDiagnosticsText = FormatGenerationSuccessDiagnostics(lastRequest, lastResult);
             var completedWithFallback = lastResult.Warnings.Any(static warning =>
                 warning.Contains("JSON解析に失敗", StringComparison.Ordinal) ||
@@ -4545,12 +4559,26 @@ public sealed partial class MainViewModel : ObservableObject
         var promptInstructions = SupportPromptFileLoader.Load(
             selectedProduct?.ProductPromptFilePath,
             SupportToolSettingsFilePath);
+        IReadOnlyList<string> qualityStyles;
+        try
+        {
+            qualityStyles = qualityMemoryStore.Retrieve(effectiveProductName, QualityAudience.Customer, "CUSTOMER_REPLY")
+                .Select(static record => record.ReusableStyleText).ToArray();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
+        {
+            qualityStyles = [];
+        }
+        QualityLastRetrievalCount = qualityStyles.Count;
+        if (QualityReviewEnabled && qualityStyles.Count >= 2)
+            settings = settings with { UseAnswerQualityGate = true };
         return new AnswerDraftRequest
         {
             Case = caseContext,
             InquiryText = InquiryText,
             CommonInstruction = promptInstructions.CommonInstruction,
             ProductInstruction = promptInstructions.ProductInstruction,
+            QualityStyleExamples = qualityStyles.Count == 0 ? null : qualityStyles,
             AttachmentFileNames = CollectAttachmentFileNames(caseContext.CaseFolderPath),
             InstructionWarnings = promptInstructions.Warnings,
             InquiryFocus = inquiryFocus,
