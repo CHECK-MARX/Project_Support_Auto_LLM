@@ -39,6 +39,7 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
         }
 
         return document.Notes
+            .Where(static note => !AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath))
             .Select(note => new ScoredNote(note, Score(note, query)))
             .Where(item => item.Score.Score > 0)
             .OrderByDescending(item => item.Score.Score)

@@ -275,7 +275,7 @@ public sealed class EmbeddingIndexUpdater
         var manuals = await ReadJsonAsync<AiManualIndexDocument>(Path.Combine(productIndexFolder, AiManualIndexBuilder.IndexFileName), cancellationToken);
         var official = await ReadJsonAsync<AiOfficialDocumentIndexDocument>(Path.Combine(productIndexFolder, AiOfficialDocumentIndexBuilder.IndexFileName), cancellationToken);
         var answerPairs = await ReadJsonAsync<CaseAnswerPairIndexDocument>(Path.Combine(productIndexFolder, CaseAnswerPairIndexDocument.FileName), cancellationToken);
-        sources.AddRange(cases?.Notes.Select(note => CreateSource(
+        sources.AddRange(cases?.Notes.Where(static note => !AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath)).Select(note => CreateSource(
             note.Id, "PastCaseNote", productName, note.Title, note.Text, note.SupportNumber ?? note.Id, sanitizeEmbeddingInput)) ?? []);
         sources.AddRange(manuals?.Manuals.Select(manual => CreateSource(
             manual.Id, "Manual", productName, manual.Title, manual.Text,

@@ -246,6 +246,7 @@ public sealed class GptCaseRegistrationServiceTests
 
         Assert.True(result.Succeeded);
         Assert.Equal("https://chatgpt.com/c/existing", conversation.SentUrl);
+        Assert.Equal("Vulnerability Scanner Assistant", conversation.ExpectedTargetName);
         Assert.Contains("<<<AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
         Assert.Contains("【現在の未解決事項】", conversation.SentMessage, StringComparison.Ordinal);
         Assert.Contains("<<<END_AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
@@ -276,10 +277,12 @@ public sealed class GptCaseRegistrationServiceTests
 
         await new GptConversationService(gateway).SendMessageAsync(
             "https://chatgpt.com/g/g-test/c/existing",
-            "handoff prompt");
+            "handoff prompt",
+            expectedTargetName: "Vulnerability Scanner Assistant");
 
         Assert.Equal("https://chatgpt.com/c/existing", gateway.SentUrl);
         Assert.Equal("handoff prompt", gateway.SentMessage);
+        Assert.Equal("Vulnerability Scanner Assistant", gateway.ExpectedTargetName);
         Assert.Equal(0, gateway.CreateCalls);
     }
 
@@ -320,6 +323,7 @@ public sealed class GptCaseRegistrationServiceTests
         public string OpenedUrl { get; private set; } = string.Empty;
         public string SentUrl { get; private set; } = string.Empty;
         public string SentMessage { get; private set; } = string.Empty;
+        public string? ExpectedTargetName { get; private set; }
 
         public Task<GptConversationCreationResult> CreateConversationAsync(
             ProductGptTarget target,
@@ -339,10 +343,12 @@ public sealed class GptCaseRegistrationServiceTests
         public Task SendMessageAsync(
             string conversationUrl,
             string message,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            string? expectedTargetName = null)
         {
             SentUrl = conversationUrl;
             SentMessage = message;
+            ExpectedTargetName = expectedTargetName;
             return Task.CompletedTask;
         }
     }
@@ -352,6 +358,7 @@ public sealed class GptCaseRegistrationServiceTests
         public int CreateCalls { get; private set; }
         public string SentUrl { get; private set; } = string.Empty;
         public string SentMessage { get; private set; } = string.Empty;
+        public string? ExpectedTargetName { get; private set; }
 
         public Task<GptConversationCreationResult> CreateConversationAsync(
             ProductGptTarget target,
@@ -368,10 +375,12 @@ public sealed class GptCaseRegistrationServiceTests
         public Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
-        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken)
+        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken,
+            string? expectedTargetName = null)
         {
             SentUrl = conversationUrl;
             SentMessage = message;
+            ExpectedTargetName = expectedTargetName;
             return Task.CompletedTask;
         }
     }

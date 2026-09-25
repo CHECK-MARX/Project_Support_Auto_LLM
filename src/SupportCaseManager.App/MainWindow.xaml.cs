@@ -31,6 +31,7 @@ using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Config;
 using SupportCaseManager.Core.Logging;
 using SupportCaseManager.Core.Notes;
+using SupportCaseManager.Core.Quality;
 using SupportCaseManager.Core.Repository;
 
 namespace SupportCaseManager.App;
@@ -46,6 +47,8 @@ public partial class MainWindow : Window
     private readonly IAiAssistantHandoffFileWriter _aiHandoffFileWriter = new AiAssistantHandoffFileWriter();
     private readonly IAiAssistantProcessLauncher _aiProcessLauncher = new AiAssistantProcessLauncher();
     private readonly IOutlookSearchService _outlookSearchService;
+    private readonly OutlookCaseStatusService _outlookCaseStatusService;
+    private readonly DispatcherTimer _outlookStatusTimer = new() { Interval = TimeSpan.FromSeconds(120) };
     private readonly IChatGptHistorySearchService _chatGptHistorySearchService;
     private readonly ProductGptTargetResolver _productGptTargetResolver;
     private readonly GptCaseRegistrationService _gptCaseRegistrationService;
@@ -91,6 +94,9 @@ public partial class MainWindow : Window
     private int _closedSearchVersion;
     private int _closedSearchLoadingVersion = -1;
     private CancellationTokenSource? _statusRefreshCts;
+    private CancellationTokenSource? _outlookStatusCts;
+    private int _outlookStatusVersion;
+    private bool _forceOutlookStatusRefresh;
     private CancellationTokenSource? _closedRefreshCts;
     private CancellationTokenSource? _caseRefreshCts;
     private CancellationTokenSource? _caseTabPreloadCts;
@@ -132,10 +138,12 @@ public partial class MainWindow : Window
         IChatGptHistorySearchService? chatGptHistorySearchService = null,
         ProductGptTargetResolver? productGptTargetResolver = null,
         GptCaseRegistrationService? gptCaseRegistrationService = null,
-        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null)
+        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null,
+        OutlookCaseStatusService? outlookCaseStatusService = null)
     {
         _viewModel = viewModel;
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
+        _outlookCaseStatusService = outlookCaseStatusService ?? new OutlookCaseStatusService();
         _chatGptHistorySearchService = chatGptHistorySearchService ?? new ChatGptHistorySearchService();
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
         _gptCaseRegistrationService = gptCaseRegistrationService ??
@@ -204,6 +212,8 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _outlookStatusTimer.Tick += OnOutlookStatusTimerTick;
+        _outlookStatusTimer.Start();
         LoadDirectoryScanCache();
         CreatedDatePicker.SelectedDate = DateTime.Today;
         RefreshStatusOptions();
@@ -233,6 +243,11 @@ public partial class MainWindow : Window
         try
         {
             SaveDirectoryScanCache();
+            _outlookStatusTimer.Stop();
+            _outlookStatusTimer.Tick -= OnOutlookStatusTimerTick;
+            _outlookStatusCts?.Cancel();
+            _outlookStatusCts?.Dispose();
+            _outlookStatusCts = null;
             _statusRefreshCts?.Cancel();
             _statusRefreshCts?.Dispose();
             _statusRefreshCts = null;
@@ -596,6 +611,7 @@ public partial class MainWindow : Window
             ClosedContentGrid.Visibility = Visibility.Collapsed;
             StatusContentGrid.Visibility = Visibility.Visible;
             EnsureStatusTabData();
+            if (!_statusTabDirty) _ = RefreshOutlookStatusAsync(force: false);
             return;
         }
 
@@ -923,7 +939,76 @@ public partial class MainWindow : Window
     private void OnStatusRefresh(object sender, RoutedEventArgs e)
     {
         _statusTabDirty = true;
+        _forceOutlookStatusRefresh = true;
         EnsureStatusTabData(force: true);
+    }
+
+    private void OnOutlookStatusTimerTick(object? sender, EventArgs e)
+    {
+        if (IsStatusTabVisible()) _ = RefreshOutlookStatusAsync(force: true);
+    }
+
+    private async Task RefreshOutlookStatusAsync(bool force)
+    {
+        if (!IsStatusTabVisible() || _openCases.Count == 0) return;
+        var version = Interlocked.Increment(ref _outlookStatusVersion);
+        _outlookStatusCts?.Cancel();
+        _outlookStatusCts?.Dispose();
+        _outlookStatusCts = new CancellationTokenSource();
+        var token = _outlookStatusCts.Token;
+        var keys = _openCases.Select(static row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath))
+            .Distinct().ToArray();
+        try
+        {
+            var statuses = await _outlookCaseStatusService.RefreshAsync(keys, force, token);
+            if (token.IsCancellationRequested || version != _outlookStatusVersion || !IsStatusTabVisible()) return;
+            foreach (var row in _openCases)
+            {
+                var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
+                if (statuses.TryGetValue(key, out var status)) row.Outlook.Set(status);
+            }
+            foreach (var row in _staleCases)
+            {
+                var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
+                if (statuses.TryGetValue(key, out var status)) row.Outlook.Set(status);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to refresh Outlook case statuses", ex);
+            if (version != _outlookStatusVersion) return;
+            foreach (var row in _openCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
+            foreach (var row in _staleCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
+        }
+    }
+
+    private async void OnOutlookStatusLineDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;
+        e.Handled = true;
+        if (sender is not TextBlock { Tag: OutlookMailReference mail } text)
+        {
+            _viewModel.StatusMessage = "この行に開く対象メールはありません。";
+            return;
+        }
+        var key = text.DataContext switch
+        {
+            OpenCaseEntry row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath),
+            StaleCaseEntry row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath),
+            _ => null,
+        };
+        if (key is null) return;
+        try
+        {
+            var opened = await _outlookCaseStatusService.OpenMailAsync(key, mail);
+            if (!opened) _viewModel.StatusMessage = "対象メールを安全に特定できませんでした。開いていません。";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to open Outlook case mail", ex);
+            _viewModel.StatusMessage = "Outlookの対象メールを開けませんでした。";
+        }
     }
 
     private void QueueStatusTabRefresh()
@@ -1605,6 +1690,9 @@ public partial class MainWindow : Window
             ApplyStatusTabSnapshot(snapshot);
             _statusTabDirty = false;
             _statusTabRefreshedAtUtc = DateTime.UtcNow;
+            var forceOutlook = _forceOutlookStatusRefresh;
+            _forceOutlookStatusRefresh = false;
+            _ = RefreshOutlookStatusAsync(forceOutlook);
         }
         catch (OperationCanceledException)
         {
@@ -5289,6 +5377,62 @@ public partial class MainWindow : Window
         await OpenAiAssistantAsync();
     }
 
+    private async void OnQualityMemoryApprove(object sender, RoutedEventArgs e)
+    {
+        if (_currentCase is null || _activeProduct is null || _currentNote.Key is not ("reply" or "vendor"))
+        {
+            MessageBox.Show(this, "案件と返信案またはメーカー連携ノートを選択してください。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var path = GetNoteFilePath();
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, "保存済みノートがありません。先に追記保存してください。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var supportId = _currentCase.SupportNumber;
+            var product = _activeProduct.DisplayName;
+            var latest = CaseNoteHistoryParser.PickLatest(CaseNoteHistoryParser.Parse(await File.ReadAllTextAsync(path)));
+            if (latest is null || !latest.Header.StartsWith("*****追記部_", StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(latest.Body))
+            {
+                MessageBox.Show(this, "登録できる保存済み文章がありません。", "品質改善", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var audience = _currentNote.Key == "vendor" ? QualityAudience.Manufacturer : QualityAudience.Customer;
+            var preview = new QualityMemoryApprovalDialog(product, audience, Path.GetFileName(path), latest.Body)
+            {
+                Owner = this,
+            };
+            if (preview.ShowDialog() != true) return;
+            if (_currentCase?.SupportNumber != supportId || _activeProduct?.DisplayName != product
+                || !string.Equals(GetNoteFilePath(), path, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("確認中に案件またはノートが切り替わりました。再度確認してください。");
+            var stillLatest = CaseNoteHistoryParser.PickLatest(CaseNoteHistoryParser.Parse(await File.ReadAllTextAsync(path)));
+            if (stillLatest?.Index != latest.Index || QualityMemoryStore.Hash(stillLatest.Body) != QualityMemoryStore.Hash(latest.Body))
+                throw new InvalidOperationException("確認中にノートが変更されました。再度確認してください。");
+
+            var store = new QualityMemoryStore(Path.Combine(Path.GetDirectoryName(_config.SettingsPath)!, "quality-memory-v1.json"));
+            var request = new QualityApprovalRequest(
+                product, audience, preview.Intent,
+                audience == QualityAudience.Customer ? QualityDirection.CustomerOutbound : QualityDirection.ManufacturerOutbound,
+                supportId, path,
+                latest.Timestamp.HasValue ? new DateTimeOffset(latest.Timestamp.Value) : null,
+                QualityMemoryStore.Hash(latest.Body), latest.Body, preview.Origin);
+            var approved = await store.ApproveAsync(request);
+            _viewModel.StatusMessage = $"品質改善に登録しました。ID: {approved.Id}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or ArgumentException or JsonException)
+        {
+            MessageBox.Show(this, $"品質改善への登録を完了できませんでした: {ex.Message}", "品質改善", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
     private async Task OpenAiAssistantAsync()
     {
         if (_currentCase == null)
@@ -6324,6 +6468,7 @@ public partial class MainWindow : Window
         public string Status { get; set; } = string.Empty;
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public OutlookCaseRowStatus Outlook { get; } = new();
     }
 
     private sealed class OpenCaseEntry
@@ -6334,6 +6479,22 @@ public partial class MainWindow : Window
         public string Status { get; set; } = string.Empty;
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public OutlookCaseRowStatus Outlook { get; } = new();
+    }
+
+    private sealed class OutlookCaseRowStatus : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public OutlookStatusLine Primary { get; private set; } = new("確認中...");
+        public OutlookStatusLine Secondary { get; private set; } = new(string.Empty);
+
+        public void Set(OutlookCaseMailStatus status)
+        {
+            Primary = status.Primary;
+            Secondary = status.Secondary;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Primary)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Secondary)));
+        }
     }
 
     private sealed class ExcludedCaseEntry

@@ -88,6 +88,7 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
     internal const string SearchInputAutomationId = "global-search-modal-input";
     internal const string PromptInputAutomationId = "prompt-textarea";
     internal const string SubmitButtonAutomationId = "composer-submit-button";
+    private static readonly string[] PromptInputNames = ["ChatGPT に聞く", "Ask anything", "Message ChatGPT"];
     private static readonly TimeSpan SearchTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ConversationTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(200);
@@ -205,11 +206,17 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
     public async Task SendMessageAsync(
         string conversationUrl,
         string message,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedTargetName = null)
     {
         if (!GptConversationUrl.TryValidateConversation(conversationUrl, out var normalizedUrl))
         {
             throw new InvalidOperationException("保存済みGPTチャットURLが不正です。");
+        }
+
+        if (string.IsNullOrWhiteSpace(expectedTargetName))
+        {
+            throw new InvalidOperationException("登録済みGPT名を確認できません。入力・送信していません。");
         }
 
         Process.Start(new ProcessStartInfo
@@ -220,12 +227,18 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         var automationTarget = await FindChatGptTargetAsync(
                 cancellationToken,
+                expectedTitle: expectedTargetName,
                 expectedConversationUrl: normalizedUrl,
                 requireSearchButton: false,
                 timeout: ConversationTimeout)
             .ConfigureAwait(false)
             ?? throw new InvalidOperationException("登録済みGPT案件チャットを特定できませんでした。送信していません。");
         BringToForeground(automationTarget.BrowserWindow);
+
+        if (!DestinationMatches(automationTarget.BrowserWindow, normalizedUrl, null, expectedTargetName))
+        {
+            throw new InvalidOperationException("登録済みGPT案件チャットの表示中タブを確認できません。入力・送信していません。");
+        }
 
         var promptInput = FindPromptInput(automationTarget.WebContentRoot)
             ?? throw new InvalidOperationException("ChatGPTの入力欄を特定できませんでした。送信していません。");
@@ -237,7 +250,8 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                 cancellationToken,
                 "ChatGPTの入力欄へ引継ぎ依頼を設定できませんでした。送信していません。",
                 "ChatGPTの送信操作を確認できませんでした。送信していません。",
-                normalizedUrl)
+                normalizedUrl,
+                expectedTargetName: expectedTargetName)
             .ConfigureAwait(false);
     }
 
@@ -269,10 +283,9 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                     (string.IsNullOrWhiteSpace(expectedTargetUrl) ||
                      BrowserWindowHasTargetUrl(window, expectedTargetUrl)) &&
                     (string.IsNullOrWhiteSpace(expectedConversationUrl) ||
-                     BrowserWindowHasConversationUrl(window, expectedConversationUrl)) &&
+                     DocumentHasConversationUrl(webContentRoot, expectedConversationUrl)) &&
                     (string.IsNullOrWhiteSpace(expectedTitle) ||
-                     window.Current.Name.Contains(expectedTitle, StringComparison.OrdinalIgnoreCase) ||
-                     webContentRoot.Current.Name.Contains(expectedTitle, StringComparison.OrdinalIgnoreCase)))
+                     ActiveChatGptPageMatches(window, webContentRoot, expectedTitle)))
                 {
                     return new ChatGptAutomationTarget(window, webContentRoot);
                 }
@@ -284,30 +297,78 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         return null;
     }
 
-    private static bool BrowserWindowHasConversationUrl(
-        AutomationElement browserWindow,
+    private static bool DocumentHasConversationUrl(
+        AutomationElement webContentRoot,
         string expectedConversationUrl)
     {
-        if (!GptConversationUrl.TryValidateConversation(expectedConversationUrl, out var expected))
+        return TryReadValuePattern(webContentRoot, out var documentUrl) &&
+            DocumentConversationMatches(expectedConversationUrl, documentUrl);
+    }
+
+    internal static bool DocumentConversationMatches(string expectedUrl, string? documentUrl) =>
+        GptConversationUrl.TryValidateConversation(expectedUrl, out var expected) &&
+        GptConversationUrl.TryValidateConversation(documentUrl, out var actual) &&
+        string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase);
+
+    private static bool ActiveChatGptPageMatches(
+        AutomationElement browserWindow,
+        AutomationElement webContentRoot,
+        string expectedTargetName)
+    {
+        try
+        {
+            if (webContentRoot.Current.IsOffscreen ||
+                !HasVisibleGptHeader(webContentRoot, expectedTargetName))
+            {
+                return false;
+            }
+
+            var tabs = browserWindow.FindAll(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
+            var selectedCount = 0;
+            foreach (AutomationElement tab in tabs)
+            {
+                if (tab.TryGetCurrentPattern(SelectionItemPattern.Pattern, out var pattern) &&
+                    pattern is SelectionItemPattern selection && selection.Current.IsSelected)
+                {
+                    selectedCount++;
+                    if (!SelectedTabMatchesDocument(webContentRoot.Current.Name, tab.Current.Name))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return selectedCount == 1;
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasVisibleGptHeader(AutomationElement webContentRoot, string expectedTargetName)
+    {
+        if (string.IsNullOrWhiteSpace(expectedTargetName))
         {
             return false;
         }
 
-        foreach (AutomationElement edit in browserWindow.FindAll(
+        foreach (AutomationElement label in webContentRoot.FindAll(
                      TreeScope.Descendants,
-                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
+                     new AndCondition(
+                         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text),
+                         new PropertyCondition(AutomationElement.NameProperty, expectedTargetName))))
         {
-            if (string.Equals(
-                    edit.Current.AutomationId,
-                    PromptInputAutomationId,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (IsBrowserChromeEdit(edit) && TryReadValue(edit, out var value) &&
-                GptConversationUrl.TryValidateConversation(value, out var actual) &&
-                string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+            var header = TreeWalker.ControlViewWalker.GetParent(label);
+            if (!label.Current.IsOffscreen && header is not null &&
+                header.FindFirst(TreeScope.Children,
+                    new AndCondition(
+                        new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
+                        new OrCondition(
+                            new PropertyCondition(AutomationElement.NameProperty, "GPT アクション"),
+                            new PropertyCondition(AutomationElement.NameProperty, "GPT actions")))) is not null)
             {
                 return true;
             }
@@ -315,6 +376,12 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         return false;
     }
+
+    internal static bool SelectedTabMatchesDocument(string? documentTitle, string? selectedTabTitle) =>
+        !string.IsNullOrWhiteSpace(documentTitle) &&
+        !string.IsNullOrWhiteSpace(selectedTabTitle) &&
+        (string.Equals(selectedTabTitle, documentTitle, StringComparison.OrdinalIgnoreCase) ||
+         selectedTabTitle.StartsWith(documentTitle + " -", StringComparison.OrdinalIgnoreCase));
 
     private static bool BrowserWindowHasTargetUrl(AutomationElement browserWindow, string expectedTargetUrl)
     {
@@ -381,23 +448,49 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
             return null;
         }
 
+        AutomationElement? webContentRoot = null;
         var current = promptInput;
         while (current is not null && current != browserWindow)
         {
             if (current.Current.ControlType == ControlType.Document)
             {
-                return current;
+                webContentRoot = current;
             }
 
             current = TreeWalker.ControlViewWalker.GetParent(current);
         }
 
+        return webContentRoot;
+    }
+
+    private static AutomationElement? FindPromptInput(AutomationElement root)
+    {
+        foreach (AutomationElement edit in root.FindAll(
+                     TreeScope.Descendants,
+                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
+        {
+            try
+            {
+                if (!edit.Current.IsOffscreen && !IsBrowserChromeEdit(edit) && IsPromptInputIdentity(
+                        edit.Current.AutomationId, edit.Current.Name, edit.Current.HelpText))
+                {
+                    return edit;
+                }
+            }
+            catch (ElementNotAvailableException)
+            {
+                // ChatGPT can replace the composer while the accessibility tree is read.
+            }
+        }
+
         return null;
     }
 
-    private static AutomationElement? FindPromptInput(AutomationElement root) => root.FindFirst(
-        TreeScope.Descendants,
-        new PropertyCondition(AutomationElement.AutomationIdProperty, PromptInputAutomationId));
+    internal static bool IsPromptInputIdentity(string? automationId, string? name, string? helpText) =>
+        string.Equals(automationId, PromptInputAutomationId, StringComparison.OrdinalIgnoreCase)
+        || PromptInputNames.Any(candidate =>
+            string.Equals(name, candidate, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(helpText, candidate, StringComparison.OrdinalIgnoreCase));
 
     private static bool IsBrowserChromeEdit(AutomationElement edit)
     {
@@ -491,6 +584,11 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         string? expectedTargetUrl = null,
         string? expectedTargetName = null)
     {
+        if (!DestinationMatches(browserWindow, expectedConversationUrl, expectedTargetUrl, expectedTargetName))
+        {
+            throw new InvalidOperationException("対象GPTまたはConversationの表示中タブを確認できません。入力・送信していません。");
+        }
+
         if (!promptInput.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePatternValue) ||
             valuePatternValue is not ValuePattern valuePattern ||
             valuePattern.Current.IsReadOnly)
@@ -543,6 +641,7 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         if (submitButton is not null && TryInvoke(submitButton))
         {
+            await ConfirmSubmissionAsync(browserWindow, cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -564,7 +663,47 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         }
 
         WinForms.SendKeys.SendWait("{ENTER}");
+        await ConfirmSubmissionAsync(browserWindow, cancellationToken).ConfigureAwait(false);
     }
+
+    private static async Task ConfirmSubmissionAsync(
+        AutomationElement browserWindow,
+        CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + SearchTimeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                var root = FindChatGptWebContentRoot(browserWindow);
+                var input = root is null ? null : FindPromptInput(root);
+                if (input is not null)
+                {
+                    var hasValue = TryReadValuePattern(input, out var value);
+                    var hasText = TryReadTextPattern(input, out var text);
+                    if (ComposerIsCleared(hasValue, value, hasText, text))
+                    {
+                        return;
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException)
+            {
+                // The composer may be replaced while ChatGPT completes the send.
+            }
+
+            await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new InvalidOperationException(
+            "ChatGPTの送信完了を確認できませんでした。入力欄を確認し、重複送信を避けてください。");
+    }
+
+    internal static bool ComposerIsCleared(bool hasValue, string? value, bool hasText, string? text) =>
+        hasValue ? string.IsNullOrWhiteSpace(value)
+        : hasText && (string.IsNullOrWhiteSpace(text)
+            || PromptInputNames.Any(name => string.Equals(text?.Trim(), name, StringComparison.OrdinalIgnoreCase)));
 
     private static async Task<AutomationElement?> WaitForVerifiedPromptAsync(
         AutomationElement browserWindow,
@@ -644,7 +783,11 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
     {
         if (!string.IsNullOrWhiteSpace(expectedConversationUrl))
         {
-            return BrowserWindowHasConversationUrl(browserWindow, expectedConversationUrl);
+            var root = FindChatGptWebContentRoot(browserWindow);
+            return root is not null &&
+                DocumentHasConversationUrl(root, expectedConversationUrl) &&
+                (string.IsNullOrWhiteSpace(expectedTargetName) ||
+                 ActiveChatGptPageMatches(browserWindow, root, expectedTargetName));
         }
 
         if (string.IsNullOrWhiteSpace(expectedTargetUrl))
@@ -703,11 +846,10 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                 promptInput.SetFocus();
                 var focused = AutomationElement.FocusedElement;
                 if (focused is not null &&
-                    string.Equals(
-                        focused.Current.AutomationId,
-                        PromptInputAutomationId,
-                        StringComparison.OrdinalIgnoreCase) &&
-                    focused.Current.ProcessId == promptInput.Current.ProcessId)
+                    focused.Current.ProcessId == promptInput.Current.ProcessId &&
+                    !IsBrowserChromeEdit(focused) &&
+                    IsPromptInputIdentity(focused.Current.AutomationId,
+                        focused.Current.Name, focused.Current.HelpText))
                 {
                     return true;
                 }

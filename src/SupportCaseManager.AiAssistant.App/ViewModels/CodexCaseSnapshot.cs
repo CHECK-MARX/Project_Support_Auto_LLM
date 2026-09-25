@@ -16,6 +16,10 @@ public sealed record CodexCaseSnapshot
     public string CaseFolder { get; init; } = string.Empty;
     public string InquiryFile { get; init; } = string.Empty;
     public string InquiryText { get; init; } = string.Empty;
+    public IReadOnlyList<NoteSnapshot> Notes { get; init; } = [];
+    public string Readiness { get; init; } = string.Empty;
+    public IReadOnlyList<string> UnresolvedItems { get; init; } = [];
+    public IReadOnlyList<string> EvidenceConflicts { get; init; } = [];
     public string CustomerReplyDraft { get; init; } = string.Empty;
     public string InternalMemo { get; init; } = string.Empty;
     public string NoteEditorTransferPipeName { get; init; } = string.Empty;

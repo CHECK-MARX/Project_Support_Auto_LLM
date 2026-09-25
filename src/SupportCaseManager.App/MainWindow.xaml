@@ -6,6 +6,20 @@
         WindowStartupLocation="CenterScreen"
         Loaded="OnLoaded"
         PreviewKeyDown="OnPreviewKeyDown">
+    <Window.Resources>
+        <Style x:Key="OutlookStatusTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag.IsInbound, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource OutlookInboundForeground}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag.IsInbound, RelativeSource={RelativeSource Self}}" Value="False">
+                    <Setter Property="Foreground" Value="{DynamicResource OutlookOutboundForeground}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
     <DockPanel Margin="16">
         <StatusBar DockPanel.Dock="Bottom">
             <Grid Width="{Binding RelativeSource={RelativeSource AncestorType=StatusBar}, Path=ActualWidth}">
@@ -170,6 +184,7 @@
                                 <Button x:Name="NotePreviewAllButton" Content="ノートをプレビュー" Margin="8,0,0,0" Click="OnNotePreviewAll" />
                                 <Button x:Name="NotePreviewButton" Content="プレビュー" Margin="8,0,0,0" Click="OnNotePreviewLatest" />
                                 <Button x:Name="NoteAppendButton" Content="追記保存" Margin="8,0,0,0" Click="OnNoteAppend" />
+                                <Button Content="品質改善に登録" Margin="8,0,0,0" Click="OnQualityMemoryApprove" />
                                 <Button x:Name="NoteClearButton" Content="クリア" Margin="8,0,0,0" Click="OnNoteClear" />
                                 <Button x:Name="NoteSubfolderButton" Content="サブフォルダ作成" Margin="8,0,0,0" Click="OnNoteSubfolder" />
                                 <Button x:Name="AiAssistantOpenButton" Content="AI回答支援で開く" Margin="16,0,0,0" Click="OnAiAssistantOpen" />
@@ -289,6 +304,16 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Outlook状況" Width="300">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="4,2">
+                                                <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Primary.Text}" ToolTip="{Binding Outlook.Primary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Primary.Mail}" />
+                                                <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Secondary.Text}" ToolTip="{Binding Outlook.Secondary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Secondary.Mail}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>
@@ -352,6 +377,16 @@
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Button Content="除外" Padding="6,2" Click="OnStaleCaseExclude" Tag="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Outlook状況" Width="300">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="4,2">
+                                                    <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Primary.Text}" ToolTip="{Binding Outlook.Primary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Primary.Mail}" />
+                                                    <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Secondary.Text}" ToolTip="{Binding Outlook.Secondary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Secondary.Mail}" />
+                                                </StackPanel>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>

@@ -30,7 +30,7 @@ internal static class EmbeddingCandidateSourceLoader
         var answers = await ReadAsync<CaseAnswerPairIndexDocument>(
             Path.Combine(productIndexFolder, CaseAnswerPairIndexDocument.FileName), cancellationToken);
 
-        return (cases?.Notes.Select(note => new SearchSource
+        return (cases?.Notes.Where(static note => !AiCaseIndexBuilder.IsGptHandoffNote(note.NoteFilePath)).Select(note => new SearchSource
             {
                 SourceId = note.Id,
                 SourceType = "PastCaseNote",

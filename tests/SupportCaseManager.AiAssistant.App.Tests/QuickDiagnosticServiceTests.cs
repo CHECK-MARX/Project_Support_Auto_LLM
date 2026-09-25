@@ -2,11 +2,37 @@ using System.Security.Cryptography;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.AiAssistant.App.Diagnostics;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Quality;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class QuickDiagnosticServiceTests
 {
+    [Fact]
+    public async Task QualityMemoryDiagnosticReadsApprovedMetadataWithoutDisplayingSourceText()
+    {
+        using var folder = new TemporaryDirectory();
+        var path = Path.Combine(folder.Path, "quality-memory.json");
+        var store = new QualityMemoryStore(path);
+        const string body = "株式会社例示 support@example.com に連絡してください。";
+        await store.ApproveAsync(new QualityApprovalRequest("Checkmarx", QualityAudience.Customer,
+            "CUSTOMER_REPLY", QualityDirection.CustomerOutbound, "00018303", "reply.txt",
+            DateTimeOffset.Now, QualityMemoryStore.Hash(body), body));
+        var before = SHA256.HashData(File.ReadAllBytes(path));
+
+        var report = await new QuickDiagnosticService().RunAsync(Empty() with
+        {
+            QualityStorePath = path,
+        }, CancellationToken.None);
+
+        Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "Quality Memory Store").Status);
+        Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "Approved-only check").Status);
+        Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "PII-safe reusable text").Status);
+        Assert.DoesNotContain("株式会社例示", string.Join(" ", report.Items.Select(item => item.Detail)));
+        Assert.DoesNotContain("support@example.com", string.Join(" ", report.Items.Select(item => item.Detail)));
+        Assert.Equal(before, SHA256.HashData(File.ReadAllBytes(path)));
+    }
+
     [Fact]
     public async Task NoCaseSelected_WarnsWithoutCrashing()
     {
@@ -15,6 +41,9 @@ public sealed class QuickDiagnosticServiceTests
         Assert.Equal(QuickDiagnosticStatus.Warn, Item(report, "Case Context").Status);
         Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "GPT Registration").Status);
         Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "GPT Handoff").Status);
+        Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "Quality Memory Store").Status);
+        Assert.Equal(QuickDiagnosticStatus.Pass, Item(report, "Approved-only check").Status);
+        Assert.Equal(QuickDiagnosticStatus.Warn, Item(report, "GPT polish prerequisites").Status);
     }
 
     [Theory]
@@ -113,7 +142,8 @@ public sealed class QuickDiagnosticServiceTests
         Assert.Single(report.Items, item => item.Name == name);
 
     private static QuickDiagnosticSnapshot Empty() => new(
-        "", "", "", "", "", "", "", null, new GptHandoffContext(), [], []);
+        "", "", "", "", "", "", "", null, new GptHandoffContext(), [], [],
+        QualityStorePath: Path.Combine(AppContext.BaseDirectory, "quality-diagnostic-test-missing.json"));
 
     private sealed class TemporaryDirectory : IDisposable
     {

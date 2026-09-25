@@ -60,7 +60,8 @@ public interface IGptConversationService
     Task SendMessageAsync(
         string conversationUrl,
         string message,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        string? expectedTargetName = null);
 }
 
 public interface IGptConversationGateway
@@ -72,7 +73,8 @@ public interface IGptConversationGateway
 
     Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken);
 
-    Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken);
+    Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken,
+        string? expectedTargetName = null);
 }
 
 public sealed class GptConversationService : IGptConversationService
@@ -114,7 +116,8 @@ public sealed class GptConversationService : IGptConversationService
     public Task SendMessageAsync(
         string conversationUrl,
         string message,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? expectedTargetName = null)
     {
         if (!GptConversationUrl.TryValidateConversation(conversationUrl, out var normalized))
         {
@@ -126,7 +129,7 @@ public sealed class GptConversationService : IGptConversationService
             throw new InvalidOperationException("GPTへ送信する内容がありません。");
         }
 
-        return gateway.SendMessageAsync(normalized, message, cancellationToken);
+        return gateway.SendMessageAsync(normalized, message, cancellationToken, expectedTargetName);
     }
 }
 
@@ -367,7 +370,8 @@ public sealed class GptCaseRegistrationService
             await conversationService.SendMessageAsync(
                 conversationUrl,
                 GptHandoffPrompt.Text,
-                cancellationToken);
+                cancellationToken,
+                registration.TargetGptDisplayName);
             return new GptHandoffPromptSendResult(
                 true,
                 "登録済みGPT案件チャットへ引継ぎ情報の作成を依頼しました。回答をコピーして取り込んでください。");

@@ -3,11 +3,71 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.AiAssistant.App.ViewModels;
+using SupportCaseManager.Core.Quality;
 
 namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class CodexChatViewModelTests
 {
+    [Fact]
+    public async Task BaselineChatFollowUp_ReintroducesCurrentCaseContextAndNewFiles()
+    {
+        using var temp = new TempDirectory();
+        var inquiryPath = Path.Combine(temp.Path, "お客様ご相談内容_00018729.txt");
+        await File.WriteAllTextAsync(inquiryPath,
+            "*****追記部_2026/09/01 10:00:00(受付)******\n過去の質問\n" +
+            "*****追記部_2026/09/25 10:00:00(追加質問)******\n2026.3の正式サポート可否を知りたい\n");
+        var fakeClient = new FakeClient();
+        var snapshot = new CodexCaseSnapshot
+        {
+            ProductName = "Klocwork", SupportId = "00018729", CaseFolder = temp.Path,
+            InquiryText = "2026.3の正式サポート可否を知りたい",
+            Readiness = "NeedsManufacturerConfirmation",
+        };
+        var viewModel = CreateDynamicViewModel(temp, fakeClient, () => snapshot);
+        viewModel.OnCaseLoaded(snapshot);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "まず案件を調査してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "GPT連携内容_00018729.txt"),
+            "*****追記部_2026/09/25 11:00:00(GPT取込)******\n" +
+            "【現在の未解決事項】\n正式サポートの定義\n" +
+            "【現在の次アクション】\nメーカーにYes/Noを確認\n");
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "new-evidence.txt"), "新しい添付資料");
+        snapshot = snapshot with
+        {
+            Evidence =
+            [
+                new SearchSource
+                {
+                    SourceType = "OfficialDoc", ProductName = "Klocwork",
+                    Title = "Klocwork 2026.3 What's New",
+                    Text = "Added support for Amazon Linux 2023",
+                },
+            ],
+            EvidenceConflicts = ["メーカー回答と公式資料の正式サポート表現が異なる"],
+        };
+        viewModel.PromptInput = "Ken,\nI have heard back from engineering. Amazon Linux 2023 is known to work, but managed testing starts in 2026.4.\nRegards\nJim Weber | Support Engineer";
+        viewModel.PromptInput = "この案件の状況をもう一度調査してください";
+        await WaitUntilAsync(() => viewModel.SendCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.TurnCount == 2, TimeSpan.FromSeconds(5));
+
+        Assert.Contains("TURN_CONTEXT_CAPSULE_V1", fakeClient.LastTurnText);
+        Assert.Contains("2026.3の正式サポート可否を知りたい", fakeClient.LastTurnText);
+        Assert.Contains("known to work", fakeClient.LastTurnText);
+        Assert.Contains("managed testing starts in 2026.4", fakeClient.LastTurnText);
+        Assert.Contains("正式サポートの定義", fakeClient.LastTurnText);
+        Assert.Contains("メーカーにYes/Noを確認", fakeClient.LastTurnText);
+        Assert.Contains("new-evidence.txt", fakeClient.LastTurnText);
+        Assert.Contains("Added support for Amazon Linux 2023", fakeClient.LastTurnText);
+        Assert.Contains("メーカー回答と公式資料の正式サポート表現が異なる", fakeClient.LastTurnText);
+        Assert.Contains("NeedsManufacturerConfirmation", fakeClient.LastTurnText);
+        Assert.DoesNotContain("QUALITY_MEMORY_TECHNICAL_FACT", fakeClient.LastTurnText);
+    }
+
     [Fact]
     public void CaseSwitch_ClearsEditedPresetButSameCaseRetainsIt()
     {
@@ -62,7 +122,7 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
-    public async Task GuiSend_DisconnectedShowsReasonAndConnectEnablesSending()
+    public async Task GuiSend_DisconnectedConnectsAndCreatesThreadOnFirstSend()
     {
         using var temp = new TempDirectory();
         var fakeClient = new FakeClient();
@@ -70,19 +130,228 @@ public sealed class CodexChatViewModelTests
         await viewModel.InitializeAsync();
         viewModel.PromptInput = "調査してください";
 
-        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
-        Assert.Contains("Codex未接続", viewModel.SendAvailabilityMessage);
+        Assert.True(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
+        Assert.False(viewModel.ShowResumeButton);
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
         viewModel.SendFromUiCommand.Execute(null);
-        Assert.Equal(0, fakeClient.TurnCount);
+        await WaitUntilAsync(() => fakeClient.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal(1, fakeClient.ConnectCount);
+        Assert.Equal(1, fakeClient.StartThreadCount);
+        Assert.False(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
+        Assert.Equal(string.Empty, viewModel.PromptInput);
+        Assert.Equal(1, fakeClient.TurnCount);
+    }
 
-        viewModel.ConnectCommand.Execute(null);
-        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
+    [Fact]
+    public async Task StartupAutoConnect_IsAsynchronousAndDoesNotCreateThread()
+    {
+        using var temp = new TempDirectory();
+        var connectRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeClient { ConnectDelay = connectRelease.Task };
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+
+        var connecting = viewModel.AutoConnectAsync();
+        Assert.False(connecting.IsCompleted);
+        await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connecting, TimeSpan.FromSeconds(5));
+        Assert.Equal(CodexConnectionState.Connecting, viewModel.ConnectionState);
+        Assert.Equal(0, client.StartThreadCount);
+        connectRelease.SetResult();
+        await connecting;
+
+        Assert.Equal(CodexConnectionState.Connected, viewModel.ConnectionState);
+        Assert.Equal(0, client.StartThreadCount);
+    }
+
+    [Fact]
+    public async Task GuiSend_ResumesSavedThreadWithoutCreatingAnother()
+    {
+        using var temp = new TempDirectory();
+        var store = new CodexSessionStore(Path.Combine(temp.Path, "sessions.json"));
+        await store.SaveAsync(new CodexSession
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+            CodexThreadId = "saved-thread", Model = "fake", LastUsedAt = DateTimeOffset.Now,
+        });
+        var client = new FakeClient();
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path), store,
+            new CodexTechnicalValueDiffDetector(), new FakeLogger(temp.Path), () => snapshot,
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        Assert.Equal("保存済み", viewModel.CurrentThreadStatusText);
+        Assert.Equal(0, client.ResumeCount);
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.Equal("saved-thread", client.CurrentThreadId);
+        Assert.Equal(1, client.ResumeCount);
+        Assert.Equal(0, client.StartThreadCount);
+    }
+
+    [Fact]
+    public async Task CaseSelection_LoadsSavedThreadWithoutStartingItUntilSend()
+    {
+        using var temp = new TempDirectory();
+        var firstFolder = Path.Combine(temp.Path, "first");
+        var secondFolder = Path.Combine(temp.Path, "second");
+        Directory.CreateDirectory(firstFolder);
+        Directory.CreateDirectory(secondFolder);
+        var store = new CodexSessionStore(Path.Combine(temp.Path, "sessions.json"));
+        await store.SaveAsync(new CodexSession
+        {
+            SupportId = "00018950", ProductName = "Checkmarx", CaseFolder = secondFolder,
+            CodexThreadId = "second-thread", LastUsedAt = DateTimeOffset.Now,
+        });
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = firstFolder,
+        };
+        var client = new FakeClient();
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path), store,
+            new CodexTechnicalValueDiffDetector(), new FakeLogger(temp.Path), () => snapshot,
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        viewModel.OnCaseLoaded(snapshot);
+        await viewModel.InitializeAsync();
+
+        snapshot = snapshot with { SupportId = "00018950", CaseFolder = secondFolder };
+        viewModel.OnCaseLoaded(snapshot);
+        await WaitUntilAsync(() => viewModel.ThreadId == "second-thread", TimeSpan.FromSeconds(5));
+        Assert.Equal("保存済み", viewModel.CurrentThreadStatusText);
+        Assert.Equal(0, client.StartThreadCount);
+        Assert.Equal(0, client.ResumeCount);
+
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal("second-thread", client.CurrentThreadId);
+        Assert.Equal(1, client.ResumeCount);
+        Assert.Equal(0, client.StartThreadCount);
+    }
+
+    [Fact]
+    public async Task GuiSend_ReconnectsOnceAfterConnectionLoss()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        await viewModel.AutoConnectAsync();
+        client.SetState(CodexConnectionState.ReconnectRequired);
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, client.ConnectCount);
+        Assert.Equal(1, client.StartThreadCount);
+    }
+
+    [Fact]
+    public async Task GuiSend_ConnectionFailureStopsWithReasonAndBoundedAttempt()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient { ConnectFailure = new InvalidOperationException("connection unavailable") };
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ErrorText.Contains("connection unavailable", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, client.ConnectCount);
+        Assert.Equal(0, client.StartThreadCount);
+        Assert.Equal(0, client.TurnCount);
+        Assert.True(viewModel.ShowReconnectButton);
+    }
+
+    [Fact]
+    public async Task GuiSend_ReconnectFailureAfterLossDoesNotRetryIndefinitely()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        await viewModel.AutoConnectAsync();
+        client.ConnectFailure = new InvalidOperationException("reconnect unavailable");
+        client.SetState(CodexConnectionState.ReconnectRequired);
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ErrorText.Contains("reconnect unavailable", StringComparison.Ordinal), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, client.ConnectCount);
+        Assert.Equal(0, client.StartThreadCount);
+        Assert.True(viewModel.ShowReconnectButton);
+    }
+
+    [Fact]
+    public async Task GuiSend_UnavailableSavedThreadStartsNewThreadForSameCase()
+    {
+        using var temp = new TempDirectory();
+        var store = new CodexSessionStore(Path.Combine(temp.Path, "sessions.json"));
+        await store.SaveAsync(new CodexSession
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+            CodexThreadId = "missing-thread", LastUsedAt = DateTimeOffset.Now,
+        });
+        var client = new FakeClient { ResumeFailure = new InvalidOperationException("thread not found") };
+        var snapshot = new CodexCaseSnapshot
+        {
+            SupportId = "00018949", ProductName = "Checkmarx", CaseFolder = temp.Path,
+        };
+        var viewModel = new CodexChatViewModel(
+            client, new CodexCaseFileScanner(), new CodexPromptComposer(temp.Path), store,
+            new CodexTechnicalValueDiffDetector(), new FakeLogger(temp.Path), () => snapshot,
+            () => "fake.exe", _ => true, _ => true, _ => { });
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, client.ResumeCount);
+        Assert.Equal(1, client.StartThreadCount);
+        Assert.Equal("thread-1", client.CurrentThreadId);
+    }
+
+    [Fact]
+    public async Task GuiSend_DoubleClickDoesNotCreateTwoTurns()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient { HoldTurn = true };
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "案件を調査してください";
+        viewModel.SendFromUiCommand.Execute(null);
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, client.StartThreadCount);
         Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
-        Assert.Contains("Thread", viewModel.SendAvailabilityMessage);
-        viewModel.StartNewCommand.Execute(null);
-        await WaitUntilAsync(() => viewModel.ThreadId == "thread-1", TimeSpan.FromSeconds(5));
-        Assert.True(viewModel.SendFromUiCommand.CanExecute(null), viewModel.SendAvailabilityMessage);
-        Assert.Equal(string.Empty, viewModel.SendAvailabilityMessage);
+    }
+
+    [Fact]
+    public async Task CodexOperationButtonsFollowConnectionAndPreviousThreadState()
+    {
+        using var temp = new TempDirectory();
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        Assert.True(viewModel.ShowConnectButton);
+        Assert.False(viewModel.ShowReconnectButton);
+        Assert.False(viewModel.ShowResumeButton);
+
+        client.SetState(CodexConnectionState.Error);
+        Assert.False(viewModel.ShowConnectButton);
+        Assert.True(viewModel.ShowReconnectButton);
+
+        client.SetState(CodexConnectionState.Connected);
+        Assert.False(viewModel.ShowReconnectButton);
     }
 
     [Fact]
@@ -99,7 +368,7 @@ public sealed class CodexChatViewModelTests
         viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
         viewModel.ConnectCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ConnectionState == CodexConnectionState.Connected, TimeSpan.FromSeconds(5));
-        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
 
         var changed = 0;
         viewModel.SendFromUiCommand.CanExecuteChanged += (_, _) => changed++;
@@ -344,7 +613,7 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
-    public async Task GuiSend_SameFolderDifferentCaseIsBlockedWithReason()
+    public async Task GuiSend_SameFolderDifferentCaseCreatesOwnThread()
     {
         using var temp = new TempDirectory();
         var snapshot = new CodexCaseSnapshot
@@ -364,12 +633,15 @@ public sealed class CodexChatViewModelTests
         viewModel.OnCaseLoaded(snapshot);
         viewModel.PromptInput = "調査してください";
 
-        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
-        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal(2, client.StartThreadCount);
+        Assert.Equal(0, client.ResumeCount);
     }
 
     [Fact]
-    public async Task GuiSend_SameSupportIdDifferentProductIsBlocked()
+    public async Task GuiSend_SameSupportIdDifferentProductCreatesOwnThread()
     {
         using var temp = new TempDirectory();
         var snapshot = new CodexCaseSnapshot
@@ -390,8 +662,11 @@ public sealed class CodexChatViewModelTests
         viewModel.OnCaseLoaded(snapshot);
         viewModel.PromptInput = "調査してください";
 
-        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
-        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
+        Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal(2, client.StartThreadCount);
+        Assert.Equal(0, client.ResumeCount);
     }
 
     [Fact]
@@ -443,11 +718,13 @@ public sealed class CodexChatViewModelTests
         viewModel.OnCaseLoaded(snapshot);
         viewModel.SelectedPreset = viewModel.PromptPresets.Single(item => item.Name == "お客様向け回答案を作成");
 
-        Assert.False(viewModel.SendFromUiCommand.CanExecute(null));
-        Assert.Contains("現在案件のThreadではありません", viewModel.SendAvailabilityMessage);
-        viewModel.StartNewCommand.Execute(null);
-        await WaitUntilAsync(() => fakeClient.WorkingDirectory == folderB, TimeSpan.FromSeconds(5));
         Assert.True(viewModel.SendFromUiCommand.CanExecute(null));
+        viewModel.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => fakeClient.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Equal(folderB, fakeClient.WorkingDirectory);
+        Assert.Equal(2, fakeClient.StartThreadCount);
+        Assert.Equal(0, fakeClient.ResumeCount);
+        Assert.Equal(string.Empty, viewModel.PromptInput);
     }
 
     [Fact]
@@ -1344,6 +1621,7 @@ public sealed class CodexChatViewModelTests
             SupportId = "0001",
             CaseFolder = temp.Path,
             CodexThreadId = "restored-thread",
+            ProductName = "HelixQAC",
             Model = "fake",
             LastUsedAt = DateTimeOffset.Now,
             Messages =
@@ -1542,6 +1820,8 @@ public sealed class CodexChatViewModelTests
         Assert.Equal("saved-thread", viewModel.ThreadId);
         Assert.Equal("saved-model", viewModel.Model);
         Assert.True(viewModel.ResumeCommand.CanExecute(null));
+        Assert.True(viewModel.ShowResumeButton);
+        Assert.Equal("保存済み", viewModel.CurrentThreadStatusText);
         Assert.Contains("チャット履歴を復元しました", viewModel.PreviousSessionStatus);
     }
 
@@ -1759,6 +2039,12 @@ public sealed class CodexChatViewModelTests
     public async Task ArtifactCommands_RequirePlanThenCreateExcelAndManufacturerMail()
     {
         using var temp = new TempDirectory();
+        var qualityStore = new QualityMemoryStore(Path.Combine(temp.Path, "quality-memory.json"));
+        const string approvedMail = "Please review the attached guide for Example Customer.\n\nPlease confirm the next action.";
+        await qualityStore.ApproveAsync(new QualityApprovalRequest(
+            "Checkmarx", QualityAudience.Manufacturer, "MANUFACTURER_ASK",
+            QualityDirection.ManufacturerOutbound, "00018290", "manufacturer-note.txt", null,
+            QualityMemoryStore.Hash(approvedMail), approvedMail));
         var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
         await File.WriteAllBytesAsync(source, [1, 2, 3]);
         var fakeClient = new FakeClient();
@@ -1793,7 +2079,8 @@ public sealed class CodexChatViewModelTests
                 noteText = text;
                 return Task.FromResult(true);
             },
-            clipboardWriter: text => copiedText = text);
+            clipboardWriter: text => copiedText = text,
+            qualityMemoryStore: qualityStore);
         viewModel.PromptInput = "問い合わせ内容.xlsxを英語に翻訳して別名で保存してください";
         await viewModel.InitializeAsync();
 
@@ -1864,6 +2151,8 @@ public sealed class CodexChatViewModelTests
         Assert.Contains("Protected Values Injected:", viewModel.ManufacturerFollowUpScopeText);
         Assert.Contains("Protected Values Missing: 0", viewModel.ManufacturerFollowUpScopeText);
         Assert.Contains("Protected Value Parity: PASS", viewModel.ManufacturerFollowUpScopeText);
+        Assert.Contains("STYLE_EXAMPLES_ONLY", fakeClient.LastTurnText, StringComparison.Ordinal);
+        Assert.DoesNotContain("Example Customer", fakeClient.LastTurnText, StringComparison.Ordinal);
         Assert.DoesNotContain(temp.Path, viewModel.ManufacturerFollowUpScopeText, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Test Company", viewModel.ManufacturerFollowUpScopeText, StringComparison.Ordinal);
         Assert.Null(noteText);
@@ -2158,6 +2447,12 @@ public sealed class CodexChatViewModelTests
         public string LastTurnText { get; private set; } = string.Empty;
         public IReadOnlyList<string> LastImagePaths { get; private set; } = [];
         public int TurnCount { get; private set; }
+        public int ConnectCount { get; private set; }
+        public int StartThreadCount { get; private set; }
+        public int ResumeCount { get; private set; }
+        public Task? ConnectDelay { get; init; }
+        public Exception? ConnectFailure { get; set; }
+        public Exception? ResumeFailure { get; init; }
         public bool HoldTurn { get; init; }
         public Exception? TurnException { get; init; }
         public string LastRequestedModel { get; private set; } = string.Empty;
@@ -2170,8 +2465,23 @@ public sealed class CodexChatViewModelTests
             responses.Enqueue(response);
         }
 
-        public Task<CodexConnectionInfo> ConnectAsync(string? configuredExecutablePath, CancellationToken cancellationToken = default)
+        public void SetState(CodexConnectionState state)
         {
+            State = state;
+            StateChanged?.Invoke(this, state);
+        }
+
+        public async Task<CodexConnectionInfo> ConnectAsync(string? configuredExecutablePath, CancellationToken cancellationToken = default)
+        {
+            ConnectCount++;
+            SetState(CodexConnectionState.Connecting);
+            if (ConnectDelay is not null)
+                await ConnectDelay.WaitAsync(cancellationToken);
+            if (ConnectFailure is not null)
+            {
+                SetState(CodexConnectionState.Error);
+                throw ConnectFailure;
+            }
             ConnectionInfo = new CodexConnectionInfo(
                 "fake.exe",
                 "0.145.0",
@@ -2180,11 +2490,14 @@ public sealed class CodexChatViewModelTests
                 Models);
             State = CodexConnectionState.Connected;
             StateChanged?.Invoke(this, State);
-            return Task.FromResult(ConnectionInfo);
+            return ConnectionInfo;
         }
 
         public Task DisconnectAsync(CancellationToken cancellationToken = default)
         {
+            ConnectionInfo = null;
+            CurrentThreadId = null;
+            WorkingDirectory = null;
             State = CodexConnectionState.Disconnected;
             StateChanged?.Invoke(this, State);
             return Task.CompletedTask;
@@ -2192,14 +2505,18 @@ public sealed class CodexChatViewModelTests
 
         public Task<CodexThreadStartResult> StartThreadAsync(string workingDirectory, string? model, CancellationToken cancellationToken = default)
         {
+            StartThreadCount++;
             LastRequestedModel = model ?? string.Empty;
-            CurrentThreadId = "thread-1";
+            CurrentThreadId = $"thread-{StartThreadCount}";
             WorkingDirectory = workingDirectory;
-            return Task.FromResult(new CodexThreadStartResult("thread-1", model ?? "fake", workingDirectory, "read-only"));
+            return Task.FromResult(new CodexThreadStartResult(CurrentThreadId, model ?? "fake", workingDirectory, "read-only"));
         }
 
         public Task<CodexThreadStartResult> ResumeThreadAsync(string threadId, string workingDirectory, string? model, CancellationToken cancellationToken = default)
         {
+            ResumeCount++;
+            if (ResumeFailure is not null)
+                throw ResumeFailure;
             CurrentThreadId = threadId;
             WorkingDirectory = workingDirectory;
             return Task.FromResult(new CodexThreadStartResult(threadId, "fake", workingDirectory, "read-only"));

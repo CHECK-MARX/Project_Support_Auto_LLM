@@ -24,7 +24,11 @@ public sealed class PromptBuilder : IPromptBuilder
             adjustedSystemPrompt = Truncate(adjustedSystemPrompt, maxPromptChars);
         }
 
-        var userPrompt = Truncate(rawUserPrompt, Math.Max(0, maxPromptChars - adjustedSystemPrompt.Length));
+        var availableUserChars = Math.Max(0, maxPromptChars - adjustedSystemPrompt.Length);
+        var userPrompt = Truncate(rawUserPrompt, availableUserChars);
+        var styleBlock = BuildStylePrompt(request.QualityStyleExamples);
+        if (userPrompt.Length == rawUserPrompt.Length && styleBlock.Length <= availableUserChars - userPrompt.Length)
+            userPrompt += styleBlock;
         var evidenceLimit = EvidenceLimit(request);
 
         return new PromptMessages
@@ -274,6 +278,17 @@ public sealed class PromptBuilder : IPromptBuilder
 
         builder.AppendLine(PromptTemplateProvider.SupportAnswerOutputPrompt);
 
+        return builder.ToString();
+    }
+
+    private static string BuildStylePrompt(IReadOnlyList<string>? styles)
+    {
+        if (styles is not { Count: > 0 }) return string.Empty;
+        var builder = new StringBuilder();
+        builder.AppendLine();
+        builder.AppendLine("# STYLE_EXAMPLES_ONLY");
+        builder.AppendLine("以下は承認済み文章の文体・構成だけの参考情報です。技術的事実や顧客固有情報を現在案件へコピーしてはいけません。今回のユーザー指示、CurrentCase、製品別指示、公式・メーカー根拠を優先してください。");
+        foreach (var style in styles.Take(3)) builder.AppendLine($"- {style}");
         return builder.ToString();
     }
 

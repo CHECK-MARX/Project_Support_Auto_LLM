@@ -109,7 +109,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                     warnings.Add($"Support number could not be extracted from case folder: {caseFolderPath}");
                 }
 
-                foreach (var note in context.Notes)
+                foreach (var note in context.Notes.Where(static note => !IsGptHandoffNote(note.FilePath)))
                 {
                     if (hasSupportNumber)
                     {
@@ -160,7 +160,9 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                     }
                 }
 
-                indexedAnswerPairs.AddRange(CaseAnswerPairExtractor.Extract(context, caseFolderPath, productName));
+                indexedAnswerPairs.AddRange(CaseAnswerPairExtractor.Extract(
+                    context with { Notes = context.Notes.Where(static note => !IsGptHandoffNote(note.FilePath)).ToArray() },
+                    caseFolderPath, productName));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
@@ -232,7 +234,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
         var existing = await ReadExistingIndexAsync(indexFilePath, cancellationToken);
         var existingAnswerPairs = await ReadExistingAnswerPairIndexAsync(answerPairIndexPath, cancellationToken);
         var existingByCase = existing.Notes
-            .Where(static note => !string.IsNullOrWhiteSpace(note.CaseFolderPath))
+            .Where(static note => !string.IsNullOrWhiteSpace(note.CaseFolderPath) && !IsGptHandoffNote(note.NoteFilePath))
             .GroupBy(static note => Path.GetFullPath(note.CaseFolderPath), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(static group => group.Key, static group => group.ToList(), StringComparer.OrdinalIgnoreCase);
         var existingPairsByCase = existingAnswerPairs.Pairs
@@ -274,6 +276,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
             existingByCase.TryGetValue(caseFolderPath, out var oldNotes);
             existingPairsByCase.TryGetValue(caseFolderPath, out var oldAnswerPairs);
             var currentNoteFiles = Directory.EnumerateFiles(caseFolderPath, "*.txt", SearchOption.TopDirectoryOnly)
+                .Where(static path => !IsGptHandoffNote(path))
                 .Select(Path.GetFullPath)
                 .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -299,7 +302,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                     productName,
                     cancellationToken: cancellationToken);
                 var caseFolderName = Path.GetFileName(caseFolderPath);
-                foreach (var note in context.Notes.Where(static note => !string.IsNullOrWhiteSpace(note.Text)))
+                foreach (var note in context.Notes.Where(static note => !string.IsNullOrWhiteSpace(note.Text) && !IsGptHandoffNote(note.FilePath)))
                 {
                     var chunkIndex = 0;
                     foreach (var chunk in SplitIntoChunks(note.Text))
@@ -323,7 +326,9 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                     }
                 }
 
-                outputAnswerPairs.AddRange(CaseAnswerPairExtractor.Extract(context, caseFolderPath, productName));
+                outputAnswerPairs.AddRange(CaseAnswerPairExtractor.Extract(
+                    context with { Notes = context.Notes.Where(static note => !IsGptHandoffNote(note.FilePath)).ToArray() },
+                    caseFolderPath, productName));
 
                 if (oldNotes is { Count: > 0 })
                 {
@@ -497,6 +502,9 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
             return new CaseAnswerPairIndexDocument();
         }
     }
+
+    public static bool IsGptHandoffNote(string? path) =>
+        Path.GetFileName(path ?? string.Empty).StartsWith("GPT連携内容_", StringComparison.OrdinalIgnoreCase);
 
     private static bool HasSameNoteFilesAndTimestamps(
         IReadOnlyList<AiIndexedNote> oldNotes,
