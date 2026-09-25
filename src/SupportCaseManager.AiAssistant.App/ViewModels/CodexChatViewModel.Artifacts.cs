@@ -7,6 +7,7 @@ using Microsoft.Win32;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
+using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Quality;
 using FormsDialogResult = System.Windows.Forms.DialogResult;
 using FormsFolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
@@ -1166,6 +1167,22 @@ public sealed partial class CodexChatViewModel
         }
 
         return LooksLikeManufacturerResponse(PromptInput) ? PromptInput.Trim() : string.Empty;
+    }
+
+    internal string GetManufacturerResponseForContext(CodexCaseSnapshot snapshot)
+    {
+        var identity = (SupportId: CaseNaming.NormalizeSupportNumber(snapshot.SupportId),
+            Product: snapshot.ProductName.Trim().ToUpperInvariant());
+        if (promptCaseIdentity != identity)
+            return string.Empty;
+        if (LooksLikeManufacturerResponse(currentManufacturerResponseCandidate))
+            return currentManufacturerResponseCandidate;
+        return currentSession is not null
+            && string.Equals(CaseNaming.NormalizeSupportNumber(currentSession.SupportId), identity.SupportId, StringComparison.Ordinal)
+            && (!snapshot.ProductId.HasValue || !currentSession.ProductId.HasValue
+                || snapshot.ProductId == currentSession.ProductId)
+            ? FindLatestImmediateManufacturerResponse()
+            : string.Empty;
     }
 
     private static string ExtractManufacturerRecipientFirstName(string text)

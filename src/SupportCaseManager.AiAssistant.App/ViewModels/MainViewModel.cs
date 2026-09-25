@@ -513,6 +513,10 @@ public sealed partial class MainViewModel : ObservableObject
     public CodexCaseSnapshot BuildCodexCaseSnapshot()
     {
         var product = SelectedProductKnowledge;
+        var hasCurrentAnswerAssessment = lastRequest is not null
+            && string.Equals(lastRequest.Case.SupportNumber, SupportNumber, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(lastRequest.Case.ProductName, ProductName, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(lastRequest.InquiryText, InquiryText, StringComparison.Ordinal);
         var selectedEvidence = SearchResults
             .Where(static item => item.WillBeSentToLlm || item.IsSelected)
             .OrderByDescending(static item =>
@@ -535,6 +539,19 @@ public sealed partial class MainViewModel : ObservableObject
             CaseFolder = CaseFolderPath,
             InquiryFile = SelectedNote?.FileName ?? string.Empty,
             InquiryText = InquiryText,
+            Notes = Notes.ToArray(),
+            Readiness = hasCurrentAnswerAssessment
+                ? lastResult?.Readiness ?? lastRequest!.FactResolution?.AnswerReadiness ?? string.Empty
+                : string.Empty,
+            UnresolvedItems = hasCurrentAnswerAssessment
+                ? lastResult?.NeedConfirmations.Select(static item => item.Question).ToArray() ?? []
+                : [],
+            EvidenceConflicts = hasCurrentAnswerAssessment
+                ? (lastRequest!.FactResolution?.Conflicts ?? [])
+                    .Concat(lastResult?.Claims.Where(static claim => claim.Conflicting)
+                        .Select(static claim => claim.Statement) ?? [])
+                    .ToArray()
+                : [],
             CustomerReplyDraft = CustomerReplyDraft,
             InternalMemo = InternalMemo,
             NoteEditorTransferPipeName = noteEditorTransferPipeName,

@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private readonly IAiAssistantHandoffFileWriter _aiHandoffFileWriter = new AiAssistantHandoffFileWriter();
     private readonly IAiAssistantProcessLauncher _aiProcessLauncher = new AiAssistantProcessLauncher();
     private readonly IOutlookSearchService _outlookSearchService;
+    private readonly OutlookCaseStatusService _outlookCaseStatusService;
+    private readonly DispatcherTimer _outlookStatusTimer = new() { Interval = TimeSpan.FromSeconds(120) };
     private readonly IChatGptHistorySearchService _chatGptHistorySearchService;
     private readonly ProductGptTargetResolver _productGptTargetResolver;
     private readonly GptCaseRegistrationService _gptCaseRegistrationService;
@@ -92,6 +94,9 @@ public partial class MainWindow : Window
     private int _closedSearchVersion;
     private int _closedSearchLoadingVersion = -1;
     private CancellationTokenSource? _statusRefreshCts;
+    private CancellationTokenSource? _outlookStatusCts;
+    private int _outlookStatusVersion;
+    private bool _forceOutlookStatusRefresh;
     private CancellationTokenSource? _closedRefreshCts;
     private CancellationTokenSource? _caseRefreshCts;
     private CancellationTokenSource? _caseTabPreloadCts;
@@ -133,10 +138,12 @@ public partial class MainWindow : Window
         IChatGptHistorySearchService? chatGptHistorySearchService = null,
         ProductGptTargetResolver? productGptTargetResolver = null,
         GptCaseRegistrationService? gptCaseRegistrationService = null,
-        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null)
+        GptCaseHandoffBriefBuilder? gptHandoffBriefBuilder = null,
+        OutlookCaseStatusService? outlookCaseStatusService = null)
     {
         _viewModel = viewModel;
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
+        _outlookCaseStatusService = outlookCaseStatusService ?? new OutlookCaseStatusService();
         _chatGptHistorySearchService = chatGptHistorySearchService ?? new ChatGptHistorySearchService();
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
         _gptCaseRegistrationService = gptCaseRegistrationService ??
@@ -205,6 +212,8 @@ public partial class MainWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _outlookStatusTimer.Tick += OnOutlookStatusTimerTick;
+        _outlookStatusTimer.Start();
         LoadDirectoryScanCache();
         CreatedDatePicker.SelectedDate = DateTime.Today;
         RefreshStatusOptions();
@@ -234,6 +243,11 @@ public partial class MainWindow : Window
         try
         {
             SaveDirectoryScanCache();
+            _outlookStatusTimer.Stop();
+            _outlookStatusTimer.Tick -= OnOutlookStatusTimerTick;
+            _outlookStatusCts?.Cancel();
+            _outlookStatusCts?.Dispose();
+            _outlookStatusCts = null;
             _statusRefreshCts?.Cancel();
             _statusRefreshCts?.Dispose();
             _statusRefreshCts = null;
@@ -597,6 +611,7 @@ public partial class MainWindow : Window
             ClosedContentGrid.Visibility = Visibility.Collapsed;
             StatusContentGrid.Visibility = Visibility.Visible;
             EnsureStatusTabData();
+            if (!_statusTabDirty) _ = RefreshOutlookStatusAsync(force: false);
             return;
         }
 
@@ -924,7 +939,76 @@ public partial class MainWindow : Window
     private void OnStatusRefresh(object sender, RoutedEventArgs e)
     {
         _statusTabDirty = true;
+        _forceOutlookStatusRefresh = true;
         EnsureStatusTabData(force: true);
+    }
+
+    private void OnOutlookStatusTimerTick(object? sender, EventArgs e)
+    {
+        if (IsStatusTabVisible()) _ = RefreshOutlookStatusAsync(force: true);
+    }
+
+    private async Task RefreshOutlookStatusAsync(bool force)
+    {
+        if (!IsStatusTabVisible() || _openCases.Count == 0) return;
+        var version = Interlocked.Increment(ref _outlookStatusVersion);
+        _outlookStatusCts?.Cancel();
+        _outlookStatusCts?.Dispose();
+        _outlookStatusCts = new CancellationTokenSource();
+        var token = _outlookStatusCts.Token;
+        var keys = _openCases.Select(static row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath))
+            .Distinct().ToArray();
+        try
+        {
+            var statuses = await _outlookCaseStatusService.RefreshAsync(keys, force, token);
+            if (token.IsCancellationRequested || version != _outlookStatusVersion || !IsStatusTabVisible()) return;
+            foreach (var row in _openCases)
+            {
+                var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
+                if (statuses.TryGetValue(key, out var status)) row.Outlook.Set(status);
+            }
+            foreach (var row in _staleCases)
+            {
+                var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
+                if (statuses.TryGetValue(key, out var status)) row.Outlook.Set(status);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to refresh Outlook case statuses", ex);
+            if (version != _outlookStatusVersion) return;
+            foreach (var row in _openCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
+            foreach (var row in _staleCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
+        }
+    }
+
+    private async void OnOutlookStatusLineDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ClickCount != 2) return;
+        e.Handled = true;
+        if (sender is not TextBlock { Tag: OutlookMailReference mail } text)
+        {
+            _viewModel.StatusMessage = "この行に開く対象メールはありません。";
+            return;
+        }
+        var key = text.DataContext switch
+        {
+            OpenCaseEntry row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath),
+            StaleCaseEntry row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath),
+            _ => null,
+        };
+        if (key is null) return;
+        try
+        {
+            var opened = await _outlookCaseStatusService.OpenMailAsync(key, mail);
+            if (!opened) _viewModel.StatusMessage = "対象メールを安全に特定できませんでした。開いていません。";
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to open Outlook case mail", ex);
+            _viewModel.StatusMessage = "Outlookの対象メールを開けませんでした。";
+        }
     }
 
     private void QueueStatusTabRefresh()
@@ -1606,6 +1690,9 @@ public partial class MainWindow : Window
             ApplyStatusTabSnapshot(snapshot);
             _statusTabDirty = false;
             _statusTabRefreshedAtUtc = DateTime.UtcNow;
+            var forceOutlook = _forceOutlookStatusRefresh;
+            _forceOutlookStatusRefresh = false;
+            _ = RefreshOutlookStatusAsync(forceOutlook);
         }
         catch (OperationCanceledException)
         {
@@ -6381,6 +6468,7 @@ public partial class MainWindow : Window
         public string Status { get; set; } = string.Empty;
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public OutlookCaseRowStatus Outlook { get; } = new();
     }
 
     private sealed class OpenCaseEntry
@@ -6391,6 +6479,22 @@ public partial class MainWindow : Window
         public string Status { get; set; } = string.Empty;
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public OutlookCaseRowStatus Outlook { get; } = new();
+    }
+
+    private sealed class OutlookCaseRowStatus : INotifyPropertyChanged
+    {
+        public event PropertyChangedEventHandler? PropertyChanged;
+        public OutlookStatusLine Primary { get; private set; } = new("確認中...");
+        public OutlookStatusLine Secondary { get; private set; } = new(string.Empty);
+
+        public void Set(OutlookCaseMailStatus status)
+        {
+            Primary = status.Primary;
+            Secondary = status.Secondary;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Primary)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Secondary)));
+        }
     }
 
     private sealed class ExcludedCaseEntry

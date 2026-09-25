@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
+using SupportCaseManager.Ai.Core.Notes;
 using SupportCaseManager.Core.Cases;
 using SupportCaseManager.Core.Quality;
 using WpfApplication = System.Windows.Application;
@@ -25,6 +26,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     ];
 
     private readonly ICodexAppServerClient client;
+    private readonly SemaphoreSlim connectionGate = new(1, 1);
     private readonly ICodexCaseFileScanner fileScanner;
     private readonly ICodexPromptComposer promptComposer;
     private readonly ICodexSessionStore sessionStore;
@@ -83,6 +85,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     private string caseFolderSendStatus = "案件フォルダを確認しています。";
     private string previousSessionStatus = "未確認";
     private bool hasPreviousSession;
+    private bool initialized;
+    private int caseSessionGeneration;
     private bool caseFolderReady;
     private bool turnActive;
     private bool isReviewTurn;
@@ -188,9 +192,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
         ConnectCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ConnectAsync), () => !turnActive);
         ReconnectCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ReconnectAsync), () => !turnActive);
-        StartNewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(StartNewAsync), CanStartThread);
+        StartNewCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(() => StartNewAsync()), CanStartThread);
         ResumeCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(ResumeAsync), () => CanStartThread() && hasPreviousSession);
-        SendCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(SendAsync), CanSend);
+        SendCommand = new AsyncRelayCommand(() => ExecuteGuardedAsync(SendPreparedAsync), CanSend);
         SendFromUiCommand = new AsyncRelayCommand(
             () => ExecuteGuardedAsync(SendFromUiAsync),
             () => CanSendFromUi,
@@ -267,13 +271,15 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
     }
 
-    public string ConnectionStateText => ConnectionState.ToJapanese();
+    public string ConnectionStateText => ConnectionState is CodexConnectionState.Error or CodexConnectionState.ReconnectRequired
+        ? "接続できませんでした"
+        : ConnectionState.ToJapanese();
     public bool ShowConnectButton => ConnectionState == CodexConnectionState.Disconnected;
     public bool ShowReconnectButton => ConnectionState is CodexConnectionState.ReconnectRequired
         or CodexConnectionState.AuthenticationRequired or CodexConnectionState.Error;
     public bool ShowResumeButton => hasPreviousSession;
     public string CurrentThreadStatusText => string.IsNullOrWhiteSpace(client.CurrentThreadId)
-        ? "なし"
+        ? hasPreviousSession ? "保存済み" : "なし"
         : currentSnapshot is not null && IsCurrentCaseThread(caseProvider()) ? "現在案件"
         : "案件不一致";
     public int ProgressPercent => ConnectionState switch
@@ -590,7 +596,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         RefreshCaseSelection();
         await RefreshFilesAsync().ConfigureAwait(false);
         await FindPreviousSessionAsync().ConfigureAwait(false);
+        initialized = true;
     }
+
+    public Task AutoConnectAsync() => Task.Run(() => ExecuteGuardedAsync(EnsureConnectedAsync));
 
     public string SendAvailabilityMessage => SendBlockReason();
 
@@ -636,7 +645,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             await LogSendStageAsync("SEND_CASE_OK");
             await LogSendStageAsync("SEND_THREAD_OK");
             await LogSendStageAsync("SEND_PROMPT_OK");
-            await SendAsync();
+            await SendPreparedAsync();
         }
         catch (Exception ex)
         {
@@ -673,13 +682,6 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 : CaseFolderSendStatus;
         if (turnActive)
             return "処理中です。完了後に送信してください。";
-        if (ConnectionState is not (CodexConnectionState.Connected or CodexConnectionState.Completed)
-            || client.ConnectionInfo is null)
-            return "Codex未接続です。『新しい調査』または『前回の続きから再開』で接続してください。";
-        if (string.IsNullOrWhiteSpace(client.CurrentThreadId))
-            return "Codex Threadがありません。『新しい調査』または『前回の続きから再開』を実行してください。";
-        if (!IsCurrentCaseThread(snapshot))
-            return "現在案件のThreadではありません。『新しい調査』または『前回の続きから再開』で切り替えてください。";
         if (string.IsNullOrWhiteSpace(PromptInput))
             return "送信内容がありません。指示を入力してください。";
         return string.Empty;
@@ -732,13 +734,42 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
 
         promptCaseIdentity = identity;
+        caseSessionGeneration++;
         RunOnUi(() =>
         {
             SelectedPreset = null;
             PromptInput = string.Empty;
+            currentSnapshot = snapshot;
+            currentSession = null;
+            hasPreviousSession = false;
+            hasSentInitialContext = false;
+            Messages.Clear();
+            TechnicalAnswer = string.Empty;
+            ThreadId = "-";
+            PreviousSessionStatus = "この案件のThreadを確認しています。";
+            OnPropertyChanged(nameof(ShowResumeButton));
             currentManufacturerResponseCandidate = string.Empty;
             RaiseCommandStates();
         });
+        if (initialized)
+            _ = LoadCaseSessionAfterSwitchAsync(snapshot, caseSessionGeneration);
+    }
+
+    private async Task LoadCaseSessionAfterSwitchAsync(CodexCaseSnapshot snapshot, int generation)
+    {
+        try
+        {
+            await FindPreviousSessionAsync(snapshot, generation).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            await logger.WriteAsync("session", "Case thread lookup failed.", ex).ConfigureAwait(false);
+            RunOnUi(() =>
+            {
+                if (generation == caseSessionGeneration)
+                    PreviousSessionStatus = "保存済みThreadを確認できませんでした。初回送信時に新しいThreadを開始します。";
+            });
+        }
     }
 
     public async Task ShutdownAsync()
@@ -1167,59 +1198,72 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private async Task ConnectAsync()
     {
-        ErrorText = string.Empty;
-        var info = await client.ConnectAsync(executablePathProvider()).ConfigureAwait(false);
-        RunOnUi(() =>
+        await connectionGate.WaitAsync().ConfigureAwait(false);
+        try
         {
-            Version = info.Version;
-            AccountStatus = $"ChatGPT認証済み / プラン: {ValueOrDash(info.Account.PlanType)}";
-            AvailableModels.Clear();
-            foreach (var availableModel in info.Models.Where(static item => !item.Hidden))
-            {
-                AvailableModels.Add(availableModel);
-            }
+            if (client.ConnectionInfo is not null &&
+                client.State is CodexConnectionState.Connected or CodexConnectionState.Completed)
+                return;
 
-            var recommendedModel = FindRecommendedModel(AvailableModels);
-            if (string.IsNullOrWhiteSpace(SelectedModel))
+            RunOnUi(() => ErrorText = string.Empty);
+            if (client.ConnectionInfo is not null)
+                await client.DisconnectAsync().ConfigureAwait(false);
+            var info = await client.ConnectAsync(executablePathProvider()).ConfigureAwait(false);
+            RunOnUi(() =>
             {
-                SetModelSelection(recommendedModel?.Id, persist: true);
-            }
-            else
-            {
-                UpdateReasoningEfforts();
-            }
+                Version = info.Version;
+                AccountStatus = $"ChatGPT認証済み / プラン: {ValueOrDash(info.Account.PlanType)}";
+                AvailableModels.Clear();
+                foreach (var availableModel in info.Models.Where(static item => !item.Hidden))
+                {
+                    AvailableModels.Add(availableModel);
+                }
 
-            if (string.IsNullOrWhiteSpace(SelectedReasoningEffort))
-            {
-                SetReasoningSelection(FindDefaultReasoningEffort(FindSelectedModel()), persist: true);
-            }
+                var recommendedModel = FindRecommendedModel(AvailableModels);
+                if (string.IsNullOrWhiteSpace(SelectedModel))
+                {
+                    SetModelSelection(recommendedModel?.Id, persist: true);
+                }
+                else
+                {
+                    UpdateReasoningEfforts();
+                }
 
-            Model = string.IsNullOrWhiteSpace(SelectedModel)
-                ? "Codex側のモデル一覧を取得できません"
-                : SelectedModel;
-            RebuildCaseSelectionOptions();
-            ActualModel = "-";
-            ActualReasoningEffort = "-";
-            var selectionStatus = BuildSelectionStatus();
-            ErrorText = selectionStatus.Contains("利用できません", StringComparison.Ordinal)
-                || selectionStatus.Contains("広告されていません", StringComparison.Ordinal)
-                ? selectionStatus
-                : string.Empty;
-            ConnectionDetails = string.IsNullOrWhiteSpace(ErrorText)
-                ? $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件"
-                : $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件 / {ErrorText}";
-            OnPropertyChanged(nameof(CodexSelectionStatus));
-        });
+                if (string.IsNullOrWhiteSpace(SelectedReasoningEffort))
+                {
+                    SetReasoningSelection(FindDefaultReasoningEffort(FindSelectedModel()), persist: true);
+                }
+
+                Model = string.IsNullOrWhiteSpace(SelectedModel)
+                    ? "Codex側のモデル一覧を取得できません"
+                    : SelectedModel;
+                RebuildCaseSelectionOptions();
+                ActualModel = "-";
+                ActualReasoningEffort = "-";
+                var selectionStatus = BuildSelectionStatus();
+                ErrorText = selectionStatus.Contains("利用できません", StringComparison.Ordinal)
+                    || selectionStatus.Contains("広告されていません", StringComparison.Ordinal)
+                    ? selectionStatus
+                    : string.Empty;
+                ConnectionDetails = string.IsNullOrWhiteSpace(ErrorText)
+                    ? $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件"
+                    : $"App Server利用可 / {info.UserAgent} / モデル一覧: {AvailableModels.Count}件 / {ErrorText}";
+                OnPropertyChanged(nameof(CodexSelectionStatus));
+            });
+        }
+        finally
+        {
+            connectionGate.Release();
+        }
     }
 
     private async Task ReconnectAsync()
     {
         await client.DisconnectAsync().ConfigureAwait(false);
-        await ConnectAsync().ConfigureAwait(false);
-        await FindPreviousSessionAsync().ConfigureAwait(false);
+        await EnsureConnectedAsync().ConfigureAwait(false);
     }
 
-    private async Task StartNewAsync()
+    private async Task StartNewAsync(bool preserveConversationContext = false)
     {
         await EnsureConnectedAsync().ConfigureAwait(false);
         artifactSourceExplicitlySelected = false;
@@ -1251,11 +1295,14 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         currentSession = CreateSession(snapshot, result, newThreadReasoningEffort);
         RunOnUi(() =>
         {
-            Messages.Clear();
-            currentManufacturerResponseCandidate = string.Empty;
+            if (!preserveConversationContext)
+            {
+                Messages.Clear();
+                currentManufacturerResponseCandidate = string.Empty;
+                TechnicalAnswer = string.Empty;
+            }
             hasSentInitialContext = false;
             latestCompletedAbSample = null;
-            TechnicalAnswer = string.Empty;
             ReviewAnswer = string.Empty;
             activeComparisonKey = string.Empty;
             activeExistingEvidenceSourceTypes = [];
@@ -1277,7 +1324,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
     {
         await EnsureConnectedAsync().ConfigureAwait(false);
         var snapshot = caseProvider();
-        var previous = await sessionStore.FindAsync(snapshot.SupportId, snapshot.ProductId, snapshot.CaseFolder).ConfigureAwait(false);
+        var previous = FindMatchingSession((await sessionStore.LoadAsync().ConfigureAwait(false)).Sessions, snapshot);
         if (previous is null || string.IsNullOrWhiteSpace(previous.CodexThreadId))
         {
             throw new InvalidOperationException("再開できるCodex Threadがありません。新しい調査を開始してください。");
@@ -1286,10 +1333,13 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         try
         {
             var result = await client.ResumeThreadAsync(previous.CodexThreadId, snapshot.CaseFolder, model: null).ConfigureAwait(false);
+            if (!string.Equals(result.ThreadId, previous.CodexThreadId, StringComparison.Ordinal))
+                throw new InvalidOperationException("再開されたThread IDが保存済みThreadと一致しません。");
             currentSnapshot = snapshot;
             currentSession = previous with
             {
                 ProductId = snapshot.ProductId ?? previous.ProductId,
+                ProductName = snapshot.ProductName,
                 CompanyName = string.IsNullOrWhiteSpace(snapshot.CompanyName) ? previous.CompanyName : snapshot.CompanyName,
                 CaseFolder = snapshot.CaseFolder,
                 LastUsedAt = DateTimeOffset.Now,
@@ -1442,10 +1492,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
 
         currentSnapshot = caseProvider();
-        if (!string.Equals(scannedCaseFolder, currentSnapshot.CaseFolder, StringComparison.OrdinalIgnoreCase))
+        var sameScannedCase = string.Equals(scannedCaseFolder, currentSnapshot.CaseFolder, StringComparison.OrdinalIgnoreCase);
+        if (!sameScannedCase || hasSentInitialContext)
         {
             await LogSendStageAsync("SEND_FILE_REFRESH_START");
-            await RefreshFilesAsync().ConfigureAwait(false);
+            await RefreshFilesAsync(preserveSelection: sameScannedCase).ConfigureAwait(false);
             await LogSendStageAsync("SEND_FILE_REFRESH_RESULT");
         }
 
@@ -1505,7 +1556,26 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         }
         else
         {
-            prompt = promptComposer.ComposeFollowUpPrompt(instruction, attachmentRead.Contents);
+            var capsuleSnapshot = currentSnapshot;
+            if (!string.IsNullOrWhiteSpace(capsuleSnapshot.CaseFolder) && Directory.Exists(capsuleSnapshot.CaseFolder))
+            {
+                try
+                {
+                    var notes = await new NoteSnapshotReader().ReadAllAsync(capsuleSnapshot.CaseFolder).ConfigureAwait(false);
+                    capsuleSnapshot = capsuleSnapshot with { Notes = notes };
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    await logger.WriteAsync("turn-context", $"Note refresh failed: {ex.GetType().Name}").ConfigureAwait(false);
+                }
+            }
+            var capsule = AnswerContextCapsuleComposer.ComposeTurn(
+                capsuleSnapshot,
+                GetManufacturerResponseForContext(capsuleSnapshot),
+                selectedFiles.Select(static file => file.FileName).ToArray());
+            await LogSendStageAsync(capsule.DiagnosticSummary("TURN_CONTEXT_CAPSULE_V1"));
+            prompt = promptComposer.ComposeFollowUpPrompt(
+                $"{instruction}\n\n{capsule.Text}", attachmentRead.Contents);
         }
         if (!string.IsNullOrWhiteSpace(activeQualityIntent))
             prompt = AppendQualityStylePrompt(prompt, currentSnapshot, QualityAudience.Customer, activeQualityIntent);
@@ -1658,7 +1728,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         RunOnUi(() => ConnectionDetails = "中止要求を送信しました。Turnの終了通知を待っています。");
     }
 
-    private async Task RefreshFilesAsync()
+    private Task RefreshFilesAsync() => RefreshFilesAsync(preserveSelection: false);
+
+    private async Task RefreshFilesAsync(bool preserveSelection)
     {
         var snapshot = caseProvider();
         var caseFolderChanged = !string.Equals(scannedCaseFolder, snapshot.CaseFolder, StringComparison.OrdinalIgnoreCase);
@@ -1667,6 +1739,10 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         var result = await fileScanner.ScanAsync(snapshot.CaseFolder).ConfigureAwait(false);
         RunOnUi(() =>
         {
+            var previousSelection = preserveSelection && !caseFolderChanged
+                ? Files.ToDictionary(static file => file.RelativePath, static file => file.IsSelected,
+                    StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             if (caseFolderChanged)
             {
                 ResetArtifactForCaseChange();
@@ -1680,7 +1756,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             Files.Clear();
             foreach (var file in result.Files)
             {
-                var selectByDefault = file.CanSendToCodex;
+                var selectByDefault = previousSelection.TryGetValue(file.RelativePath, out var selected)
+                    ? selected : file.CanSendToCodex;
                 var item = new CodexCaseFileViewModel(file, selectByDefault);
                 item.PropertyChanged += OnCaseFilePropertyChanged;
                 Files.Add(item);
@@ -1930,27 +2007,26 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         });
     }
 
-    private async Task FindPreviousSessionAsync()
+    private Task FindPreviousSessionAsync() => FindPreviousSessionAsync(caseProvider(), caseSessionGeneration);
+
+    private async Task FindPreviousSessionAsync(CodexCaseSnapshot snapshot, int generation)
     {
-        var snapshot = caseProvider();
         var load = await sessionStore.LoadAsync().ConfigureAwait(false);
-        var previous = load.Sessions
-            .Where(item => string.Equals(item.SupportId, snapshot.SupportId, StringComparison.OrdinalIgnoreCase))
-            .Where(item => !snapshot.ProductId.HasValue || !item.ProductId.HasValue || item.ProductId == snapshot.ProductId)
-            .OrderByDescending(item => PathEquals(item.CaseFolder, snapshot.CaseFolder))
-            .ThenByDescending(static item => item.LastUsedAt)
-            .FirstOrDefault();
-        currentSnapshot = snapshot;
-        currentSession = previous is null
-            ? null
-            : previous with
-            {
-                ProductId = snapshot.ProductId ?? previous.ProductId,
-                CompanyName = string.IsNullOrWhiteSpace(snapshot.CompanyName) ? previous.CompanyName : snapshot.CompanyName,
-                CaseFolder = snapshot.CaseFolder,
-            };
+        var previous = FindMatchingSession(load.Sessions, snapshot);
         RunOnUi(() =>
         {
+            if (generation != caseSessionGeneration || IsCurrentCaseThread(snapshot))
+                return;
+            currentSnapshot = snapshot;
+            currentSession = previous is null
+                ? null
+                : previous with
+                {
+                    ProductId = snapshot.ProductId ?? previous.ProductId,
+                    ProductName = snapshot.ProductName,
+                    CompanyName = string.IsNullOrWhiteSpace(snapshot.CompanyName) ? previous.CompanyName : snapshot.CompanyName,
+                    CaseFolder = snapshot.CaseFolder,
+                };
             latestCompletedAbSample = null;
             activeComparisonKey = string.Empty;
             activeExistingEvidenceSourceTypes = [];
@@ -1984,7 +2060,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     Model = previous.Model;
                 }
                 hasSentInitialContext = previous.Messages.Count > 0;
-                ConnectionDetails = "保存済みのチャット履歴を復元しました。続ける場合は「前回の続きから再開」を押してください。";
+                ConnectionDetails = "保存済みのチャット履歴を復元しました。次の送信時に同じThreadを再開します。";
+            }
+            else
+            {
+                ThreadId = "-";
             }
 
             PreviousSessionStatus = load.Warning
@@ -2004,6 +2084,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         {
             SupportId = snapshot.SupportId,
             ProductId = snapshot.ProductId,
+            ProductName = snapshot.ProductName,
             CompanyName = snapshot.CompanyName,
             CaseFolder = snapshot.CaseFolder,
             CodexThreadId = thread.ThreadId,
@@ -2368,17 +2449,66 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private async Task EnsureConnectedAsync()
     {
-        if (client.ConnectionInfo is null)
+        if (client.ConnectionInfo is null ||
+            client.State is CodexConnectionState.Disconnected or CodexConnectionState.ReconnectRequired
+                or CodexConnectionState.AuthenticationRequired or CodexConnectionState.Error)
         {
             await ConnectAsync().ConfigureAwait(false);
         }
+    }
+
+    private async Task SendPreparedAsync()
+    {
+        await EnsureConnectedAsync().ConfigureAwait(false);
+        var snapshot = caseProvider();
+        if (!IsCurrentCaseThread(snapshot))
+        {
+            var previous = FindMatchingSession((await sessionStore.LoadAsync().ConfigureAwait(false)).Sessions, snapshot);
+            if (previous is not null && !string.IsNullOrWhiteSpace(previous.CodexThreadId))
+            {
+                try
+                {
+                    await ResumeAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    await logger.WriteAsync("thread", "Saved case thread could not be resumed; starting a new case thread.", ex)
+                        .ConfigureAwait(false);
+                    await StartNewAsync(preserveConversationContext: true).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                await StartNewAsync(preserveConversationContext: true).ConfigureAwait(false);
+            }
+        }
+
+        if (!IsCurrentCaseThread(caseProvider()))
+            throw new InvalidOperationException("現在案件のCodex Threadを確認できません。送信していません。");
+        await SendAsync().ConfigureAwait(false);
+    }
+
+    private static CodexSession? FindMatchingSession(
+        IReadOnlyList<CodexSession> sessions, CodexCaseSnapshot snapshot)
+    {
+        return sessions
+            .Where(item => string.Equals(
+                CaseNaming.NormalizeSupportNumber(item.SupportId),
+                CaseNaming.NormalizeSupportNumber(snapshot.SupportId), StringComparison.OrdinalIgnoreCase))
+            .Where(item => snapshot.ProductId.HasValue && item.ProductId == snapshot.ProductId ||
+                !string.IsNullOrWhiteSpace(item.ProductName) &&
+                string.Equals(item.ProductName.Trim(), snapshot.ProductName.Trim(), StringComparison.OrdinalIgnoreCase) &&
+                (!snapshot.ProductId.HasValue || !item.ProductId.HasValue || item.ProductId == snapshot.ProductId))
+            .OrderByDescending(item => PathEquals(item.CaseFolder, snapshot.CaseFolder))
+            .ThenByDescending(static item => item.LastUsedAt)
+            .FirstOrDefault();
     }
 
     private async Task ExecuteGuardedAsync(Func<Task> action)
     {
         try
         {
-            ErrorText = string.Empty;
+            RunOnUi(() => ErrorText = string.Empty);
             await action().ConfigureAwait(false);
         }
         catch (Exception ex)

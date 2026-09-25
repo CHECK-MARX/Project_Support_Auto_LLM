@@ -6,6 +6,20 @@
         WindowStartupLocation="CenterScreen"
         Loaded="OnLoaded"
         PreviewKeyDown="OnPreviewKeyDown">
+    <Window.Resources>
+        <Style x:Key="OutlookStatusTextStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource AppForeground}" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Tag.IsInbound, RelativeSource={RelativeSource Self}}" Value="True">
+                    <Setter Property="Foreground" Value="{DynamicResource OutlookInboundForeground}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Tag.IsInbound, RelativeSource={RelativeSource Self}}" Value="False">
+                    <Setter Property="Foreground" Value="{DynamicResource OutlookOutboundForeground}" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
     <DockPanel Margin="16">
         <StatusBar DockPanel.Dock="Bottom">
             <Grid Width="{Binding RelativeSource={RelativeSource AncestorType=StatusBar}, Path=ActualWidth}">
@@ -290,6 +304,16 @@
                                         </DataTemplate>
                                     </DataGridTemplateColumn.CellTemplate>
                                 </DataGridTemplateColumn>
+                                <DataGridTemplateColumn Header="Outlook状況" Width="300">
+                                    <DataGridTemplateColumn.CellTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="4,2">
+                                                <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Primary.Text}" ToolTip="{Binding Outlook.Primary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Primary.Mail}" />
+                                                <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Secondary.Text}" ToolTip="{Binding Outlook.Secondary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Secondary.Mail}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </DataGridTemplateColumn.CellTemplate>
+                                </DataGridTemplateColumn>
                             </DataGrid.Columns>
                         </DataGrid>
                     </GroupBox>
@@ -353,6 +377,16 @@
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
                                                 <Button Content="除外" Padding="6,2" Click="OnStaleCaseExclude" Tag="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTemplateColumn Header="Outlook状況" Width="300">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="4,2">
+                                                    <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Primary.Text}" ToolTip="{Binding Outlook.Primary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Primary.Mail}" />
+                                                    <TextBlock Style="{StaticResource OutlookStatusTextStyle}" Text="{Binding Outlook.Secondary.Text}" ToolTip="{Binding Outlook.Secondary.Explanation}" MouseLeftButtonDown="OnOutlookStatusLineDoubleClick" Tag="{Binding Outlook.Secondary.Mail}" />
+                                                </StackPanel>
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>

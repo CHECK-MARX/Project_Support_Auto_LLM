@@ -13,6 +13,7 @@ public sealed record CodexSession
 {
     public string SupportId { get; init; } = string.Empty;
     public Guid? ProductId { get; init; }
+    public string ProductName { get; init; } = string.Empty;
     public string CompanyName { get; init; } = string.Empty;
     public string CaseFolder { get; init; } = string.Empty;
     public string CodexThreadId { get; init; } = string.Empty;
@@ -168,7 +169,10 @@ public sealed class CodexSessionStore : ICodexSessionStore
     private static bool IsSameCase(CodexSession left, CodexSession right)
     {
         return string.Equals(left.SupportId, right.SupportId, StringComparison.OrdinalIgnoreCase)
-            && ProductIdsAreCompatible(left.ProductId, right.ProductId);
+            && ((left.ProductId.HasValue && left.ProductId == right.ProductId) ||
+                (!string.IsNullOrWhiteSpace(left.ProductName) &&
+                 string.Equals(left.ProductName, right.ProductName, StringComparison.OrdinalIgnoreCase) &&
+                 ProductIdsAreCompatible(left.ProductId, right.ProductId)));
     }
 
     private static bool ProductIdsAreCompatible(Guid? left, Guid? right)

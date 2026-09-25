@@ -118,10 +118,31 @@ public sealed partial class MainViewModel
             return;
         }
 
-        var prompt = GptPolishPrompt.Build(audience, draft);
+        var snapshot = BuildCodexCaseSnapshot();
+        if (!string.IsNullOrWhiteSpace(snapshot.CaseFolder) && Directory.Exists(snapshot.CaseFolder))
+        {
+            try
+            {
+                var refreshed = await noteSnapshotReader.ReadAllAsync(snapshot.CaseFolder);
+                snapshot = snapshot with { Notes = refreshed };
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync(
+                    $"Polish context note refresh failed: {ex.GetType().Name}");
+            }
+        }
+        var capsule = AnswerContextCapsuleComposer.ComposePolish(
+            snapshot, Codex?.GetManufacturerResponseForContext(snapshot));
+        await loggerFactory(EffectiveAiDataFolder()).LogInfoAsync(
+            capsule.DiagnosticSummary("POLISH_CONTEXT_V1"));
+        var prompt = GptPolishPrompt.Build(audience, draft, capsule.Text);
         try
         {
-            await gptPolishConversationService.SendMessageAsync(caseRecord.GptRegistration.ConversationUrl, prompt);
+            await gptPolishConversationService.SendMessageAsync(
+                caseRecord.GptRegistration.ConversationUrl,
+                prompt,
+                expectedTargetName: caseRecord.GptRegistration.TargetGptDisplayName);
             SetGptPolishStatus($"{targetName}: GPTへ推敲依頼を送信しました。");
         }
         catch (Exception ex)

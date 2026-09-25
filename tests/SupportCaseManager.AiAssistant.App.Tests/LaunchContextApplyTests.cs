@@ -40,6 +40,7 @@ public sealed class LaunchContextApplyTests
                 GptHandoff = new GptHandoffContext
                 {
                     SupportId = "00018303", Product = "Checkmarx", TargetGptKey = "checkmarx",
+                    TargetGptDisplayName = "Vulnerability Scanner Assistant",
                     ConversationUrl = conversation, RegistrationState = GptRegistrationStates.Registered,
                 },
             };
@@ -51,7 +52,11 @@ public sealed class LaunchContextApplyTests
             await services.ViewModel.GptPolishAsync(QualityAudience.Customer);
 
             Assert.Equal(conversation, conversationService.SentUrl);
+            Assert.False(string.IsNullOrWhiteSpace(conversationService.ExpectedTargetName));
             Assert.Contains("今回のお客様向け初稿", conversationService.SentMessage);
+            Assert.Contains("POLISH_CONTEXT_V1", conversationService.SentMessage);
+            Assert.Contains("ライセンス認証エラー", conversationService.SentMessage);
+            Assert.Contains("【Current readiness】", conversationService.SentMessage);
             Assert.Contains("GPTへ推敲依頼を送信しました。", services.ViewModel.GptPolishStatusText);
             Assert.Equal(0, conversationService.CreateCalls);
 
@@ -88,6 +93,7 @@ public sealed class LaunchContextApplyTests
                 GptHandoff = new GptHandoffContext
                 {
                     SupportId = "00018303", Product = "Checkmarx", TargetGptKey = "checkmarx",
+                    TargetGptDisplayName = "Vulnerability Scanner Assistant",
                     ConversationUrl = conversation, RegistrationState = GptRegistrationStates.Registered,
                 },
             };
@@ -1127,6 +1133,7 @@ public sealed class LaunchContextApplyTests
     {
         public string SentUrl { get; private set; } = string.Empty;
         public string SentMessage { get; private set; } = string.Empty;
+        public string? ExpectedTargetName { get; private set; }
         public int SendCalls { get; private set; }
         public int CreateCalls { get; private set; }
         public bool ThrowOnSend { get; set; }
@@ -1141,12 +1148,14 @@ public sealed class LaunchContextApplyTests
         public Task OpenConversationAsync(string conversationUrl, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
 
-        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken = default)
+        public Task SendMessageAsync(string conversationUrl, string message, CancellationToken cancellationToken = default,
+            string? expectedTargetName = null)
         {
             SendCalls++;
             if (ThrowOnSend) throw new InvalidOperationException("conversation mismatch");
             SentUrl = conversationUrl;
             SentMessage = message;
+            ExpectedTargetName = expectedTargetName;
             return Task.CompletedTask;
         }
     }

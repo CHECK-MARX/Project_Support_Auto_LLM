@@ -1145,19 +1145,20 @@
                         <WrapPanel Margin="0,0,0,4">
                             <Button Content="新しい調査を開始" Command="{Binding Codex.StartNewCommand}"
                                     ToolTip="現在案件について、現在のThreadとは別に新しいCodex Threadを開始します。" />
-                            <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}"
-                                    Visibility="{Binding Codex.ShowResumeButton, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                    ToolTip="この案件の前回Threadを再開します。" />
-                            <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}"
-                                    Visibility="{Binding Codex.ShowConnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                    ToolTip="Codex未接続時に接続します。" />
-                            <Button Content="再接続" Command="{Binding Codex.ReconnectCommand}"
+                            <Button Content="再試行" Command="{Binding Codex.ReconnectCommand}"
                                     Visibility="{Binding Codex.ShowReconnectButton, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                    ToolTip="Codex接続が切れた場合に再接続します。" />
+                                    ToolTip="Codexへ再接続します。" />
                         </WrapPanel>
                         <Expander Header="補助操作" Margin="0,0,0,8">
-                            <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}"
-                                    ToolTip="案件フォルダ内のファイルを再読込します。" />
+                            <WrapPanel>
+                                <Button Content="案件ファイル再読込" Command="{Binding Codex.RefreshFilesCommand}"
+                                        ToolTip="案件フォルダ内のファイルを再読込します。" />
+                                <Button Content="前回の続きから再開" Command="{Binding Codex.ResumeCommand}"
+                                        Visibility="{Binding Codex.ShowResumeButton, Converter={StaticResource BooleanToVisibilityConverter}}"
+                                        ToolTip="この案件の前回Threadを手動で再開します。" />
+                                <Button Content="Codexへ接続" Command="{Binding Codex.ConnectCommand}"
+                                        Visibility="{Binding Codex.ShowConnectButton, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                            </WrapPanel>
                         </Expander>
 
                         <TextBlock Text="{Binding Codex.PreviousSessionStatus, Mode=OneWay}" TextWrapping="Wrap"

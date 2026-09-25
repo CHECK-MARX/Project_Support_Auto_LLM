@@ -16,7 +16,9 @@ public partial class App : System.Windows.Application
         await mainWindow.ViewModel.InitializeFromCommandLineAsync(options);
         if (mainWindow.ViewModel.Codex is not null)
         {
+            var connection = mainWindow.ViewModel.Codex.AutoConnectAsync();
             await mainWindow.ViewModel.Codex.InitializeAsync();
+            await connection;
         }
     }
 }
