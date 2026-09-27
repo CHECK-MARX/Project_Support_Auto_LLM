@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
@@ -91,7 +93,8 @@ public sealed class ProductScopedSearchTests
         var service = new ProductScopedSearchService(
             new AiCaseKeywordSearcher(),
             new AiManualKeywordSearcher(),
-            embeddingClient: new StaticEmbeddingClient());
+            embeddingClient: new StaticEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
 
         var results = await service.SearchAllHybridAsync(
             CreateProduct("HelixQAC"),
@@ -118,7 +121,8 @@ public sealed class ProductScopedSearchTests
         var service = new ProductScopedSearchService(
             new AiCaseKeywordSearcher(),
             new AiManualKeywordSearcher(),
-            embeddingClient: new ThrowingEmbeddingClient());
+            embeddingClient: new ThrowingEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
 
         var results = await service.SearchAllHybridAsync(
             CreateProduct("HelixQAC"),
@@ -143,13 +147,14 @@ public sealed class ProductScopedSearchTests
         await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
         [
             CreateManual("manual-a", "license guidance"),
-            CreateManual("manual-b", "compiler compatibility template configuration"),
+            CreateManual("manual-b", new string('x', 2300) + " compiler compatibility template configuration"),
         ]);
         await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC");
         var service = new ProductScopedSearchService(
             new AiCaseKeywordSearcher(),
             new AiManualKeywordSearcher(),
-            embeddingClient: new StaticEmbeddingClient());
+            embeddingClient: new StaticEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
 
         var results = await service.SearchAllHybridAsync(
             CreateProduct("HelixQAC"),
@@ -168,6 +173,110 @@ public sealed class ProductScopedSearchTests
         Assert.Equal(0, vectorCandidate.LexicalScore);
         Assert.Equal(1, vectorCandidate.SemanticScore);
         Assert.Contains("RetrievalMode=Hybrid", vectorCandidate.ScoreBreakdown, StringComparison.Ordinal);
+        Assert.Contains("compiler compatibility template configuration", vectorCandidate.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchAllHybridAsync_DoesNotUseVectorForChangedSourceChunk()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "compiler compatibility"),
+        ]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "revised compiler compatibility"),
+        ]);
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(), new AiManualKeywordSearcher(),
+            embeddingClient: new StaticEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"), aiIndexFolder,
+            new InquiryFocus { FocusText = "license completely unknown" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            },
+            maxResults: 2,
+            ragPipelineMode: RagPipelineModes.HybridV2);
+
+        Assert.DoesNotContain(results, source => source.SourceId == "manual-b");
+        Assert.Contains(results, source => source.SourceId == "manual-a");
+    }
+
+    [Fact]
+    public async Task SearchAllHybridAsync_IndexWithoutDigestUsesKeywordOnly()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "compiler compatibility"),
+        ]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC", string.Empty);
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(), new AiManualKeywordSearcher(),
+            embeddingClient: new ThrowingEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"), aiIndexFolder,
+            new InquiryFocus { FocusText = "license" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            },
+            maxResults: 2,
+            ragPipelineMode: RagPipelineModes.HybridV2);
+
+        var result = Assert.Single(results);
+        Assert.Equal("manual-a", result.SourceId);
+        Assert.Contains("EmbeddingModelDigestUnknown", result.ScoreBreakdown, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("sha256:other")]
+    [InlineData(null)]
+    public async Task SearchAllHybridAsync_DigestMismatchUsesOnlyLexicalCandidates(string? currentDigest)
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("manual-a", "license guidance"),
+            CreateManual("manual-b", "compiler compatibility template configuration"),
+        ]);
+        await WriteEmbeddingIndexAsync(aiIndexFolder, "HelixQAC", "sha256:original");
+        var service = new ProductScopedSearchService(
+            new AiCaseKeywordSearcher(), new AiManualKeywordSearcher(),
+            embeddingClient: new ThrowingEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver(currentDigest));
+
+        var results = await service.SearchAllHybridAsync(
+            CreateProduct("HelixQAC"), aiIndexFolder,
+            new InquiryFocus { FocusText = "license guidance" },
+            new LlmProviderSettings
+            {
+                Endpoint = "http://localhost:11434",
+                EmbeddingModel = "nomic-embed-text",
+            },
+            maxResults: 2,
+            ragPipelineMode: RagPipelineModes.HybridV2);
+
+        var source = Assert.Single(results);
+        Assert.Equal("manual-a", source.SourceId);
+        Assert.Contains("EmbeddingModelDigestMismatch", source.ScoreBreakdown, StringComparison.Ordinal);
+        Assert.DoesNotContain(results, item => item.SourceId == "manual-b");
     }
 
     [Fact]
@@ -429,6 +538,51 @@ public sealed class ProductScopedSearchTests
         Assert.DoesNotContain(results, source => source.SourceId == "generic-file-past-case");
     }
 
+    [Fact]
+    public async Task SearchAllAsync_TechnicalSubjectOutranksIncidentalLicenseMention()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "HelixQAC",
+        [
+            CreateManual("validate-project-root", "Validateサービスのprojects_rootとプロジェクトルートの設定手順。"),
+            CreateManual("license-server", "Validate障害時のライセンスサーバーログと起動手順。"),
+        ]);
+
+        var results = await CreateService().SearchAllAsync(CreateProduct("HelixQAC"),
+            aiIndexFolder, new InquiryFocus
+            {
+                FocusText = "Validateサービス起動でprojects_rootが異なる。ライセンスサーバーも確認済み。",
+            }, maxResults: 2);
+
+        Assert.Equal("validate-project-root", results[0].SourceId);
+        Assert.Contains("subject=technical-anchor-match", results[0].ScoreBreakdown);
+        Assert.DoesNotContain("license-server", results.Take(1).Select(source => source.SourceId));
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_RepositorySubjectIsPartOfRelevance()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "Checkmarx",
+        [
+            CreateManual("scan-queue-generic", "CxSASTでスキャンが処理待ちになる場合の一般的な説明。"),
+            CreateManual("scan-queue-badtodo", "CxSASTのbadtodoをスキャンし処理待ちになる事象。"),
+        ]);
+
+        var results = await CreateService().SearchAllAsync(CreateProduct("Checkmarx"),
+            aiIndexFolder, new InquiryFocus
+            {
+                FocusText = "CxSASTでGitHub - sample/badtodoをスキャンすると処理待ちになる。",
+            }, maxResults: 2);
+
+        Assert.Equal("scan-queue-badtodo", results[0].SourceId);
+        Assert.Contains("subject=technical-anchor-match", results[0].ScoreBreakdown);
+        Assert.DoesNotContain(results, source => source.SourceId == "scan-queue-generic" &&
+            (source.Score ?? 0) < 0.30);
+    }
+
     private static ProductScopedSearchService CreateService()
     {
         return new ProductScopedSearchService(new AiCaseKeywordSearcher(), new AiManualKeywordSearcher());
@@ -539,10 +693,19 @@ public sealed class ProductScopedSearchTests
         });
     }
 
-    private static async Task WriteEmbeddingIndexAsync(string aiIndexFolder, string productName)
+    private static async Task WriteEmbeddingIndexAsync(
+        string aiIndexFolder,
+        string productName,
+        string embeddingModelDigest = "sha256:test")
     {
         var productFolder = ProductIndexPathResolver.GetProductIndexFolder(aiIndexFolder, productName);
         Directory.CreateDirectory(productFolder);
+        await using var manualStream = File.OpenRead(Path.Combine(productFolder, AiManualIndexBuilder.IndexFileName));
+        var manuals = (await JsonSerializer.DeserializeAsync<AiManualIndexDocument>(manualStream))?.Manuals
+            .ToDictionary(static manual => manual.Id, StringComparer.Ordinal)
+            ?? throw new InvalidOperationException("Manual index was not found.");
+        static string Hash(AiIndexedManual manual) => Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes($"{manual.Title}\n{manual.Text}"))).ToLowerInvariant();
         await using var stream = File.Create(Path.Combine(productFolder, EmbeddingIndexDocument.FileName));
         await JsonSerializer.SerializeAsync(stream, new EmbeddingIndexDocument
         {
@@ -550,28 +713,18 @@ public sealed class ProductScopedSearchTests
             EmbeddingModel = "nomic-embed-text",
             EmbeddingProvider = "Ollama",
             EmbeddingModelIdentifier = "nomic-embed-text",
+            EmbeddingModelDigest = embeddingModelDigest,
             EmbeddingDimension = 2,
             EmbeddingNormalized = true,
             BuiltAt = DateTimeOffset.Now,
-            Entries =
-            [
-                new EmbeddingIndexEntry
-                {
-                    SourceId = "manual-a",
-                    SourceType = "Manual",
-                    ProductName = productName,
-                    ContentHash = "a",
-                    Vector = [1, 0],
-                },
-                new EmbeddingIndexEntry
-                {
-                    SourceId = "manual-b",
-                    SourceType = "Manual",
-                    ProductName = productName,
-                    ContentHash = "b",
-                    Vector = [0, 1],
-                },
-            ],
+            Entries = manuals.Values.Select(manual => new EmbeddingIndexEntry
+            {
+                SourceId = manual.Id,
+                SourceType = "Manual",
+                ProductName = productName,
+                ContentHash = Hash(manual),
+                Vector = manual.Id == "manual-b" ? [0, 1] : [1, 0],
+            }).ToList(),
         });
     }
 
@@ -600,5 +753,13 @@ public sealed class ProductScopedSearchTests
         {
             throw new InvalidOperationException("embedding unavailable");
         }
+    }
+
+    private sealed class FixedDigestResolver(string? digest) : IEmbeddingModelDigestResolver
+    {
+        public Task<string?> ResolveAsync(
+            string endpoint,
+            string model,
+            CancellationToken cancellationToken = default) => Task.FromResult(digest);
     }
 }

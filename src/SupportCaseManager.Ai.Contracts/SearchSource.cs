@@ -76,6 +76,9 @@ public sealed record class SearchSource
     [JsonPropertyName("contentHash")]
     public string? ContentHash { get; init; }
 
+    [JsonIgnore]
+    public string? EmbeddingSourceHash { get; init; }
+
     [JsonPropertyName("documentTitle")]
     public string? DocumentTitle { get; init; }
 

@@ -233,6 +233,7 @@ public partial class MainWindow : Window
         }
 
         StartCaseTabPreload();
+        StartAcceptanceMonitoring();
     }
 
     protected override void OnClosed(EventArgs e)
@@ -245,6 +246,9 @@ public partial class MainWindow : Window
             SaveDirectoryScanCache();
             _outlookStatusTimer.Stop();
             _outlookStatusTimer.Tick -= OnOutlookStatusTimerTick;
+            _acceptanceCts?.Cancel();
+            _acceptanceCts?.Dispose();
+            _acceptanceCts = null;
             _outlookStatusCts?.Cancel();
             _outlookStatusCts?.Dispose();
             _outlookStatusCts = null;
@@ -941,11 +945,13 @@ public partial class MainWindow : Window
         _statusTabDirty = true;
         _forceOutlookStatusRefresh = true;
         EnsureStatusTabData(force: true);
+        _ = RefreshAcceptanceAsync();
     }
 
     private void OnOutlookStatusTimerTick(object? sender, EventArgs e)
     {
         if (IsStatusTabVisible()) _ = RefreshOutlookStatusAsync(force: true);
+        _ = RefreshAcceptanceAsync();
     }
 
     private async Task RefreshOutlookStatusAsync(bool force)
@@ -4875,10 +4881,15 @@ public partial class MainWindow : Window
 
     private void OnCreateCase(object sender, RoutedEventArgs e)
     {
+        _ = TryCreateCase();
+    }
+
+    private CaseRecord? TryCreateCase()
+    {
         if (!ValidateRequired())
         {
             MessageBox.Show(this, "必須項目を入力してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
-            return;
+            return null;
         }
 
         EnsureStatusOption(StatusComboBox.Text);
@@ -4897,11 +4908,13 @@ public partial class MainWindow : Window
             RefreshView();
             MarkStatusAndClosedTabsDirty();
             _viewModel.StatusMessage = "案件フォルダを作成しました。";
+            return record;
         }
         catch (Exception ex)
         {
             _logger.Error("Failed to create case", ex);
             MessageBox.Show(this, ex.Message, "エラー", MessageBoxButton.OK, MessageBoxImage.Error);
+            return null;
         }
     }
 

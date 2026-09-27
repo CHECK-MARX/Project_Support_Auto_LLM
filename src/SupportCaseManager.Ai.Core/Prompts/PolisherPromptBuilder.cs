@@ -22,7 +22,7 @@ public static class PolisherPromptBuilder
         var user = BuildUserPrompt(deterministicAnswer, supplementalContext);
         if (system.Length + user.Length > maxPromptChars)
         {
-            user = user[..Math.Max(0, maxPromptChars - system.Length)];
+            throw new PolisherPromptTooLongException(system.Length + user.Length, maxPromptChars);
         }
 
         return new PromptMessages
@@ -52,5 +52,13 @@ public static class PolisherPromptBuilder
             supplementalContext.Trim() +
             "\n\n## 既存の決定論的回答案\n" +
             deterministicAnswer;
+    }
+}
+
+public sealed class PolisherPromptTooLongException : Exception
+{
+    public PolisherPromptTooLongException(int actualChars, int maxChars)
+        : base($"校正対象と補足根拠が入力上限を超えました。ActualChars={actualChars}; MaxChars={maxChars}")
+    {
     }
 }

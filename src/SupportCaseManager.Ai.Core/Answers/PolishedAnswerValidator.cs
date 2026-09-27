@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using SupportCaseManager.Ai.Contracts;
 
 namespace SupportCaseManager.Ai.Core.Answers;
 
@@ -17,6 +18,25 @@ public static partial class PolishedAnswerValidator
         return true;
     }
 
+    public static bool PreservesProtectedValues(
+        string allowedContext,
+        string deterministicAnswer,
+        string polishedAnswer,
+        InquiryFocus? focus)
+    {
+        if (!PreservesProtectedValues(allowedContext, polishedAnswer))
+        {
+            return false;
+        }
+
+        var required = CommandLine().Matches(deterministicAnswer)
+            .Select(static match => match.Value.Trim())
+            .Concat((focus?.TargetVersions ?? []).Where(deterministicAnswer.Contains))
+            .Concat((focus?.TechnicalQuery.Command ?? []).Where(deterministicAnswer.Contains))
+            .Distinct(StringComparer.Ordinal);
+        return required.All(polishedAnswer.Contains);
+    }
+
     public static IReadOnlyList<string> ExtractProtectedValues(string answer)
     {
         var values = new HashSet<string>(StringComparer.Ordinal);
@@ -26,7 +46,7 @@ public static partial class PolishedAnswerValidator
         return values.ToList();
     }
 
-    [GeneratedRegex(@"https?://[^\s)]+|\b\d+(?:\.\d+){1,3}(?:[A-Za-z][\w.-]*)?\b", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"https?://[^\s)]+|(?<!\d)\d+(?:\.\d+){1,3}(?:[A-Za-z][\w.-]*)?(?!\d)", RegexOptions.IgnoreCase)]
     private static partial Regex UrlOrVersion();
 
     [GeneratedRegex(@"\b(?:qacli|qaclianalyze)(?:\s+[A-Za-z0-9_.:/<>${}-]+){0,10}", RegexOptions.IgnoreCase)]

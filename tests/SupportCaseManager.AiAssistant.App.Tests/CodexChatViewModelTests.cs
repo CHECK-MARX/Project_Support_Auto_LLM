@@ -2566,12 +2566,17 @@ public sealed class CodexChatViewModelTests
 
     private sealed class FakeLogger(string path) : ICodexDiagnosticLogger
     {
+        private readonly object gate = new();
+        private readonly List<(string Category, string Message)> entries = [];
         public string LogDirectory { get; } = path;
-        public List<(string Category, string Message)> Entries { get; } = [];
+        public IReadOnlyList<(string Category, string Message)> Entries
+        {
+            get { lock (gate) return entries.ToArray(); }
+        }
 
         public Task WriteAsync(string category, string message, Exception? exception = null, CancellationToken cancellationToken = default)
         {
-            Entries.Add((category, message));
+            lock (gate) entries.Add((category, message));
             return Task.CompletedTask;
         }
     }

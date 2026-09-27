@@ -56,6 +56,84 @@ any C# project and is not part of the WPF runtime path.
 - Production files, production indexes, and case folders are never written.
 - `.cache/`, `models/`, `.venv/`, and `reports/generated/` are excluded from Git.
 
+### Closed-case review candidates
+
+`build_closed_case_candidates.py` reads explicitly supplied closed-case roots and
+creates a private, Git-ignored JSON file under `reports/generated/`. The current
+QAC, CHECKMARX and Klocwork set has 60 case pairs and a fixed 40/20
+development/holdout split. It removes
+common note templates and lines matching contact details, then scans the result
+for known personal-data patterns. Source paths and unmasked note text are not
+written to the output.
+
+The output is **review material**, not an approved golden set. A person must
+check every question for remaining identifiers, confirm the historical reply
+against the final customer response and authoritative evidence, and record
+expected and forbidden claims. The same case must be excluded from retrieval
+before any answer-quality comparison. Until those gates are satisfied, do not
+send these cases to a model or publish the JSON.
+
+The private `closed-case-review.xlsx` workbook has separate development and
+unused-evaluation tabs. A Codex first pass can fill `Codex一次確認済` or
+`要人手確認` in the yellow review columns without creating human approval.
+A human reviewer compares each masked question with the original, checks the
+actually sent or approved reply and authoritative source, then completes the
+final review. For human-approved export, `F` and `G` must both say `確認済`; `H` and
+`J` contain one expected claim or evidence locator per line; `I` contains
+forbidden claims or the explicit value `なし`. The reviewer also records the
+allowed readiness, proof of the sent or approved reply, their own name, and date.
+`Codex一次監査` in the reviewer field cannot satisfy the final approval gate.
+
+Run `python finalize_closed_case_review.py` from `tools/rag-lab` to write a
+private status report containing only case IDs and missing field names. The
+validator checks the workbook against the candidate SHA-256 and rejects changed
+source columns, formulas, missing cases, or incomplete sign-off. An explicit
+`--export reports/generated/closed-case-reviewed.json` exports the private
+reviewed set only after all 60 rows pass; running the validator alone never
+promotes a candidate or evaluates the 20 holdout cases. A completed row still
+represents the named reviewer's attestation, not independent verification by
+the script.
+
+### Fixed eight-case Gold Pilot
+
+`python finalize_gold_pilot.py` validates the unchanged 60-case workbook and
+the fixed development-only shortlist, then writes a private eight-case evidence
+packet and an ID-only gate status under `reports/generated/`. The status has
+separate `shadowPilotReady` and `formalGoldReady` flags. Shadow readiness requires
+the Codex first-pass evidence review, privacy check, expected and forbidden
+claims, evidence locators, and valid readiness for all eight development cases.
+Evidence insufficiency is part of the shadow comparison, not a reason to exclude
+a case. Human approval is not required for the shadow gate. The existing 60-case
+finalizer is unchanged.
+
+The packet lists the current H/I/J labels, source locators, sent-reply proof,
+and missing authoritative evidence. A reviewer must resolve each answer label
+or explicitly approve an abstention. To pass the pilot gate, all eight workbook
+rows must have human-reviewed F/G, H/I/J/K/L, reviewer, and date; a separate
+`closed-case-gold-pilot-human-approval.json` must contain exactly the eight
+selected IDs. Copy the generated `closed-case-gold-pilot-approval-template.json`
+to that approval filename after completing the workbook review; the template
+is never overwritten on later validation runs. Its top-level `candidateSetSha256`
+and `workbookSha256` must match
+the gate status. Each case records `decision` (`approved_answer` or
+`approved_abstention`), `reviewer`, `reviewDate`, `expectedReadiness`, and
+`basisLocators` (nonempty exact lines from workbook J). The reviewer and date
+must match the workbook. Unresolved evidence markers block an approved answer;
+an approved abstention requires `InsufficientEvidence`,
+`NeedsManufacturerConfirmation`, or `Blocked` readiness. At least six approved
+answer labels, including one per product, are required for this answer-quality
+pilot. Evidence gaps cannot be bypassed by signing only the workbook.
+
+The workbook F:N fields may all be filled while formal review remains incomplete:
+`Codex一次確認済` in F/G and `Codex一次監査` in M are first-pass values, not human
+approval. The status therefore reports `formal_human_review_incomplete` only
+under the formal gate. The shadow gate checks those first-pass values separately.
+
+An explicit `--export reports/generated/closed-case-gold-pilot-approved.json`
+creates a private pilot set only when the gate passes. It never includes holdout
+cases. The exported file is a prerequisite for a later, separately initiated
+quality comparison; export itself does not generate or score answers.
+
 ## Windows setup
 
 Run these commands from `tools\rag-lab` in PowerShell:
