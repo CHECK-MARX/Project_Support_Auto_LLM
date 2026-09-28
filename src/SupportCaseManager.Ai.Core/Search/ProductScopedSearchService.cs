@@ -415,13 +415,18 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         bool officialDocumentationOnly,
         bool preserveLowRelevanceForRegression)
     {
+        var distinctiveTechnicalTerms = ExtractExactTechnicalTerms(queryAnalysis.PrimaryText)
+            .Where(term => sources.Count(source => ContainsExactTechnicalTerm(source.Text, term)) <=
+                Math.Max(1, sources.Count / 4))
+            .ToArray();
         var ranked = sources
             .Select(source => ApplyTopicScore(
                 source,
                 queryAnalysis,
                 catalog,
                 questionTypes,
-                freshnessSensitive))
+                freshnessSensitive,
+                distinctiveTechnicalTerms))
             .OrderByDescending(static item => item.Source.Score ?? 0)
             .ThenByDescending(static item => item.Source.RetrievedAt)
             .ThenBy(static item => item.Source.Title, StringComparer.OrdinalIgnoreCase)
@@ -521,7 +526,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         NegationAwareTopicAnalysis queryAnalysis,
         TopicEntityCatalog catalog,
         IReadOnlyList<string> questionTypes,
-        bool freshnessSensitive)
+        bool freshnessSensitive,
+        IReadOnlyList<string> distinctiveTechnicalTerms)
     {
         var sourceText = string.Join(
             ' ',
@@ -598,6 +604,12 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             var matches = subjectAnchors.Count(anchor => SubjectAppearsInSource(anchor, sourceText));
             adjustment += matches > 0 ? 0.18 : -0.65;
             reasons.Add(matches > 0 ? "subject=technical-anchor-match" : "subject=technical-anchor-missing");
+        }
+
+        if (distinctiveTechnicalTerms.Count(term => ContainsExactTechnicalTerm(source.Text, term)) >= 3)
+        {
+            adjustment += 0.30;
+            reasons.Add("technical=distinctive-terms-match");
         }
 
         if (queryAnalysis.PrimaryProfile.Intents.Any(intent =>
@@ -803,6 +815,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var technicalIdentifiers = Regex.Matches(query,
                 @"(?<![A-Za-z0-9])(?:--)?[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)+(?![A-Za-z0-9])",
                 RegexOptions.CultureInvariant)
+            .Where(match => match.Index == 0 || match.Index + match.Length >= query.Length ||
+                query[match.Index - 1] != '[' || query[match.Index + match.Length] != ']')
             .Select(static match => match.Value.TrimStart('-').ToLowerInvariant());
         var repositorySubjects = Regex.Matches(query,
                 @"GitHub[^\r\n]{0,100}/([A-Za-z][A-Za-z0-9._-]{4,})",
@@ -816,6 +830,21 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             .Distinct(StringComparer.Ordinal)
             .ToList();
     }
+
+    private static IReadOnlyList<string> ExtractExactTechnicalTerms(string query) =>
+        Regex.Matches(query, @"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_-]{2,}(?![A-Za-z0-9_])",
+                RegexOptions.CultureInvariant)
+            .Where(match => match.Index == 0 || match.Index + match.Length >= query.Length ||
+                query[match.Index - 1] != '[' || query[match.Index + match.Length] != ']')
+            .Select(static match => match.Value)
+            .Where(static term => term is not ("server" or "Server" or "customer" or "Customer" or
+                "person" or "Person" or "Checkmarx" or "CxSAST" or "Klocwork" or "QAC" or "HelixQAC"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static bool ContainsExactTechnicalTerm(string text, string term) =>
+        Regex.IsMatch(text, $@"(?<![A-Za-z0-9_]){Regex.Escape(term)}(?![A-Za-z0-9_])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private static bool SubjectAppearsInSource(string anchor, string sourceText)
     {

@@ -88,6 +88,21 @@ public sealed class AnswerQualityEvaluatorTests
     }
 
     [Fact]
+    public void Evaluate_AcceptsExactVersionMentionedWithoutVersionPrefixInQuestion()
+    {
+        var result = AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
+        {
+            Question = "QAC2026.1の設定が消えます。",
+            Answer = "お客様のご説明ではバージョン2026.1で設定が消えるとのことです。",
+            ProductName = "HelixQAC",
+            Catalog = AnswerQualityEvaluator.CreateSupportCatalog("HelixQAC"),
+        });
+
+        Assert.DoesNotContain(result.UnsupportedTechnicalClaims, claim =>
+            claim.Kind == "Version" && claim.Value.Contains("2026.1", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Evaluate_ReportsVersionConflictAndInternalLeakage()
     {
         var fixture = LoadFixture();

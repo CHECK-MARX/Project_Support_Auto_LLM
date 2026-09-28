@@ -103,6 +103,54 @@ public sealed class AiOfficialDocumentIndexBuilderTests
     }
 
     [Fact]
+    public async Task BuildAsync_IsolatedCoverageCanUseOnlyExplicitOfficialUrls()
+    {
+        using var temp = new TempDirectory();
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse("""
+            <html><head><title>Versioned QAC Manual</title></head>
+            <body><main><h1>Language settings</h1><p>The selected language is stored in the user data location.</p></main></body></html>
+            """));
+        var builder = new AiOfficialDocumentIndexBuilder(handler, includeKnownSeeds: false);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "HelixQAC",
+                DocumentUrls = ["https://help.perforce.com/qac/2026.1/manual.html"],
+                CrawlMaxDepth = 0,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        Assert.Equal(1, result.SourceUrlCount);
+        Assert.Equal(1, result.FetchSuccessCount);
+        Assert.Single(handler.Requests);
+        Assert.Single((await ReadIndexAsync(result.IndexFilePath)).Documents);
+    }
+
+    [Fact]
+    public async Task BuildAsync_IsolatedCoverageKeepsChunksWithinCompactInputLimit()
+    {
+        using var temp = new TempDirectory();
+        var page = $"<html><body><main><p>{new string('x', 1400)} Managed Instance supported from 9.2 {new string('y', 1200)}</p></main></body></html>";
+        var handler = new StubHttpMessageHandler(_ => HtmlResponse(page));
+        var builder = new AiOfficialDocumentIndexBuilder(handler, includeKnownSeeds: false, chunkMaxLength: 1100);
+
+        var result = await builder.BuildAsync(
+            new ProductKnowledgeSettings
+            {
+                ProductName = "Checkmarx",
+                DocumentUrls = ["https://docs.checkmarx.com/en/versioned-support.html"],
+                CrawlMaxDepth = 0,
+            },
+            Path.Combine(temp.Path, "ai-index"));
+
+        var documents = (await ReadIndexAsync(result.IndexFilePath)).Documents;
+        Assert.True(documents.Count > 1);
+        Assert.All(documents, document => Assert.InRange(document.Text.Length, 1, 1100));
+        Assert.Contains(documents, document => document.Text.Contains("Managed Instance supported from 9.2", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task BuildAsync_FailedRefreshRetainsPreviousIndexAndFactCatalog()
     {
         using var temp = new TempDirectory();

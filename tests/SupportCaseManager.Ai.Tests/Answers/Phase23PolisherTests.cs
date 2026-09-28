@@ -1,5 +1,7 @@
+using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
+using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
 using Xunit;
 
@@ -39,6 +41,26 @@ public sealed class Phase23PolisherTests
         Assert.Contains("文章校正", prompt.SystemPrompt, StringComparison.Ordinal);
         Assert.Contains("新しい技術情報", prompt.SystemPrompt, StringComparison.Ordinal);
         Assert.Contains("qacli validate build --qaf-project .", prompt.UserPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PolisherPrompt_UsesParserCompatibleJsonSchema()
+    {
+        var prompt = PolisherPromptBuilder.Build("回答案 2026.2");
+        Assert.Contains("customerReplyDraft", prompt.SystemPrompt, StringComparison.Ordinal);
+        Assert.NotNull(prompt.OutputSchema);
+        var settings = new LlmProviderSettings
+        {
+            ChatModel = "qwen3:8b",
+            StructuredOutputMode = StructuredOutputModes.Json,
+        };
+        var body = OllamaRequestBuilder.BuildChatRequestBody(settings,
+            prompt.SystemPrompt, prompt.UserPrompt, true, prompt.OutputSchema);
+        using var request = JsonDocument.Parse(JsonSerializer.Serialize(body));
+        var format = request.RootElement.GetProperty("format");
+        Assert.Equal("object", format.GetProperty("type").GetString());
+        Assert.Equal("customerReplyDraft", format.GetProperty("required")[0].GetString());
+        Assert.False(format.GetProperty("additionalProperties").GetBoolean());
     }
 
     [Fact]

@@ -561,6 +561,51 @@ public sealed class ProductScopedSearchTests
     }
 
     [Fact]
+    public async Task SearchAllAsync_RedactionPlaceholdersAreNotTechnicalSubjectAnchors()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "Checkmarx",
+        [
+            CreateManual("azure-support", "Azure SQL Managed Instance support by version."),
+        ]);
+
+        var results = await CreateService().SearchAllAsync(CreateProduct("Checkmarx"),
+            aiIndexFolder, new InquiryFocus
+            {
+                FocusText = "[CUSTOMER_ORG] is checking Azure SQL Managed Instance support for [PERSON].",
+            }, maxResults: 2);
+
+        var result = Assert.Single(results);
+        Assert.DoesNotContain("subject=technical-anchor-missing", result.ScoreBreakdown);
+    }
+
+    [Fact]
+    public async Task SearchAllAsync_DistinctTechnicalTermsFavorDirectOfficialSpan()
+    {
+        using var temp = new TempDirectory();
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        await WriteManualIndexAsync(aiIndexFolder, "Checkmarx",
+        [
+            CreateManual("sql-migration", "SQL Server migration procedure and database setup."),
+            CreateManual("sql-connection", "SQL Server connection troubleshooting."),
+        ]);
+        await WriteOfficialIndexAsync(aiIndexFolder, "Checkmarx",
+        [CreateOfficial("managed-instance-support", "Supported Components", "SQL platforms",
+            "Azure Managed Instance DBaaS is supported from Checkmarx SAST 9.2.")]);
+
+        var results = await CreateService().SearchAllAsync(CreateProduct("Checkmarx"),
+            aiIndexFolder, new InquiryFocus
+            {
+                FocusText = "[CUSTOMER_ORG] asks whether Azure SQL Managed Instance can be used instead of SQL Server on Windows.",
+            }, maxResults: 3);
+
+        var official = Assert.Single(results, source => source.SourceId == "managed-instance-support");
+        Assert.Contains("technical=distinctive-terms-match", official.ScoreBreakdown);
+        Assert.Contains(results.Take(2), source => source.SourceId == "managed-instance-support");
+    }
+
+    [Fact]
     public async Task SearchAllAsync_RepositorySubjectIsPartOfRelevance()
     {
         using var temp = new TempDirectory();

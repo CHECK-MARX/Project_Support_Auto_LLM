@@ -55,6 +55,126 @@ public sealed class GroundedAnswerComparisonTests
     }
 
     [Fact]
+    public async Task CompareAsync_RejectsTraceableCitationContainingCustomerIdentity()
+    {
+        const string privateText = "(株)顧客会社の担当者様から問い合わせを受けました。";
+        var request = Request() with
+        {
+            Sources = [new SearchSource
+            {
+                SourceId = "s1", SourceType = "PastCaseNote", ProductName = "HelixQAC",
+                Text = privateText, Score = 0.9,
+            }],
+        };
+        var baseline = Baseline() with
+        {
+            Evidence = [new EvidenceItem { SourceId = "s1", SourceType = "PastCaseNote", Excerpt = privateText }],
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "過去案件に問い合わせ記録があります。",
+            internalMemo = "参考情報",
+            needConfirmations = Array.Empty<object>(),
+            evidence = new[] { new { sourceId = "s1", excerpt = privateText } },
+            confidence = 0.3, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, baseline);
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Single(result.CitationTraces);
+        Assert.Contains(result.Reasons, reason => reason.Contains("顧客固有", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GroundedPrompt_OffersOnlySafeRelevantCitationSpans()
+    {
+        var request = Request() with
+        {
+            InquiryText = "ポート番号1234の設定を確認したいです。",
+            Sources = [new SearchSource
+            {
+                SourceId = "s1", SourceType = "Manual", ProductName = "HelixQAC",
+                Text = "(株)顧客会社の担当者様から連絡がありました。\n" + EvidenceText +
+                    "\nライセンスの別設定を変更してください。",
+            }],
+        };
+
+        var prompt = GroundedAnswerPromptBuilder.Build(request, request.Sources);
+        var choices = prompt.UserPrompt.Split('\n')
+            .Where(static line => line.StartsWith("引用候補", StringComparison.Ordinal)).ToArray();
+        Assert.Single(choices);
+        Assert.Contains(EvidenceText, choices[0], StringComparison.Ordinal);
+        Assert.DoesNotContain("顧客会社", choices[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RejectsTraceableCitationWithoutClaimRelevance()
+    {
+        const string unrelated = "ライセンスの有効期限は管理画面で確認してください。";
+        var request = Request() with
+        {
+            Sources = [new SearchSource
+            {
+                SourceId = "s1", SourceType = "Manual", ProductName = "HelixQAC",
+                Text = unrelated,
+            }],
+        };
+        var baseline = Baseline() with
+        {
+            Evidence = [new EvidenceItem { SourceId = "s1", SourceType = "Manual", Excerpt = unrelated }],
+        };
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(Response("ポート番号の確認が必要です。", unrelated)),
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(request, baseline);
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("関連性不足", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CompareAsync_DropsUnrelatedCitationFromSafeNonReadyReply()
+    {
+        const string unrelated = "ライセンスの有効期限は管理画面で確認してください。";
+        var request = Request() with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+            Sources = [new SearchSource
+            {
+                SourceId = "s1", SourceType = "Manual", ProductName = "HelixQAC",
+                Text = unrelated,
+            }],
+        };
+        var baseline = Baseline() with
+        {
+            Evidence = [new EvidenceItem { SourceId = "s1", SourceType = "Manual", Excerpt = unrelated }],
+            Readiness = "NeedsReview",
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: 設定画面のポート番号を質問されています。" +
+                "現時点で断定できない事項: 指定値は確認できません。" +
+                "追加で必要な確認: 対象製品版と設定画面の現在値を確認してください。",
+            internalMemo = "別資料の引用は無関係",
+            needConfirmations = new[] { new { question = "対象製品版と設定値を確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = new[] { new { sourceId = "s1", excerpt = unrelated } },
+            confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, baseline);
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Equal(1, result.GeneratedCitationCount);
+        Assert.Single(result.CitationTraces);
+        Assert.Empty(result.Candidate?.Evidence ?? []);
+        Assert.Equal("NeedsReview", result.Candidate?.Readiness);
+    }
+
+    [Fact]
     public async Task CompareAsync_AllowsSpecificSafeAbstentionWithoutUnrelatedCitation()
     {
         var request = Request() with
@@ -84,6 +204,85 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Equal("InsufficientEvidence", comparison.Candidate?.Readiness);
         Assert.Empty(comparison.CitationTraces);
         Assert.Equal(0, comparison.GeneratedCitationCount);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RemovesInquirySourceTagFromCustomerReply()
+    {
+        var request = Request() with
+        {
+            InquiryText = "VPN経由のライセンスサーバーで利用できますか。",
+            FactResolution = new FactResolutionResult { AnswerReadiness = "InsufficientEvidence" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: VPN経由のライセンスサーバーを検討されています（sourceId=inquiry）。" +
+                "現時点で断定できない事項: 利用可否は確認できません。" +
+                "追加で必要な確認: 対象バージョンとメーカー見解を確認してください。",
+            internalMemo = "顧客申告のみ",
+            needConfirmations = new[] { new { question = "対象バージョンを確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline());
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.DoesNotContain("sourceId", result.Candidate?.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task CompareAsync_NaturalizesCaseSourceTagInCustomerReply()
+    {
+        var request = Request() with
+        {
+            InquiryText = "VPN経由のライセンスサーバーで利用できますか。",
+            FactResolution = new FactResolutionResult { AnswerReadiness = "InsufficientEvidence" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: VPN経由のライセンスサーバーを検討されています" +
+                "（sourceId=case:abcd1234:line:29）。" +
+                "現時点で断定できない事項: 利用可否は確認できません。" +
+                "追加で必要な確認: 対象バージョンとメーカー見解を確認してください。",
+            internalMemo = "案件履歴の識別子は社内用",
+            needConfirmations = new[] { new { question = "対象バージョンを確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline());
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Contains("案件履歴によると", result.Candidate?.CustomerReplyDraft);
+        Assert.DoesNotContain("sourceId", result.Candidate?.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task CompareAsync_DoesNotTreatNegatedOfficialSupportAsAffirmative()
+    {
+        var request = Request() with
+        {
+            InquiryText = "スキャンが処理待ち中です。原因を確認してください。",
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: スキャンが処理待ち中と報告されています。" +
+                "現時点で断定できない事項: 原因や正式サポートの確定はできません。" +
+                "追加で必要な確認: 実行時刻と関連ログを確認してください。",
+            internalMemo = "根拠不足",
+            needConfirmations = new[] { new { question = "実行時刻を確認してください。", reason = "原因未確定", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline());
+
+        Assert.DoesNotContain(result.Reasons, reason => reason.Contains("正式サポート", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -143,6 +342,108 @@ public sealed class GroundedAnswerComparisonTests
     }
 
     [Fact]
+    public async Task CompareAsync_AcceptsSpecificEvidenceFreeConfirmationListWithoutImperative()
+    {
+        var request = Request() with
+        {
+            InquiryText = "CxSASTのスキャンが処理待ち中から進みません。原因を調査してください。",
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: CxSASTのスキャンが処理待ち中と報告されています。" +
+                "現時点で断定できない事項: 停滞原因は確認できません。" +
+                "追加で必要な確認: スキャン実行時刻、処理サービスの稼働状態、同時刻の関連ログ。",
+            internalMemo = "直接対応する資料なし",
+            needConfirmations = new[] { new { question = "スキャン実行時刻と関連ログを確認してください。", reason = "原因未確定", priority = "High" } },
+            evidence = Array.Empty<object>(),
+            confidence = 0.2,
+            warnings = Array.Empty<string>(),
+        });
+
+        var comparison = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline(), shadowReview: new ShadowReviewCriteria(
+                ["CxJobManager停止後の復旧"], ["原因を断定しない"],
+                ["CxJobManagerのログ"], "NeedsReview"));
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, comparison.Status);
+        Assert.Equal("NeedsReview", comparison.Candidate?.Readiness);
+        Assert.Equal(0, comparison.GeneratedCitationCount);
+        Assert.Equal(0, comparison.ExpectedClaimsCoverage);
+    }
+
+    [Fact]
+    public async Task CompareAsync_PreservesKlocworkAbstentionWhenModelOmitsUncertaintyHeading()
+    {
+        var request = Request() with
+        {
+            Case = new CaseContext { ProductName = "Klocwork" },
+            InquiryText = "ライセンスサーバーの移行先にVPN経由の社外サーバーを検討しています。",
+            FactResolution = new FactResolutionResult { AnswerReadiness = "InsufficientEvidence" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: 顧客がVPN経由の社外サーバーを検討していること。" +
+                "現時点でVPN経由の運用可否を断定できない。" +
+                "追加で必要な確認: 対象バージョン、ライセンス方式、メーカーの対応見解。",
+            internalMemo = "運用可否は未確認",
+            needConfirmations = new[] { new { question = "対象バージョンを確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = Array.Empty<object>(),
+            confidence = 0.2,
+            warnings = Array.Empty<string>(),
+        });
+
+        var comparison = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline(), shadowReview: new ShadowReviewCriteria(
+                ["VPN経由の社外サーバーへ移行を検討している"], ["正式サポートと断定しない"],
+                ["メーカー見解が必要"], "InsufficientEvidence"));
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, comparison.Status);
+        Assert.Equal("InsufficientEvidence", comparison.Candidate?.Readiness);
+        Assert.Contains("現時点で断定できない事項", comparison.Candidate?.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task CompareAsync_AllowsShadowAbstentionWhenNoSourceWasRetrieved()
+    {
+        var request = Request() with
+        {
+            Case = new CaseContext { ProductName = "Klocwork" },
+            InquiryText = "2025.2から2026.2へ更新します。チェッカーのenabled既定設定に変更はありますか。",
+            Sources = [],
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: 2025.2から2026.2への更新時にチェッカー設定の変更有無を質問されています。" +
+                "現時点で断定できない事項: enabled既定設定の変更有無は確認できません。" +
+                "追加で必要な確認: 両版のチェッカー構成差分とメーカー見解。",
+            internalMemo = "参照資料なし",
+            needConfirmations = new[] { new { question = "メーカー見解を確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = Array.Empty<object>(),
+            confidence = 0.2,
+            warnings = Array.Empty<string>(),
+        });
+
+        var prompt = GroundedAnswerPromptBuilder.Build(request, []);
+        Assert.Contains("検索Evidenceは0件", prompt.UserPrompt);
+        Assert.Contains("公式資料を確認した事実として書かない", prompt.UserPrompt);
+
+        var comparison = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [] },
+                shadowReview: new ShadowReviewCriteria(
+                    ["2026.2のenabled変更有無は未確認"], ["変更なしと断定しない"],
+                    ["2025.2/2026.2の構成差分"], "NeedsManufacturerConfirmation"));
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, comparison.Status);
+        Assert.Equal("NeedsManufacturerConfirmation", comparison.Candidate?.Readiness);
+        Assert.Empty(comparison.CitationTraces);
+    }
+
+    [Fact]
     public async Task CompareAsync_NonReadyReplyWithoutCustomerActionIsRejected()
     {
         var request = Request() with
@@ -176,7 +477,8 @@ public sealed class GroundedAnswerComparisonTests
                     ["設定手順"], "NeedsReview"));
 
         Assert.Equal(GroundedComparisonStatuses.Rejected, comparison.Status);
-        Assert.Equal("CustomerReady", comparison.GeneratedReadiness);
+        Assert.Equal("CustomerReady", comparison.RawGeneratedReadiness);
+        Assert.Equal("NeedsReview", comparison.GeneratedReadiness);
         Assert.Contains(comparison.Reasons, reason => reason.Contains("Readiness", StringComparison.Ordinal));
         Assert.DoesNotContain("根拠なく正式サポートと断定", client.LastPrompt?.UserPrompt);
         Assert.DoesNotContain("ポート番号1234を設定する", client.LastPrompt?.UserPrompt);
@@ -215,6 +517,9 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Contains("衝突対象=データベースサーバー", prompt.UserPrompt);
         Assert.Contains("生成契約Readiness: NeedsReview", prompt.UserPrompt);
         Assert.Contains("対象事象との直接対応: NO", prompt.UserPrompt);
+        Assert.Contains("引用可能な直接対応資料: なし", prompt.UserPrompt);
+        Assert.Contains("evidenceは空配列", prompt.UserPrompt);
+        Assert.Contains("needConfirmationsだけに確認項目を書き", prompt.SystemPrompt);
     }
 
     [Fact]
@@ -231,6 +536,259 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Contains("顧客報告 sourceId=inquiry: ライセンスサーバーの移行先として", prompt.UserPrompt);
         Assert.Contains("顧客の計画であり、運用可否の証明ではない", prompt.UserPrompt);
         Assert.Contains("Confirmed Fact: 独立した製品仕様の確定Factなし", prompt.UserPrompt);
+    }
+
+    [Fact]
+    public void GroundedPrompt_RequestsSelectedOfficialFactInCustomerReplyWithItsCondition()
+    {
+        var source = Request().Sources[0] with
+        {
+            SourceId = "official:checker",
+            SourceType = "OfficialDoc",
+            Text = "If you migrate projects_root, verify the same checker configuration before the first integration build.",
+        };
+        var request = Request() with
+        {
+            InquiryText = "チェッカー設定の既定enabledに変更はありますか。",
+            Sources = [source],
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsManufacturerConfirmation",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Status = "Confirmed", SourceType = "OfficialDoc",
+                    EvidenceId = source.SourceId,
+                    Value = source.Text,
+                    Statement = "選択資料の原文記述",
+                }],
+            },
+        };
+
+        var prompt = GroundedAnswerPromptBuilder.Build(request, [source]);
+
+        Assert.Contains("Confirmed Fact: 選択資料の原文記述", prompt.UserPrompt);
+        Assert.Contains("internalMemoだけに留めない", prompt.UserPrompt);
+        Assert.Contains("未確認の版・既定値", prompt.UserPrompt);
+        Assert.Contains("Confirmed Factを区別して記す", prompt.UserPrompt);
+        Assert.Contains("条件と出典を明示", prompt.UserPrompt);
+    }
+
+    [Fact]
+    public async Task CompareAsync_AcceptsConcreteVersionCheckInNonReadyReply()
+    {
+        var request = Request() with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: ポート番号1234の設定資料があります。" +
+                "現時点で断定できない事項: お客様の環境への適用は不明です。" +
+                "追加で必要な確認: 使用している製品のバージョンと設定内容。",
+            internalMemo = "版の照合が必要です。",
+            needConfirmations = new[] { new { question = "使用している製品のバージョンは何ですか。", reason = "適用範囲", priority = "High" } },
+            evidence = Array.Empty<object>(),
+            confidence = 0.3,
+            warnings = Array.Empty<string>(),
+        });
+
+        var comparison = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Readiness = "NeedsReview" });
+
+        Assert.DoesNotContain(comparison.Reasons,
+            reason => reason.Contains("具体的な追加確認がありません", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CompareAsync_PreservesInquiryVersionFromBaselineAsCustomerContext()
+    {
+        var request = Request() with
+        {
+            InquiryText = "2024.1のポート設定を確認したいです。",
+            InquiryFocus = new InquiryFocus { TargetVersions = ["2024.1"] },
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var baseline = Baseline() with
+        {
+            CustomerReplyDraft = "2024.1のポート設定を確認します。",
+            Readiness = "NeedsReview",
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: ポート番号1234の資料があります。" +
+                "現時点で断定できない事項: 設定の適用は不明です。" +
+                "追加で必要な確認: 現在の設定値を確認してください。",
+            internalMemo = "版は問い合わせに記載されています。",
+            needConfirmations = Array.Empty<object>(),
+            evidence = Array.Empty<object>(),
+            confidence = 0.3,
+            warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, baseline);
+
+        Assert.Contains("お問い合わせ対象の版として2024.1", result.GeneratedReplyDraft);
+        Assert.DoesNotContain(result.Reasons,
+            reason => reason.Contains("必須値の欠落", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CompareAsync_RejectsDenialOfHeadingPresentInSelectedOfficialSource()
+    {
+        const string sourceText = "Klocwork 2026.2 Release notes. Disabled checkers If you migrate the projects_root, verify the checker configuration before the first integration build.";
+        var request = Request() with
+        {
+            InquiryText = "2026.2のDisabled checkersについて確認したいです。",
+            Sources = [new SearchSource { SourceId = "official:release", SourceType = "OfficialDoc", Text = sourceText }],
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: 2026.2には「Disabled checkers」セクションが存在せず。" +
+                "現時点で断定できない事項: 既定値は未確認です。" +
+                "追加で必要な確認: checker設定を確認してください。",
+            internalMemo = "見出しなし",
+            needConfirmations = Array.Empty<object>(),
+            evidence = Array.Empty<object>(),
+            confidence = 0.3,
+            warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with
+            {
+                Readiness = "NeedsManufacturerConfirmation",
+                Evidence = [new EvidenceItem
+                {
+                    SourceId = "official:release", SourceType = "OfficialDoc", Excerpt = sourceText,
+                }],
+            });
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("見出しを不存在", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GroundedPrompt_KeepsCaseObservationSeparateAndConstrainsCitationPairs()
+    {
+        var request = Request() with
+        {
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Status = "Candidate", SourceType = "CurrentCase",
+                    Value = "前回の設定変更後は一週間再発しなかった。",
+                    EvidenceId = "case:line:12", Statement = "案件履歴の観測",
+                }],
+            },
+        };
+
+        var prompt = GroundedAnswerPromptBuilder.Build(request, request.Sources);
+
+        Assert.Contains("CurrentCase observation (not product specification)", prompt.UserPrompt);
+        Assert.Contains("前回の設定変更後は一週間再発しなかった", prompt.UserPrompt);
+        Assert.Contains("case:line:12", prompt.UserPrompt);
+        Assert.DoesNotContain("Confirmed Fact: 案件履歴の観測", prompt.UserPrompt);
+        Assert.Contains("sourceIdや内部識別子を記載しない", prompt.SystemPrompt);
+        var alternatives = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("evidence")
+            .GetProperty("items").GetProperty("oneOf");
+        Assert.NotEmpty(alternatives.EnumerateArray());
+        Assert.All(alternatives.EnumerateArray(), item =>
+            Assert.Equal("s1", item.GetProperty("properties").GetProperty("sourceId")
+                .GetProperty("const").GetString()));
+    }
+
+    [Fact]
+    public async Task CompareAsync_RejectsUnattributedDocumentClaimWithoutEvidence()
+    {
+        var request = Request() with
+        {
+            Sources = [],
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: リリースノートには既定設定の変更なしと記載されています。" +
+                "現時点で断定できない事項: 製品仕様は確認できません。" +
+                "追加で必要な確認: メーカー見解を確認してください。",
+            internalMemo = "根拠未確認",
+            needConfirmations = new[] { new { question = "メーカー見解を確認してください。", reason = "資料未確認", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [] },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsManufacturerConfirmation"));
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("資料の記載", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CompareAsync_AllowsAttributedCustomerReportWithoutEvidence()
+    {
+        var request = Request() with
+        {
+            InquiryText = "顧客からKlocwork 2026.1と2026.2のリリースノートに記載違いがあるとの説明です。Klocwork 2026.2のチェッカー構成ファイルのenabled既定設定に変更はありますか。",
+            Sources = [],
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: 顧客が報告したリリースノートの記載違いについて照会されています。" +
+                "現時点で断定できない事項: enabled既定設定の変更有無は確認できません。" +
+                "追加で必要な確認: チェッカー構成ファイルの版間差分とメーカー見解を確認してください。",
+            internalMemo = "根拠未確認",
+            needConfirmations = new[] { new { question = "メーカー見解を確認してください。", reason = "仕様未確認", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { CustomerReplyDraft = "確認中です。", Evidence = [] },
+                shadowReview: new ShadowReviewCriteria(["Klocwork 2026.2のenabled変更有無は未確認"],
+                    [], ["メーカー見解"], "NeedsManufacturerConfirmation"));
+
+        Assert.True(result.Status == GroundedComparisonStatuses.ReadyForHumanReview,
+            string.Join(" | ", result.Reasons));
+        Assert.Equal("NeedsManufacturerConfirmation", result.Candidate?.Readiness);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RejectsReversedCustomerNegationWithoutEvidence()
+    {
+        var request = Request() with
+        {
+            InquiryText = "チェッカー構成ファイルのenabledフィールドに追加されたチェッカーはありません。変更有無を確認してください。",
+            Sources = [],
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+        };
+        var prompt = GroundedAnswerPromptBuilder.Build(request, []);
+        Assert.Contains("追加されたチェッカーはありません", prompt.UserPrompt);
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: お客様によると追加されたチェッカーが記載されていました。" +
+                "現時点で断定できない事項: 変更有無は確認できません。" +
+                "追加で必要な確認: enabledフィールドの変更履歴とメーカー見解を確認してください。",
+            internalMemo = "顧客申告",
+            needConfirmations = new[] { new { question = "メーカー見解を確認してください。", reason = "根拠不足", priority = "High" } },
+            evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+        });
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(response), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { CustomerReplyDraft = "確認中です。", Evidence = [] },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsManufacturerConfirmation"));
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("否定表現", StringComparison.Ordinal));
     }
 
     [Fact]

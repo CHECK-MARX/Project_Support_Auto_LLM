@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
@@ -59,15 +60,17 @@ if (shadowPilot)
         throw new ArgumentException("Shadow Pilot input/output must stay under rag-lab/reports/generated.");
     }
 }
-if (shadowPilot && (fixedEvidenceIndex < 0 || fixedEvidenceIndex + 1 >= args.Length ||
+if (shadowPilot && (!args.Contains("--dry-run") &&
+                    (fixedEvidenceIndex < 0 || fixedEvidenceIndex + 1 >= args.Length) ||
                     labelsIndex < 0 || labelsIndex + 1 >= args.Length))
 {
-    throw new ArgumentException("Shadow regression requires --fixed-evidence and --shadow-labels.");
+    throw new ArgumentException("Shadow comparison requires --shadow-labels and fixed evidence outside dry-run.");
 }
 var dryRun = args.Contains("--dry-run", StringComparer.Ordinal);
 var rankPreview = args.Contains("--rank-preview", StringComparer.Ordinal);
 var rankedE2e = args.Contains("--rank-e2e", StringComparer.Ordinal);
 var evidenceSelectionMode = rankedE2e ? "ranked_e2e" : rankPreview ? "rank_preview" :
+    shadowPilot && dryRun && fixedEvidenceIndex < 0 ? "shadow_evidence_capture" :
     shadowPilot ? "fixed_regression" : "development_default";
 if (rankPreview && !dryRun)
 {
@@ -116,9 +119,10 @@ var requestedIds = shadowPilot
     : [];
 if (shadowPilot)
 {
-    if (requestedIds.Length != 3 || requestedIds.Distinct(StringComparer.Ordinal).Count() != 3)
+    if (requestedIds.Length is not (3 or 5) ||
+        requestedIds.Distinct(StringComparer.Ordinal).Count() != requestedIds.Length)
     {
-        throw new InvalidDataException("Shadow Pilot requires exactly three distinct case IDs.");
+        throw new InvalidDataException("Shadow Pilot requires three or five distinct case IDs.");
     }
     using var document = JsonDocument.Parse(File.ReadAllText(args[shadowStatusIndex + 1]));
     var gate = document.RootElement;
@@ -137,7 +141,7 @@ if (shadowPilot)
     }
 }
 var byCaseId = candidateSet.Cases.ToDictionary(item => item.CaseId, StringComparer.Ordinal);
-var fixedEvidence = shadowPilot
+var fixedEvidence = shadowPilot && fixedEvidenceIndex >= 0
     ? JsonSerializer.Deserialize<FixedEvidenceFile>(File.ReadAllText(args[fixedEvidenceIndex + 1]), options)!
         .Cases.ToDictionary(item => item.CaseId, StringComparer.Ordinal)
     : new Dictionary<string, FixedEvidenceCase>(StringComparer.Ordinal);
@@ -145,16 +149,18 @@ var labelFile = shadowPilot
     ? JsonSerializer.Deserialize<ShadowLabelFile>(File.ReadAllText(args[labelsIndex + 1]), options)!
     : null;
 var labels = labelFile?.Cases.ToDictionary(item => item.CaseId, StringComparer.Ordinal);
-if (shadowPilot && (fixedEvidence.Count != 3 || labels?.Count != 3 ||
-                    requestedIds.Any(id => !fixedEvidence.ContainsKey(id) || !labels!.ContainsKey(id))))
+if (shadowPilot && (labels?.Count != requestedIds.Length ||
+                    requestedIds.Any(id => !labels!.ContainsKey(id)) ||
+                    !dryRun && (fixedEvidence.Count != requestedIds.Length ||
+                                requestedIds.Any(id => !fixedEvidence.ContainsKey(id)))))
 {
-    throw new InvalidDataException("Fixed evidence or review labels do not match the three-case regression.");
+    throw new InvalidDataException("Fixed evidence or review labels do not match the requested Shadow cases.");
 }
 var selected = shadowPilot
     ? requestedIds.Select(id => byCaseId.TryGetValue(id, out var item) ? item
         : throw new InvalidDataException($"Unknown case ID: {id}")).ToArray()
     : candidateSet.Cases.Where(item => item.Split == "development").Skip(start).Take(limit).ToArray();
-if (selected.Length != (shadowPilot ? 3 : limit) ||
+if (selected.Length != (shadowPilot ? requestedIds.Length : limit) ||
     selected.Any(item => item.Split != "development" || !roots.ContainsKey(item.Product)) ||
     shadowPilot && selected.Select(item => item.Product).ToHashSet(StringComparer.Ordinal).Count != 3)
 {
@@ -169,6 +175,22 @@ var holdoutCases = candidateSet.Cases.Where(item => item.Split == "holdout")
     .ToArray();
 var settings = JsonSerializer.Deserialize<AiAssistantSettings>(File.ReadAllText(settingsPath), options)
     ?? throw new InvalidDataException("Settings could not be read.");
+var indexFolderIndex = Array.IndexOf(args, "--index-folder");
+if (indexFolderIndex >= 0)
+{
+    if (!shadowPilot || indexFolderIndex + 1 >= args.Length)
+    {
+        throw new ArgumentException("--index-folder requires a Shadow Pilot index folder.");
+    }
+    var isolatedIndexFolder = Path.GetFullPath(args[indexFolderIndex + 1]);
+    var generatedRoot = Path.GetDirectoryName(candidatePath)!;
+    if (!isolatedIndexFolder.StartsWith(generatedRoot + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase) || !Directory.Exists(isolatedIndexFolder))
+    {
+        throw new ArgumentException("Shadow Pilot index folder must exist under rag-lab/reports/generated.");
+    }
+    settings = settings with { AiIndexFolder = isolatedIndexFolder };
+}
 var provider = settings.LlmProvider with
 {
     Provider = "Ollama",
@@ -222,6 +244,9 @@ foreach (var item in selected)
     var supportNumber = CaseParser.ParseCaseFromDirectory(new DirectoryInfo(casePath))?.SupportNumber;
     var context = new CaseContext { ProductName = productName };
     var focus = focusExtractor.Extract(item.Question, context, settings.UsePhase175QualityControls);
+    var officialPreview = rankPreview
+        ? await search.SearchOfficialDocumentsAsync(product, settings.AiIndexFolder, focus, 10)
+        : [];
     var watch = Stopwatch.StartNew();
     var retrieved = await search.SearchAllHybridAsync(product, settings.AiIndexFolder, focus,
         provider, shadowPilot ? 500 : 50, ragPipelineMode: settings.RagPipelineMode,
@@ -233,12 +258,29 @@ foreach (var item in selected)
     var isolated = retrieved.Where(source => !IsSameCase(source, casePath, supportNumber) &&
         !holdoutCases.Any(holdout => IsSameCase(source, holdout.Path, holdout.SupportNumber)));
     var eligible = (compact ? isolated.Where(source => source.Text.Length <= 1200) : isolated).ToArray();
-    var sources = shadowPilot && !rankPreview && !rankedE2e
+    var retrievalTop10 = eligible.Take(10).Select(source => new
+    {
+        source.SourceType, source.Title, source.SectionTitle, source.SourceId,
+        source.SupportNumber, source.FilePath, source.Text, source.Score,
+        source.ScoreBreakdown,
+    }).ToArray();
+    var extractedQuery = new
+    {
+        focus.TechnicalQuery.Product, focus.TechnicalQuery.Feature,
+        focus.TechnicalQuery.Component, focus.TechnicalQuery.Operation,
+        focus.TechnicalQuery.Intent, TechnicalToken = focus.ImportantTerms,
+        Version = focus.TargetVersions,
+    };
+    var currentCaseFacts = shadowPilot
+        ? CurrentCaseFactReader.Read(casePath, item.Question, safety)
+        : [];
+    var sources = shadowPilot && !dryRun && !rankPreview && !rankedE2e
         ? fixedEvidence[item.CaseId].SelectedSources.Select(fixedSource =>
             eligible.FirstOrDefault(source => source.SourceId == fixedSource.SourceId &&
                 Sha256(source.Text) == Sha256(fixedSource.Text)) ??
             throw new InvalidDataException($"Fixed evidence changed or is unavailable for {item.CaseId}.")).ToArray()
-        : eligible.Take(evidenceCount).ToArray();
+        : rankedE2e ? SelectNonDuplicateEvidence(eligible, evidenceCount, item.Question) :
+            eligible.Take(evidenceCount).ToArray();
     if (sources.Length > evidenceCount || sources.Select(source => source.SourceId).Distinct().Count() != sources.Length)
     {
         throw new InvalidDataException("Fixed evidence count or identity is invalid.");
@@ -248,7 +290,7 @@ foreach (var item in selected)
         throw new InvalidDataException("Same-case evidence remained after isolation.");
     }
 
-    if (dryRun || sources.Length == 0)
+    if (dryRun || sources.Length == 0 && !shadowPilot)
     {
         results.Add(new CaseResult(item.CaseId, item.Product, item.Topic, sources.Length,
             sameCaseHits, dryRun ? "DryRun" : "NoEvidence", "", "", null, null, null,
@@ -259,7 +301,18 @@ foreach (var item in selected)
         });
         if (reviewOutputPath is not null)
         {
-            reviewResults.Add(new { item.CaseId, item.Product,
+            reviewResults.Add(new { item.CaseId, item.Product, extractedQuery, retrievalTop10,
+                officialPreview = officialPreview.Select(source => new { source.SourceId,
+                    source.Title, source.Url, source.Score, textLength = source.Text.Length }).ToArray(),
+                officialMergeTrace = retrieved.Select((source, index) => new { source, index })
+                    .Where(item => item.source.SourceType == "OfficialDoc")
+                    .Select(item => new { item.source.SourceId, mergedRank = item.index + 1,
+                        item.source.Score, item.source.ScoreBreakdown,
+                        textLength = item.source.Text.Length,
+                        sameCaseExcluded = IsSameCase(item.source, casePath, supportNumber),
+                        compactExcluded = compact && item.source.Text.Length > 1200 })
+                    .ToArray(),
+                currentCaseFactKeys = currentCaseFacts.Select(fact => fact.Key).ToArray(),
                 selectedSources = sources.Select(source => new { source.SourceType, source.Title,
                     source.SectionTitle, source.SourceId, source.SupportNumber,
                     source.FilePath, source.Text }).ToArray() });
@@ -282,6 +335,7 @@ foreach (var item in selected)
     };
     var firstLlmCall = llm.Calls.Count;
     var baseline = await answer.GenerateDraftAsync(request);
+    var candidateFirstLlmCall = llm.Calls.Count;
     var baselineCompletedSeconds = watch.Elapsed.TotalSeconds;
     var label = shadowPilot ? labels![item.CaseId] : null;
     var resolved = factResolver.Resolve(productName, string.Empty, item.Question, focus);
@@ -293,6 +347,8 @@ foreach (var item in selected)
             .Where(fact => sourceIds.Contains(fact.EvidenceId) ||
                 fact.SourceType == "CurrentInquiry" &&
                 item.Question.Contains(fact.Value, StringComparison.OrdinalIgnoreCase))
+            .Concat(currentCaseFacts)
+            .Concat(SelectedOfficialFactProjector.Project(item.Question, sources))
             .ToArray(),
     };
     var groundedRequest = request with { FactResolution = inputFacts };
@@ -320,17 +376,20 @@ foreach (var item in selected)
         ExpectedClaimsCoverage = compared.ExpectedClaimsCoverage,
         CitationTraceable = compared.CitationTraces.Count,
         CitationCount = compared.GeneratedCitationCount,
+        CitationRelevantCount = compared.CitationRelevantCount,
+        AcceptedCitationCount = compared.Candidate?.Evidence.Count ?? 0,
         ExpectedReadiness = label?.Readiness,
         BaselineFallbackReason = ClassifyBaselineFallback(baseline),
     });
     if (reviewOutputPath is not null)
     {
-        reviewResults.Add(new { item.CaseId, item.Product, item.Topic,
+        reviewResults.Add(new { item.CaseId, item.Product, item.Topic, extractedQuery, retrievalTop10,
             baselineReply = baseline.CustomerReplyDraft,
             baselineWarnings = baseline.Warnings,
-            baselineModelRaw = llm.Contents.ElementAtOrDefault(firstLlmCall),
-            groundedModelRaw = llm.Contents.ElementAtOrDefault(firstLlmCall + 1),
-            groundedPrompt = llm.Prompts.ElementAtOrDefault(firstLlmCall + 1)?.UserPrompt,
+            baselineModelRaw = candidateFirstLlmCall > firstLlmCall
+                ? llm.Contents.ElementAtOrDefault(firstLlmCall) : null,
+            groundedModelRaw = llm.Contents.ElementAtOrDefault(candidateFirstLlmCall),
+            groundedPrompt = llm.Prompts.ElementAtOrDefault(candidateFirstLlmCall)?.UserPrompt,
             generationInput = new { inputFacts.AnswerReadiness, inputFacts.MissingFacts,
                 inputFacts.ResolvedFacts, focus.TechnicalQuery.Component,
                 focus.TechnicalQuery.Operation },
@@ -427,6 +486,40 @@ static SelectedEvidenceDiagnostic DescribeSource(SearchSource source) => new(
 static string Sha256(string value) => Convert.ToHexString(
     SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 
+static SearchSource[] SelectNonDuplicateEvidence(IEnumerable<SearchSource> ranked, int count,
+    string inquiry)
+{
+    var selected = new List<SearchSource>();
+    foreach (var source in ranked.Take(count))
+    {
+        if (!SelectedOfficialFactProjector.HasDirectTopicOverlap(inquiry, source)) continue;
+        var tokens = ContentTokens(source.Text);
+        if (selected.Any(existing => existing.SourceType == source.SourceType &&
+            NearDuplicate(tokens, ContentTokens(existing.Text)) &&
+            DottedVersions(source.Text).SetEquals(DottedVersions(existing.Text))))
+            continue;
+        selected.Add(source);
+    }
+    return selected.ToArray();
+}
+
+static HashSet<string> ContentTokens(string text) =>
+    Regex.Matches(text, @"[一-龠ぁ-んァ-ヴA-Za-z0-9]{3,}")
+        .Select(static match => match.Value.ToLowerInvariant())
+        .ToHashSet(StringComparer.Ordinal);
+
+static HashSet<string> DottedVersions(string text) =>
+    Regex.Matches(text, @"(?<!\d)\d{4}(?:\.\d+)+(?!\d)")
+        .Select(static match => match.Value)
+        .ToHashSet(StringComparer.Ordinal);
+
+static bool NearDuplicate(HashSet<string> left, HashSet<string> right)
+{
+    var intersection = left.Count(term => right.Contains(term));
+    var union = left.Count + right.Count - intersection;
+    return union >= 30 && (double)intersection / union >= 0.78;
+}
+
 static string ClassifyBaselineFallback(AnswerDraftResult baseline)
 {
     if (baseline.AnswerGenerationMode != AnswerGenerationModes.PolishingFailed)
@@ -478,6 +571,8 @@ internal sealed record CaseResult(
     public double? ExpectedClaimsCoverage { get; init; }
     public int CitationTraceable { get; init; }
     public int CitationCount { get; init; }
+    public int CitationRelevantCount { get; init; }
+    public int AcceptedCitationCount { get; init; }
     public string BaselineFallbackReason { get; init; } = string.Empty;
 }
 

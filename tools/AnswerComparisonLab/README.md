@@ -38,6 +38,14 @@ metrics, status, phase timings, generic rejection reasons, and model error
 categories. It omits question, answer, evidence text, exception messages, and
 source paths from the report.
 
+For isolated source-coverage E2E runs, `--index-folder` accepts an existing
+index copy under `tools/rag-lab/reports/generated/`. The production index path
+in saved settings is overridden only in this lab process. The official source
+coverage helper in `tools/SourceCoverageLab` builds selected vendor URLs through
+`AiOfficialDocumentIndexBuilder` and merges their chunks into such an isolated
+copy; it never writes to the saved index or source documents. Keep the previous
+ranked E2E and fixed-evidence regression reports separate from coverage runs.
+
 These runs are provisional. Historical reply drafts are not human-confirmed
 ground truth, and the candidate set still requires privacy review. A status of
 `ReadyForHumanReview` means the automated checks passed; it does not mean a

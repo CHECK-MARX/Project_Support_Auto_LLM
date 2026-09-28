@@ -39,7 +39,9 @@ public static partial class AnswerQualityEvaluator
             .Select(static claim => $"{claim.Kind}|{claim.NormalizedValue}")
             .ToHashSet(StringComparer.Ordinal);
         var unsupported = answerClaims
-            .Where(claim => !supportedKeys.Contains($"{claim.Kind}|{claim.NormalizedValue}"))
+            .Where(claim => !supportedKeys.Contains($"{claim.Kind}|{claim.NormalizedValue}") &&
+                !(claim.Kind == "Version" && Regex.IsMatch(input.Question,
+                    $@"(?<![0-9.]){Regex.Escape(claim.NormalizedValue)}(?![0-9.])")))
             .Select(static claim => new UnsupportedTechnicalClaim
             {
                 Kind = claim.Kind,
