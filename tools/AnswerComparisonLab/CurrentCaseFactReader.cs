@@ -37,7 +37,7 @@ internal static partial class CurrentCaseFactReader
                 facts.Add(new ResolvedFact
                 {
                     FactId = $"case:{fileHash[..16]}:{index}",
-                    Key = "CaseObservation",
+                    Key = PreviousOutcome().IsMatch(line) ? "PriorCaseOutcome" : "CaseObservation",
                     Statement = "案件履歴に記録された観測。製品仕様・メーカー原文の確定ではない。",
                     Value = safe,
                     Status = FactStatuses.Candidate,

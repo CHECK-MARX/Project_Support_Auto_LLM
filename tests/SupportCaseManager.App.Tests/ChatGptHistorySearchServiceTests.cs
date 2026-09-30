@@ -117,21 +117,56 @@ public sealed class ChatGptHistorySearchServiceTests
         Assert.False(ChatGptBrowserGateway.ComposerIsCleared(false, null, true, "<<<AI_HANDOFF_V1>>>"));
     }
 
-    [Fact]
-    public void TargetIdentity_RequiresExactCustomGptUrlAndName()
+    [Theory]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", true, true)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", false, false)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation", false, false)]
+    [InlineData("https://chatgpt.com/g/g-klocwork", true, false)]
+    [InlineData("https://www.bing.com/search?q=00018949", true, false)]
+    public void NewRegistration_RequiresVerifiedPageAndTargetUrl(
+        string actualUrl, bool activePageMatches, bool expected)
     {
         const string target = "https://chatgpt.com/g/g-checkmarx";
+        Assert.Equal(expected, ChatGptBrowserGateway.NewRegistrationDestinationMatches(
+            target, actualUrl, activePageMatches));
+    }
 
-        Assert.True(ChatGptBrowserGateway.TargetIdentityMatches(
-            target, target, "Vulnerability Scanner Assistant", "Vulnerability Scanner Assistant - ChatGPT", null));
-        Assert.False(ChatGptBrowserGateway.TargetIdentityMatches(
-            target, "https://chatgpt.com/g/g-klocwork", "Vulnerability Scanner Assistant",
-            "Vulnerability Scanner Assistant - ChatGPT", null));
-        Assert.False(ChatGptBrowserGateway.TargetIdentityMatches(
-            target, target, "Vulnerability Scanner Assistant", "Klocwork - ChatGPT", null));
-        Assert.False(ChatGptBrowserGateway.TargetIdentityMatches(
-            target, "https://www.bing.com/search?q=00018949", "Vulnerability Scanner Assistant",
-            "Vulnerability Scanner Assistant - ChatGPT", null));
+    [Theory]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation", true)]
+    [InlineData("https://chatgpt.com/g/g-klocwork/c/new-conversation", false)]
+    [InlineData("https://chatgpt.com/c/new-conversation", false)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation/extra", false)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation?x=1", false)]
+    [InlineData("https://other.example/g/g-checkmarx/c/new-conversation", false)]
+    public void NewRegistration_OnlyAcceptsConversationUnderTargetGpt(string actualUrl, bool expected)
+    {
+        Assert.Equal(expected, ChatGptBrowserGateway.TargetConversationMatches(
+            "https://chatgpt.com/g/g-checkmarx", actualUrl));
+        Assert.Equal(expected, ChatGptBrowserGateway.NewRegistrationDestinationMatches(
+            "https://chatgpt.com/g/g-checkmarx", actualUrl, activePageMatches: true));
+    }
+
+    [Theory]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation", true, true)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/new-conversation", false, false)]
+    [InlineData("https://chatgpt.com/g/g-klocwork/c/new-conversation", true, false)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", true, false)]
+    [InlineData("https://chatgpt.com/c/new-conversation", true, false)]
+    public void NewRegistration_SubmissionCanBeConfirmedBySameGptConversation(
+        string actualUrl, bool documentMatchesConversation, bool expected)
+    {
+        Assert.Equal(expected, ChatGptBrowserGateway.NewTargetConversationConfirmsSubmission(
+            "https://chatgpt.com/g/g-checkmarx", actualUrl, documentMatchesConversation));
+    }
+
+    [Fact]
+    public void ExistingConversation_StillRequiresExactConversationUrl()
+    {
+        const string expected = "https://chatgpt.com/c/existing";
+        Assert.True(ChatGptBrowserGateway.DocumentConversationMatches(
+            expected, "https://chatgpt.com/g/g-checkmarx/c/existing"));
+        Assert.False(ChatGptBrowserGateway.DocumentConversationMatches(
+            expected, "https://chatgpt.com/g/g-checkmarx/c/another"));
     }
 
     [Fact]

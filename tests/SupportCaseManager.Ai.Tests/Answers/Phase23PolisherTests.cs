@@ -34,6 +34,19 @@ public sealed class Phase23PolisherTests
     }
 
     [Fact]
+    public void Validator_PreservesOriginalTechnicalHeaderName()
+    {
+        const string context = "お客様はＣＲＯＳヘッダについて質問しています。";
+        const string draft = "ＣＲＯＳヘッダの動作を確認します。";
+
+        Assert.Contains("ＣＲＯＳヘッダ", PolishedAnswerValidator.ExtractProtectedValues(context));
+        Assert.True(PolishedAnswerValidator.PreservesProtectedValues(context, draft,
+            "ＣＲＯＳヘッダの動作を確認します。", null));
+        Assert.False(PolishedAnswerValidator.PreservesProtectedValues(context, draft,
+            "CR-Oヘッダの動作を確認します。", null));
+    }
+
+    [Fact]
     public void PolisherPrompt_ForbidsTechnicalAdditions()
     {
         var prompt = PolisherPromptBuilder.Build("qacli validate build --qaf-project .");

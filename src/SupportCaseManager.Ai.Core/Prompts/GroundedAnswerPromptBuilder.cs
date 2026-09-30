@@ -84,6 +84,7 @@ public static class GroundedAnswerPromptBuilder
             "案件履歴で時間的に連続する出来事を、根拠なしに原因と結果へ結び付けないでください。" +
             "顧客向け本文の出典表現は『お客様のご説明では』『案件履歴には』とし、sourceIdや内部識別子を記載しないでください。" +
             "顧客が尋ねた設定値・機能・変更有無の関係を保ち、記載の有無から機能の有無を推定しないでください。" +
+            "顧客が起動失敗を報告した対象を、起動済み・稼働中の対象として書かないでください。" +
             "選択した資料にない事項を、メーカー資料全体に記載がないとは断定せず『提示資料では確認できない』と書いてください。" +
             "顧客が資料に記載がないと報告していても、選択した公式資料の本文に明記された事実を優先し、" +
             "その条件付き事実を『確認できる事実』から省かないでください。" +
@@ -95,10 +96,30 @@ public static class GroundedAnswerPromptBuilder
             "Readinessは内部判定です。非Readyのときは可否や原因を断定せず、追加確認を顧客向け本文に具体的に書いてください。";
         var user = new StringBuilder();
         user.AppendLine($"製品: {request.Case.ProductName}");
+        var selectedIds = sources.Select(static source => source.SourceId).ToHashSet(StringComparer.Ordinal);
+        foreach (var fact in request.FactResolution?.ResolvedFacts.Where(fact =>
+                     fact.Key == "SelectedOfficialStatement" && fact.SourceType == "OfficialDoc" &&
+                     fact.Status == FactStatuses.Confirmed && selectedIds.Contains(fact.EvidenceId)) ?? [])
+        {
+            var source = sources.First(source => source.SourceId == fact.EvidenceId);
+            var version = Regex.Match(source.Text,
+                @"\b(?<version>20\d{2}\.\d+)\s+Release\s+notes\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var heading = Regex.Match(fact.Statement, @"見出し『(?<heading>[^』]+)』");
+            if (version.Success && heading.Success)
+                user.AppendLine($"公式原文の照合結果 sourceId={fact.EvidenceId}: " +
+                    $"{version.Groups["version"].Value} Release notesに「{heading.Groups["heading"].Value}」が実在する。" +
+                    "顧客質問の記載有無の認識と異なる場合はこの選択済み公式原文を優先する。" +
+                    "この見出しを他版へ帰属させず、存在の再確認を依頼しない。" +
+                    "次の原文の条件と時点を回答本文に反映する: " + fact.Value);
+        }
         user.AppendLine($"問い合わせ:\n{request.InquiryText.Trim()}");
         if (request.InquiryFocus?.TargetVersions is { Count: > 0 } targetVersions)
             user.AppendLine($"問い合わせの対象版: {string.Join(", ", targetVersions)}。" +
                 "customerReplyDraftに列挙した全版を残し、現在版・移行予定版・比較参照版を取り違えないでください。");
+        var versionRoles = DescribeVersionRoles(request.InquiryText);
+        if (versionRoles is not null)
+            user.AppendLine($"問い合わせの版の役割: {versionRoles}。この役割を回答本文でも維持してください。");
         if (!string.IsNullOrWhiteSpace(request.SupplementalContext))
         {
             user.AppendLine($"現在案件の補足根拠:\n{request.SupplementalContext.Trim()}");
@@ -142,6 +163,25 @@ public static class GroundedAnswerPromptBuilder
             {
                 user.AppendLine($"Confirmed Fact: {fact.Statement}; value={fact.Value}; " +
                     $"sourceId={fact.EvidenceId}; authority={fact.AuthorityLevel}");
+                if (fact.Key == "SelectedOfficialStatement" &&
+                    sources.FirstOrDefault(source => source.SourceId == fact.EvidenceId) is { } officialSource)
+                {
+                    var documentVersion = Regex.Match(officialSource.Text,
+                        @"\b(?<version>20\d{2}\.\d+)\s+Release\s+notes\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                    if (documentVersion.Success)
+                        user.AppendLine($"OfficialDoc provenance sourceId={fact.EvidenceId}: " +
+                            $"documentVersion={documentVersion.Groups["version"].Value}; " +
+                            "このConfirmed Factと見出しはこの版の資料に属する。問い合わせ中の比較版へ帰属させず、" +
+                            "この資料に実在する見出しを『記載なし』と書かない。");
+                }
+                var timing = Regex.Match(fact.Value,
+                    @"\bbefore\s+(?:your|the)\s+(?<action>[^.]{8,90})",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (timing.Success)
+                    user.AppendLine($"Confirmed Fact timing sourceId={fact.EvidenceId}: " +
+                        $"{timing.Groups["action"].Value.Trim()}より前。" +
+                        "条件付き対応を本文へ記すときはこの時点を省かないでください。");
                 confirmedCount++;
             }
             if (confirmedCount > 0)
@@ -153,13 +193,32 @@ public static class GroundedAnswerPromptBuilder
             if (confirmedCount == 0)
                 user.AppendLine("Confirmed Fact: 独立した製品仕様の確定Factなし。顧客報告の内容まで『確認できる事実なし』としない。");
 
+            var importantFacts = ImportantFactContract.Select(facts);
+            foreach (var fact in importantFacts.Where(static fact => fact.SourceType == "CurrentInquiry"))
+                user.AppendLine(ImportantFactContract.Describe(fact));
+
             var caseObservations = facts.ResolvedFacts.Where(fact =>
                 string.Equals(fact.SourceType, "CurrentCase", StringComparison.Ordinal) &&
                 string.Equals(fact.Status, FactStatuses.Candidate, StringComparison.Ordinal)).ToArray();
             if (caseObservations.Length > 0)
                 user.AppendLine("CurrentCase observation (not product specification): 以下は案件履歴・添付の観測であり、製品仕様ではない。");
-            foreach (var fact in caseObservations)
-                user.AppendLine($"case fact: {fact.Value}; sourceId={fact.EvidenceId}");
+            foreach (var fact in caseObservations.OrderByDescending(static fact =>
+                         fact.Key == "PriorCaseOutcome"))
+                user.AppendLine(importantFacts.Contains(fact)
+                    ? ImportantFactContract.Describe(fact)
+                    : $"case fact: {fact.Value}; sourceId={fact.EvidenceId}");
+            if (importantFacts.Count > 0)
+                user.AppendLine("重要FactはsourceTypeを維持して『確認できる事実』へ反映する。" +
+                    "polarityを反転せず、version・operation・timingを落とさない。" +
+                    "CurrentInquiryは顧客申告、CurrentCaseは案件履歴・添付ログの観測として帰属し、" +
+                    "どちらも公式仕様やメーカー原文の確定Factへ昇格させない。");
+            if (caseObservations.Any(static fact => fact.Key == "PriorCaseOutcome"))
+                user.AppendLine("重要な案件履歴: 上記の過去の非再発・復旧などの観測を" +
+                    "期間と当時の条件付きで顧客向け本文へ記す。恒久対策や今回の原因として断定しない。" +
+                    "既に確認済みの経緯をもう一度顧客に質問しない。");
+            if (caseObservations.Any(static fact => fact.Key == "CaseAttachmentInventory"))
+                user.AppendLine("添付の形式・件数だけでは内容を確認したことにならない。" +
+                    "内容を読めていない添付の所見を創作せず、必要なら内容確認を明示する。");
 
             foreach (var missing in facts.MissingFacts)
             {
@@ -189,7 +248,7 @@ public static class GroundedAnswerPromptBuilder
             user.AppendLine("引用可能な直接対応資料: なし。検索Evidenceは0件。evidenceは空配列。" +
                 "問い合わせ内の資料への言及を、公式資料を確認した事実として書かない。" +
                 "顧客申告として『お客様からのご説明では』と帰属し、" +
-                "記載の有無から製品機能や設定変更を推定しない。顧客報告とUnknownを使って3見出しで回答してください。");
+                "記載の有無から製品機能や設定変更を推定しない。");
             foreach (Match statement in Regex.Matches(request.InquiryText,
                 @"[^。！？\r\n]{0,100}(?:ありません|存在しません|ない)[^。！？\r\n]{0,20}[。！？]?"))
                 user.AppendLine($"顧客申告の否定表現（原文、肯定へ反転しない）: {statement.Value.Trim()}");
@@ -197,7 +256,7 @@ public static class GroundedAnswerPromptBuilder
         else if (AllSourcesNotApplicable(request.InquiryText, sources))
         {
             user.AppendLine("引用可能な直接対応資料: なし。次の資料は比較用に提示していますが、今回の回答の引用対象ではありません。" +
-                "evidenceは空配列にし、顧客報告とUnknown / Missing Evidenceを使って3見出しの回答案を作成してください。");
+                "evidenceは空配列にし、顧客報告とUnknown / Missing Evidenceを使って回答案を作成してください。");
         }
 
         foreach (var (source, applicability) in applicabilityBySource)
@@ -222,14 +281,41 @@ public static class GroundedAnswerPromptBuilder
         }
         else user.AppendLine("原文に一致する引用候補なし。evidenceは空配列にしてください。");
 
+        var mustPreserve = new List<string>();
+        if (request.InquiryFocus?.TargetVersions is { Count: > 0 } inquiryVersions)
+            mustPreserve.Add($"sourceType=CurrentInquiry; attribution=顧客申告; " +
+                $"version={string.Join(", ", inquiryVersions.Select(version =>
+                    DescribeInquiryVersionWithHotfix(request.InquiryText, version)))}; " +
+                "customerMeaning=問い合わせに明記された対象版。案件履歴・公式資料の版と混同しない");
+        if (request.FactResolution is { } resolution)
+        {
+            mustPreserve.AddRange(ImportantFactContract.Select(resolution)
+                .Select(ImportantFactContract.DescribeForGeneration));
+            mustPreserve.AddRange(resolution.ResolvedFacts.Where(fact =>
+                    (fact.SourceType is "OfficialDoc" or "Manual") &&
+                    fact.Status == FactStatuses.Confirmed && selectedIds.Contains(fact.EvidenceId))
+                .Select(fact => DescribeSelectedDocumentMustPreserveFact(fact,
+                    sources.First(source => source.SourceId == fact.EvidenceId))));
+        }
+        user.AppendLine("生成契約（customerReplyDraft）: 問い合わせと選択根拠に基づく顧客向け本文を作成する。" +
+            "指示文や見出しの説明を本文へ転記しない。needConfirmationsだけに必要事項を書いて本文を省略しない。" +
+            "原文・Fact・Evidenceに存在しない技術的識別子を作らず、Version・製品名・コマンド名・ヘッダ名の原文表記を保持する。");
         if (request.FactResolution?.AnswerReadiness is AnswerReadiness.NeedsReview or
             AnswerReadiness.InsufficientEvidence or AnswerReadiness.NeedsManufacturerConfirmation or
             AnswerReadiness.NeedsCustomerConfirmation or AnswerReadiness.Blocked)
-            user.AppendLine("customerReplyDraftは必ず次の3行を具体的に埋めてください: " +
-                "『確認できる事実: 顧客申告・CurrentCase観測と、選択資料のConfirmed Factを区別して記す』 " +
-                "『現時点で断定できない事項: 未確認の仕様・原因・可否』 " +
-                "『追加で必要な確認: 対象バージョン、設定値、構成差分、関連ログ、メーカー見解など問い合わせに必要な具体項目』。" +
-                "needConfirmationsだけに項目を書いて本文を省略しないでください。");
+            user.AppendLine("customerReplyDraftは次の3見出しをこの順で用い、各見出しの直後に" +
+                "問い合わせ固有の事実または具体的な確認内容を1文以上書いてください。" +
+                "見出し名だけの出力は禁止です。見出しは『確認できる事実:』『現時点で断定できない事項:』" +
+                "『追加で必要な確認:』です。説明例や記入例はありません。");
+        if (mustPreserve.Count > 0)
+        {
+            user.AppendLine("Must Preserve Facts: 以下は本文で意味を保持する必須Fact。" +
+                "顧客申告・案件履歴・選択資料の帰属を保ち、確実性が低いことを理由に省略しない。" +
+                "原質問の途中表現より構造化されたpolarityを優先し、既知Factを一般的なUnknownで上書きしない。" +
+                "sourceIdは顧客向け本文に書かない。");
+            foreach (var fact in mustPreserve)
+                user.AppendLine($"Must Preserve Fact: {fact}");
+        }
 
         var maxChars = request.Settings.MaxPromptChars;
         if (maxChars <= 0 || system.Length + user.Length > maxChars)
@@ -341,6 +427,44 @@ public static class GroundedAnswerPromptBuilder
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase));
 
+    internal static string? DescribeVersionRoles(string inquiry)
+    {
+        var migration = Regex.Match(inquiry,
+            @"(?:v|version)?(?<from>20\d{2}\.\d+)\s*から\s*(?:v|version)?(?<to>20\d{2}\.\d+)\s*へ",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!migration.Success) return null;
+        var from = migration.Groups["from"].Value;
+        var to = migration.Groups["to"].Value;
+        var references = Regex.Matches(inquiry, @"(?<![0-9.])20\d{2}\.\d+(?![0-9.])")
+            .Select(static match => match.Value)
+            .Where(version => version != from && version != to)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        return $"現在版・移行元={from}; 移行先={to}" +
+            (references.Length > 0 ? $"; 比較資料に言及した版={string.Join(", ", references)}" : string.Empty);
+    }
+
+    private static string DescribeSelectedDocumentMustPreserveFact(ResolvedFact fact, SearchSource source)
+    {
+        var version = Regex.Match(source.Text, @"\b20\d{2}\.\d+\s+Release\s+notes\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        var timing = Regex.Match(fact.Value, @"\bbefore\s+(?:your|the)\s+(?<action>[^.]{8,90})",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return $"sourceType={fact.SourceType}; attribution=選択した{(fact.SourceType == "OfficialDoc" ? "公式資料" : "マニュアル")}; " +
+            $"sourceId={fact.EvidenceId}; " +
+            $"version={(version.Success ? version.Value : "原文に明記なし")}; " +
+            $"timing={(timing.Success ? timing.Groups["action"].Value.Trim() + "より前" : "原文に明記なし")}; " +
+            $"condition={fact.Statement}; supportedFact={fact.Value}; " +
+            "customerMeaning=条件・対象版・確認時点を保持し、未記載の仕様へ拡張しない";
+    }
+
+    private static string DescribeInquiryVersionWithHotfix(string inquiry, string version)
+    {
+        var qualified = Regex.Match(inquiry,
+            Regex.Escape(version) + @"\s*(?<hotfix>(?:HF|Hotfix|ホットフィックス)\s*\d+)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return qualified.Success ? $"{version} {qualified.Groups["hotfix"].Value}" : version;
+    }
+
     private static (string Target, string Conflicting, string Setting)? ExtractReportedServerRelation(
         string inquiry)
     {
@@ -371,7 +495,7 @@ public static class GroundedAnswerPromptBuilder
                 "ログ中のポート番号だけでは解消手順を確定できない。");
         if (inquiry.Contains("処理待ち", StringComparison.Ordinal) &&
             inquiry.Contains("スキャン", StringComparison.Ordinal))
-            unknowns.Add("対象スキャンの実行時刻、キューを処理するサービスの稼働状態、同時刻の関連ログ。" +
+            unknowns.Add("対象スキャンの実行時刻、再発時のキューを処理するサービスの稼働状態と関連ログ。" +
                 "メモリ使用率だけでは停滞原因を確定できない。");
         if (inquiry.Contains("VPN", StringComparison.OrdinalIgnoreCase) &&
             inquiry.Contains("ライセンスサーバ", StringComparison.Ordinal))

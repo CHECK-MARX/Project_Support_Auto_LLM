@@ -119,10 +119,10 @@ var requestedIds = shadowPilot
     : [];
 if (shadowPilot)
 {
-    if (requestedIds.Length is not (3 or 5) ||
+    if (requestedIds.Length is not (3 or 5) && !(rankedE2e && requestedIds.Length is 1 or 2) ||
         requestedIds.Distinct(StringComparer.Ordinal).Count() != requestedIds.Length)
     {
-        throw new InvalidDataException("Shadow Pilot requires three or five distinct case IDs.");
+        throw new InvalidDataException("Shadow Pilot requires three or five distinct case IDs (or one or two for targeted ranked E2E).");
     }
     using var document = JsonDocument.Parse(File.ReadAllText(args[shadowStatusIndex + 1]));
     var gate = document.RootElement;
@@ -162,7 +162,8 @@ var selected = shadowPilot
     : candidateSet.Cases.Where(item => item.Split == "development").Skip(start).Take(limit).ToArray();
 if (selected.Length != (shadowPilot ? requestedIds.Length : limit) ||
     selected.Any(item => item.Split != "development" || !roots.ContainsKey(item.Product)) ||
-    shadowPilot && selected.Select(item => item.Product).ToHashSet(StringComparer.Ordinal).Count != 3)
+    shadowPilot && !rankedE2e &&
+    selected.Select(item => item.Product).ToHashSet(StringComparer.Ordinal).Count != 3)
 {
     throw new InvalidDataException("The requested development split or product coverage is incomplete.");
 }

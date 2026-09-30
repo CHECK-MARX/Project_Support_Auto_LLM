@@ -28,8 +28,29 @@ public sealed class GroundedAnswerComparisonService(
         CancellationToken cancellationToken = default,
         ShadowReviewCriteria? shadowReview = null)
     {
+        var first = await CompareAttemptAsync(request, baseline, cancellationToken, shadowReview, null);
+        if (first.Status != GroundedComparisonStatuses.Rejected ||
+            string.IsNullOrWhiteSpace(first.GeneratedReplyDraft))
+            return first;
+
+        // A validation failure may be corrected once. The second answer enters the same
+        // complete parser, safety, citation, readiness and quality pipeline as the first.
+        var feedback = BuildRetryFeedback(request, first);
+        return await CompareAttemptAsync(request, baseline, cancellationToken, shadowReview, feedback);
+    }
+
+    private async Task<GroundedAnswerComparisonResult> CompareAttemptAsync(
+        AnswerDraftRequest request,
+        AnswerDraftResult baseline,
+        CancellationToken cancellationToken,
+        ShadowReviewCriteria? shadowReview,
+        string? retryFeedback)
+    {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(baseline);
+        if (request.FactResolution is { } factResolution)
+            request = request with { FactResolution = ImportantFactContract.Enrich(
+                factResolution, request.InquiryText, request.InquiryFocus, safetyRedactionService) };
 
         if (!string.Equals(request.Settings.LlmProvider.Provider, "Ollama", StringComparison.OrdinalIgnoreCase) ||
             !Uri.TryCreate(request.Settings.LlmProvider.Endpoint, UriKind.Absolute, out var endpoint) ||
@@ -71,6 +92,21 @@ public sealed class GroundedAnswerComparisonService(
         try
         {
             prompt = GroundedAnswerPromptBuilder.Build(request, sources);
+            if (retryFeedback is not null)
+            {
+                var nextLength = prompt.Diagnostics.FinalPromptChars + retryFeedback.Length;
+                if (nextLength > request.Settings.MaxPromptChars)
+                    return Reject(baseline, "再生成の修正指示を入力上限へ収められません。");
+                prompt = prompt with
+                {
+                    UserPrompt = prompt.UserPrompt + retryFeedback,
+                    Diagnostics = prompt.Diagnostics with
+                    {
+                        FinalPromptChars = nextLength,
+                        UserPromptChars = prompt.Diagnostics.UserPromptChars + retryFeedback.Length,
+                    },
+                };
+            }
         }
         catch (GroundedPromptTooLongException)
         {
@@ -118,12 +154,22 @@ public sealed class GroundedAnswerComparisonService(
 
         var parsed = AnswerDraftResultParser.Parse(generation.Content, sources);
         var draft = CompleteEvidenceFreeAbstention(parsed.Result);
-        draft = draft with { CustomerReplyDraft = NaturalizeCaseAttribution(draft.CustomerReplyDraft) };
+        draft = draft with { CustomerReplyDraft = sources.Count > 0
+            ? ScopeUnverifiedDocumentAbsence(NaturalizeCaseAttribution(draft.CustomerReplyDraft))
+            : NaturalizeCaseAttribution(draft.CustomerReplyDraft) };
+        draft = draft with { CustomerReplyDraft =
+            PolishedAnswerValidator.RestoreUnambiguousInquiryHeader(
+                draft.CustomerReplyDraft, request.InquiryText) };
         if (parsed.Warnings.Count > 0 || !parsed.HasEvidenceProperty ||
             string.IsNullOrWhiteSpace(draft.CustomerReplyDraft))
         {
-            return Reject(baseline, "生成結果のJSONまたは根拠参照が不足しています。");
+            return Reject(baseline, "生成結果のJSONまたは根拠参照が不足しています。",
+                draft.CustomerReplyDraft);
         }
+
+        if (IsHeadingOnlyReply(draft.CustomerReplyDraft))
+            return Reject(baseline, "顧客向け本文が見出しだけで、具体的な回答がありません。",
+                draft.CustomerReplyDraft);
 
         var generatedCitationCount = draft.Evidence.Count;
         if (sources.Count == 0 && HasUnattributedDocumentClaim(draft.CustomerReplyDraft))
@@ -131,6 +177,9 @@ public sealed class GroundedAnswerComparisonService(
                 draft.CustomerReplyDraft);
         if (sources.Count == 0 && ReversesReportedNegation(request.InquiryText, draft.CustomerReplyDraft))
             return Reject(baseline, "顧客申告の否定表現を肯定へ反転しています。",
+                draft.CustomerReplyDraft);
+        if (ReversesReportedStartupFailure(request.InquiryText, draft.CustomerReplyDraft))
+            return Reject(baseline, "顧客が報告した起動失敗を稼働中の事実へ反転しています。",
                 draft.CustomerReplyDraft);
         if (Regex.IsMatch(draft.CustomerReplyDraft,
                 @"(?:メーカー|公式|製品)資料(?:には|に).{0,40}(?:記載がない|記載されていない)"))
@@ -150,16 +199,34 @@ public sealed class GroundedAnswerComparisonService(
         if (missingInquiryVersions.Length > 0 &&
             draft.CustomerReplyDraft.Contains("確認できる事実:", StringComparison.Ordinal))
         {
+            var versionContext = GroundedAnswerPromptBuilder.DescribeVersionRoles(request.InquiryText);
+            var missingDescriptions = missingInquiryVersions.Select(version =>
+            {
+                var index = request.InquiryText.IndexOf(version, StringComparison.Ordinal);
+                var preceding = index < 0 ? string.Empty : request.InquiryText[
+                    Math.Max(0, index - 20)..index];
+                return Regex.IsMatch(preceding, @"以前|過去|旧版|比較")
+                    ? $"過去比較版={version}"
+                    : $"記載版={version}";
+            });
             draft = draft with
             {
                 CustomerReplyDraft = draft.CustomerReplyDraft.Replace("確認できる事実:",
-                    "確認できる事実: お問い合わせ対象の版として" +
-                    string.Join("、", missingInquiryVersions) + "が示されています。",
+                    "確認できる事実: " + (versionContext ?? string.Join("、", missingDescriptions)) + "。",
                     StringComparison.Ordinal),
                 Warnings = draft.Warnings.Concat(["問い合わせと従来回答に共通する版表記を保持しました。"])
                     .ToArray(),
             };
         }
+
+        draft = PreservePriorCaseOutcome(draft, request.FactResolution, safetyRedactionService);
+        draft = PreserveSelectedOfficialTiming(draft, request.FactResolution, sources,
+            safetyRedactionService);
+        if (ContradictsSelectedOfficialFact(draft.CustomerReplyDraft, request.FactResolution, sources))
+            return Reject(baseline, "選択した公式資料の版・見出し・確認時点と回答本文が矛盾しています。",
+                draft.CustomerReplyDraft);
+        if (ImportantFactContract.Validate(request.FactResolution, draft.CustomerReplyDraft) is { } factIssue)
+            return Reject(baseline, factIssue, draft.CustomerReplyDraft);
 
         var sourceMap = sources.ToDictionary(static source => source.SourceId, StringComparer.Ordinal);
         var citationTraces = TraceCitations(draft.Evidence, sourceMap);
@@ -172,7 +239,8 @@ public sealed class GroundedAnswerComparisonService(
             safetyRedactionService.RemoveInternalReferencesFromCustomerReply(draft.CustomerReplyDraft),
             draft.CustomerReplyDraft, StringComparison.Ordinal))
         {
-            return Reject(baseline, "回答案に外部送信できない参照が含まれています。");
+            return Reject(baseline, "回答案に外部送信できない参照が含まれています。",
+                draft.CustomerReplyDraft);
         }
 
         var allowedContext = string.Join(Environment.NewLine,
@@ -182,9 +250,11 @@ public sealed class GroundedAnswerComparisonService(
                     .Select(static note => note.Text))
                 .Concat(request.FactResolution?.ResolvedFacts.Select(static fact => fact.Value) ?? []));
         if (!PolishedAnswerValidator.PreservesProtectedValues(
-            allowedContext, baseline.CustomerReplyDraft, draft.CustomerReplyDraft, request.InquiryFocus))
+            allowedContext, baseline.CustomerReplyDraft, draft.CustomerReplyDraft, request.InquiryFocus,
+            request.InquiryText))
         {
-            return Reject(baseline, "必須値の欠落、または根拠にない技術値を検出しました。");
+            return Reject(baseline, "必須値の欠落、または根拠にない技術値を検出しました。",
+                draft.CustomerReplyDraft);
         }
 
         if ((Regex.IsMatch(draft.CustomerReplyDraft,
@@ -196,7 +266,8 @@ public sealed class GroundedAnswerComparisonService(
                 source.Text.Contains("正式サポート", StringComparison.OrdinalIgnoreCase) ||
                 source.Text.Contains("officially supported", StringComparison.OrdinalIgnoreCase)))
         {
-            return Reject(baseline, "動作実績から正式サポートを推定した可能性があります。");
+            return Reject(baseline, "動作実績から正式サポートを推定した可能性があります。",
+                draft.CustomerReplyDraft);
         }
 
         var relevantCitationCount = draft.Evidence.Count(item =>
@@ -258,10 +329,17 @@ public sealed class GroundedAnswerComparisonService(
                 draft.CustomerReplyDraft, draft.Evidence.Count, citationTraces);
         }
         if (!PolishedAnswerValidator.PreservesProtectedValues(
-            allowedContext, baseline.CustomerReplyDraft, candidate.CustomerReplyDraft, request.InquiryFocus))
+            allowedContext, baseline.CustomerReplyDraft, candidate.CustomerReplyDraft, request.InquiryFocus,
+            request.InquiryText))
         {
-            return Reject(baseline, "後処理後の回答で必須値または技術値の整合が崩れました。");
+            return Reject(baseline, "後処理後の回答で必須値または技術値の整合が崩れました。",
+                candidate.CustomerReplyDraft);
         }
+        if (ReversesReportedStartupFailure(request.InquiryText, candidate.CustomerReplyDraft))
+            return Reject(baseline, "後処理後の回答が顧客の起動失敗と矛盾しています。",
+                candidate.CustomerReplyDraft);
+        if (ImportantFactContract.Validate(request.FactResolution, candidate.CustomerReplyDraft) is { } finalFactIssue)
+            return Reject(baseline, finalFactIssue, candidate.CustomerReplyDraft);
 
         var baselineQuality = EvaluateQuality(request, baseline.CustomerReplyDraft, sources);
         var quality = EvaluateQuality(request, candidate.CustomerReplyDraft, sources);
@@ -290,7 +368,7 @@ public sealed class GroundedAnswerComparisonService(
             shadowReview.ExpectedClaims, candidate.CustomerReplyDraft);
         var caseSpecificAbstention = evidenceFreeAbstention &&
             GroundedAnswerPromptBuilder.AllSourcesNotApplicable(request.InquiryText, sources) &&
-            HasConcreteCustomerAction(candidate.CustomerReplyDraft) &&
+            HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText) &&
             SharesInquirySubject(request.InquiryText, candidate.CustomerReplyDraft);
         var substantive = shadowReview is null || caseSpecificAbstention || HasSubstantiveResponse(
             request.InquiryText, candidate.CustomerReplyDraft, shadowReview, expectedCoverage ?? 0);
@@ -306,12 +384,12 @@ public sealed class GroundedAnswerComparisonService(
             !string.Equals(candidate.Readiness, referenceReadiness, StringComparison.Ordinal))
         {
             candidate = candidate with { Readiness = referenceReadiness };
-            if (!IsSafeNonReadyBody(candidate.CustomerReplyDraft))
+            if (!IsSafeNonReadyBody(candidate.CustomerReplyDraft, request.InquiryText))
                 reasons.Add("同じ根拠でReadinessが自動的に上がり、回答本文も非Readyの条件を満たしません。");
         }
         if (shadowReview is not null &&
             !string.Equals(referenceReadiness, AnswerReadiness.CustomerReady, StringComparison.Ordinal) &&
-            !HasConcreteCustomerAction(candidate.CustomerReplyDraft))
+            !HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText))
         {
             reasons.Add("顧客向け本文に具体的な追加確認がありません。");
         }
@@ -346,6 +424,40 @@ public sealed class GroundedAnswerComparisonService(
         };
     }
 
+    private static string BuildRetryFeedback(AnswerDraftRequest request,
+        GroundedAnswerComparisonResult rejected)
+    {
+        var feedback = new StringBuilder();
+        feedback.AppendLine();
+        feedback.AppendLine("一度目の回答は既存の検証で不合格です。今回が最後の生成です。" +
+            "同じEvidence、一次Readiness、JSON SchemaでcustomerReplyDraftを全面的に書き直してください。");
+        foreach (var reason in rejected.Reasons.Take(3))
+            feedback.AppendLine($"検証失敗: {reason}");
+        if (IsHeadingOnlyReply(rejected.GeneratedReplyDraft ?? string.Empty))
+            feedback.AppendLine("3見出しは各見出しの後に顧客に伝える具体的な文章を書き、" +
+                "見出し名だけを並べないでください。internalMemoやneedConfirmationsだけで代替しないでください。");
+        if (request.FactResolution is { } resolution)
+        {
+            foreach (var fact in ImportantFactContract.Select(resolution).Take(6))
+                feedback.AppendLine($"本文で保持: {ImportantFactContract.DescribeForGeneration(fact)}");
+        }
+        var exactValues = PolishedAnswerValidator.ExtractInquiryTechnicalValues(request.InquiryText);
+        if (exactValues.Count > 0)
+            feedback.AppendLine($"原文表記を厳守: {string.Join("、", exactValues.Take(8))}。" +
+                "原文にない別表記を作らないでください。");
+        feedback.AppendLine("前回の不合格文を転記せず、出典の帰属、事実の極性、版・操作・時点、" +
+            "具体的な追加確認を保ってください。すべての検証に再び合格しなければ採用しません。");
+        return feedback.ToString();
+    }
+
+    private static bool IsHeadingOnlyReply(string reply)
+    {
+        var body = reply;
+        foreach (var heading in new[] { "確認できる事実", "現時点で断定できない事項", "追加で必要な確認" })
+            body = body.Replace(heading, string.Empty, StringComparison.Ordinal);
+        return string.IsNullOrWhiteSpace(Regex.Replace(body, @"[\s:：/／・、。;；\-]+", string.Empty));
+    }
+
     private static IReadOnlyList<CitationTrace> TraceCitations(
         IReadOnlyList<EvidenceItem> evidence, IReadOnlyDictionary<string, SearchSource> sources)
     {
@@ -369,9 +481,113 @@ public sealed class GroundedAnswerComparisonService(
             ? "（お客様のご説明では）" : "（案件履歴によると）",
         RegexOptions.IgnoreCase);
 
-    private static bool IsSafeNonReadyBody(string reply) =>
+    private static string ScopeUnverifiedDocumentAbsence(string reply) => Regex.Replace(reply,
+        @"(?:公式|メーカー|製品)資料(?:には|に)(?:その)?記載(?:が)?ありません",
+        "今回選択した資料では確認できません");
+
+    private static AnswerDraftResult PreservePriorCaseOutcome(AnswerDraftResult draft,
+        FactResolutionResult? resolution, ISafetyRedactionService redactor)
+    {
+        var facts = resolution?.ResolvedFacts.Where(fact =>
+            fact.Key == "PriorCaseOutcome" && fact.SourceType == "CurrentCase" &&
+            fact.Status == FactStatuses.Candidate &&
+            Regex.IsMatch(fact.Value, @"[ぁ-んァ-ン一-龥]") &&
+            fact.Value.Length <= 200 &&
+            string.Equals(redactor.RedactForCloud(fact.Value), fact.Value, StringComparison.Ordinal)).ToArray();
+        if (facts is null || facts.Length == 0 ||
+            !draft.CustomerReplyDraft.Contains("確認できる事実:", StringComparison.Ordinal))
+            return draft;
+        var reply = draft.CustomerReplyDraft;
+        foreach (var fact in facts)
+        {
+            if (ImportantFactContract.IsPriorCaseOutcomePreserved(fact, reply)) continue;
+            var observation = fact.Value.Trim().TrimStart('-', ' ', '　');
+            reply = reply.Replace("確認できる事実:",
+                $"確認できる事実: 案件履歴には、{observation}（当時の観測であり、今回の原因や恒久対策は未確認です。）",
+                StringComparison.Ordinal);
+        }
+        return draft with { CustomerReplyDraft = reply };
+    }
+
+    private static bool ContradictsSelectedOfficialFact(string reply,
+        FactResolutionResult? resolution, IReadOnlyList<SearchSource> sources)
+    {
+        if (resolution is null) return false;
+        foreach (var fact in resolution.ResolvedFacts.Where(fact =>
+            fact.Key == "SelectedOfficialStatement" && fact.SourceType == "OfficialDoc" &&
+            fact.Status == FactStatuses.Confirmed))
+        {
+            var source = sources.FirstOrDefault(source => source.SourceId == fact.EvidenceId &&
+                source.SourceType == "OfficialDoc");
+            if (source is null) continue;
+            var sourceVersion = Regex.Match(source.Text,
+                @"\b(?<version>20\d{2}\.\d+)\s+Release\s+notes\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var heading = Regex.Match(fact.Statement, @"見出し『(?<heading>[^』]+)』");
+            if (!sourceVersion.Success || !heading.Success) continue;
+            var version = sourceVersion.Groups["version"].Value;
+            var title = Regex.Escape(heading.Groups["heading"].Value);
+            foreach (Match attribution in Regex.Matches(reply,
+                @"(?<version>20\d{2}\.\d+)(?:の|版の)?(?:リリースノート|Release\s+notes).{0,35}[「『]" +
+                title + @"[」』]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                if (attribution.Groups["version"].Value != version &&
+                    !sources.Any(other => other.SourceType == "OfficialDoc" &&
+                        other.Text.Contains(attribution.Groups["version"].Value + " Release notes",
+                            StringComparison.OrdinalIgnoreCase) &&
+                        other.Text.Contains(heading.Groups["heading"].Value, StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+            if (Regex.IsMatch(reply,
+                Regex.Escape(version) + @".{0,55}[「『]" + title +
+                @"[」』].{0,30}(?:記載(?:が)?(?:ない|見られず|されていない)|存在しない|削除され)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                return true;
+            if (Regex.IsMatch(fact.Value, @"\bbefore\s+(?:your|the)\s+first\s+integration\s+build",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+                !Regex.IsMatch(reply, @"初回.{0,35}(?:integration|インテグレーション|統合).{0,20}(?:build|ビルド).{0,15}前|before\s+(?:your|the)\s+first\s+integration\s+build",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                return true;
+        }
+        return false;
+    }
+
+    private static AnswerDraftResult PreserveSelectedOfficialTiming(AnswerDraftResult draft,
+        FactResolutionResult? resolution, IReadOnlyList<SearchSource> sources,
+        ISafetyRedactionService redactor)
+    {
+        if (resolution is null || !draft.CustomerReplyDraft.Contains("確認できる事実:", StringComparison.Ordinal) ||
+            !draft.CustomerReplyDraft.Contains("現時点で断定できない事項", StringComparison.Ordinal))
+            return draft;
+        var reply = draft.CustomerReplyDraft;
+        foreach (var fact in resolution.ResolvedFacts.Where(fact =>
+            fact.Key == "SelectedOfficialStatement" && fact.Status == FactStatuses.Confirmed &&
+            fact.SourceType == "OfficialDoc" && sources.Any(source =>
+                source.SourceId == fact.EvidenceId && source.SourceType == "OfficialDoc" &&
+                source.Text.Contains(fact.Value, StringComparison.Ordinal))))
+        {
+            var timing = Regex.Match(fact.Value,
+                @"\bbefore\s+(?:your|the)\s+first\s+integration\s+build",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!timing.Success || fact.Value.Length > 280 ||
+                !string.Equals(redactor.RedactForCloud(fact.Value), fact.Value, StringComparison.Ordinal) ||
+                Regex.IsMatch(reply, @"初回.{0,35}(?:integration|インテグレーション|統合).{0,20}(?:build|ビルド).{0,15}前|before\s+(?:your|the)\s+first\s+integration\s+build",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                continue;
+            var version = Regex.Match(sources.First(source => source.SourceId == fact.EvidenceId).Text,
+                @"\b(?<version>20\d{2}\.\d+)\s+Release\s+notes\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!version.Success) continue;
+            reply = reply.Replace("現時点で断定できない事項",
+                $"選択した{version.Groups["version"].Value}版の公式資料には「{fact.Value.Trim()}」と記載されています。" +
+                "現時点で断定できない事項", StringComparison.Ordinal);
+        }
+        return draft with { CustomerReplyDraft = reply };
+    }
+
+    private static bool IsSafeNonReadyBody(string reply, string inquiry) =>
         reply.Contains("断定できない事項", StringComparison.Ordinal) &&
-        HasConcreteCustomerAction(reply) &&
+        HasConcreteCustomerAction(reply, inquiry) &&
         (reply.Contains("確認できません", StringComparison.Ordinal) ||
          reply.Contains("断定できません", StringComparison.Ordinal) ||
          reply.Contains("確認できない", StringComparison.Ordinal) ||
@@ -422,6 +638,31 @@ public sealed class GroundedAnswerComparisonService(
         return false;
     }
 
+    private static bool ReversesReportedStartupFailure(string inquiry, string reply)
+    {
+        var factSection = reply.Split("現時点で断定できない事項", 2,
+            StringSplitOptions.None)[0];
+        foreach (Match failure in Regex.Matches(inquiry,
+            @"(?<subject>[\p{L}][\p{L}0-9._-]{1,50}(?:サーバー|サービス|プロセス))\s*(?:を|が|は)?\s*(?:起動できません|起動に失敗|起動しませんでした|起動せず)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var subject = failure.Groups["subject"].Value;
+            foreach (Match mention in Regex.Matches(factSection, Regex.Escape(subject),
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                var rest = factSection[(mention.Index + mention.Length)..];
+                var clause = Regex.Split(rest, @"[。．.!?\r\n]|現時点で")[0];
+                if (clause.Length > 65) clause = clause[..65];
+                if (Regex.IsMatch(clause,
+                        @".{0,35}(?:起動し(?:た|ている|ています|、)|起動中|稼働中|正常に起動|稼働し(?:た|ている|ています|、))") &&
+                    !Regex.IsMatch(clause,
+                        @".{0,35}(?:起動できない|起動できません|起動に失敗|起動せず|起動していない|起動していません)"))
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static AnswerDraftResult CompleteEvidenceFreeAbstention(AnswerDraftResult draft)
     {
         if (draft.Evidence.Count != 0 || draft.NeedConfirmations.Count == 0)
@@ -467,15 +708,22 @@ public sealed class GroundedAnswerComparisonService(
         };
     }
 
-    private static bool HasConcreteCustomerAction(string reply)
+    private static bool HasConcreteCustomerAction(string reply, string? inquiry = null)
     {
         if (Regex.IsMatch(reply,
             @"(?:教えてください|ご教示ください|確認してください|共有してください|お知らせください|お送りください|ご提供ください|明示してください|ご確認をお願いします|メーカー.{0,12}確認)"))
             return true;
 
         var heading = Regex.Match(reply, @"追加で必要な確認\s*[:：]\s*(?<items>[\s\S]+)");
-        return heading.Success && Regex.IsMatch(heading.Groups["items"].Value,
-            @"(?:設定内容|設定値|参照先|稼働状態|実行時刻|関連ログ|ログファイル|対象バージョン|(?:使用|利用|対象|現在|稼働中).{0,32}バージョン|SQL Server.{0,20}(?:バージョン|構成)|ライセンス方式|通信条件|対応可否|互換性|構成差分|選定基準|検出.{0,12}コード|Azure SQL|メーカー.{0,16}(?:見解|情報)|[A-Z][A-Za-z0-9 ]{2,40}(?:確認|必要))");
+        if (!heading.Success) return false;
+        var items = heading.Groups["items"].Value;
+        if (Regex.IsMatch(items,
+            @"(?:設定内容|設定値|参照先|稼働状態|実行時刻|関連ログ|ログファイル|対象バージョン|(?:使用|利用|対象|現在|稼働中).{0,32}バージョン|SQL Server.{0,20}(?:バージョン|構成)|ライセンス方式|通信条件|対応可否|互換性|構成差分|選定基準|検出.{0,12}コード|Azure SQL|メーカー.{0,16}(?:見解|情報)|[A-Z][A-Za-z0-9 ]{2,40}(?:確認|必要))"))
+            return true;
+        return !string.IsNullOrWhiteSpace(inquiry) &&
+            Regex.IsMatch(items, @"(?:明記|記載|提示)してください") &&
+            TechnicalAnchors(inquiry).Any(anchor =>
+                items.Contains(anchor, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string Sha256(string value) => Convert.ToHexString(
