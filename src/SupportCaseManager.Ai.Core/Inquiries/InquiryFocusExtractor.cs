@@ -169,7 +169,11 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
             : separated.TechnicalText);
         var normalizedFocus = NormalizeText(focusText);
         var excludedTerms = FindExcludedTerms(normalizedFocus);
-        var targetVersions = ExtractTargetVersions(focusText);
+        // A version in the technical introduction can precede the focused question.
+        // Separate has already removed signatures and quoted mail.
+        var targetVersions = ExtractTargetVersions(string.IsNullOrWhiteSpace(separated.TechnicalText)
+            ? focusText
+            : separated.TechnicalText);
         var terms = ExtractImportantTerms(focusText, normalizedFocus, caseContext);
         var freshness = DetectFreshness(normalizedFocus);
         var topicAnalysis = usePhase175QualityControls
@@ -376,6 +380,9 @@ public sealed partial class InquiryFocusExtractor : IInquiryFocusExtractor
 
     private static bool LooksLikeNumberedStep(string text, Match match)
     {
+        // Dotted product releases in parentheses are versions, not numbered steps.
+        if (match.Value.Count(static character => character == '.') >= 2)
+            return false;
         var before = match.Index > 0 ? text[match.Index - 1] : '\0';
         var afterIndex = match.Index + match.Length;
         var after = afterIndex < text.Length ? text[afterIndex] : '\0';

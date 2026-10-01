@@ -102,6 +102,33 @@ public sealed class QualityMemoryStoreTests
     }
 
     [Fact]
+    public async Task RetrieveDoesNotReuseAnotherProductIntentOrDirection()
+    {
+        using var fixture = new StoreFixture();
+        var correct = await fixture.Store.ApproveAsync(Approval("対象案件の回答です。", QualityAudience.Customer));
+        await fixture.Store.ApproveAsync(Approval("別製品の回答です。", QualityAudience.Customer) with
+        {
+            Product = "HelixQAC",
+        });
+        await fixture.Store.ApproveAsync(Approval("経過報告です。", QualityAudience.Customer) with
+        {
+            Intent = "CUSTOMER_STATUS_UPDATE",
+        });
+        var poisoned = await fixture.Store.ApproveAsync(Approval("方向不明の回答です。", QualityAudience.Customer));
+        var document = fixture.Store.Load() with
+        {
+            Records = fixture.Store.Load().Records.Select(record => record.Id == poisoned.Id
+                ? record with { Direction = QualityDirection.Unknown }
+                : record).ToArray(),
+        };
+        await File.WriteAllTextAsync(fixture.FilePath, JsonSerializer.Serialize(document));
+
+        var retrieved = Assert.Single(fixture.Store.Retrieve(
+            "Checkmarx", QualityAudience.Customer, "CUSTOMER_REPLY"));
+        Assert.Equal(correct.Id, retrieved.Id);
+    }
+
+    [Fact]
     public async Task MultipleSavedNoteVersionsCanApproveLatestWithoutChangingSource()
     {
         using var fixture = new StoreFixture();

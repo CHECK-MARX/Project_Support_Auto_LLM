@@ -139,6 +139,80 @@ public sealed class OllamaConnectionChecker : IOllamaConnectionChecker
         }
     }
 
+    public async Task<IReadOnlyList<string>> ListChatModelsAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        var models = await ListModelsAsync(settings, cancellationToken);
+        var checks = await Task.WhenAll(models.Select(model => CheckChatModelCapabilityAsync(
+            settings with { ChatModel = model }, cancellationToken)));
+        return models.Where((_, index) => checks[index].CanGenerate).ToList();
+    }
+
+    public async Task<OllamaModelCapabilityResult> CheckChatModelCapabilityAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        if (string.IsNullOrWhiteSpace(settings.ChatModel))
+        {
+            return new OllamaModelCapabilityResult { Message = "回答モデルが未設定です。" };
+        }
+
+        var endpoint = settings.Endpoint?.Trim() ?? string.Empty;
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var baseUri) ||
+            baseUri.Scheme is not ("http" or "https"))
+        {
+            return new OllamaModelCapabilityResult { Message = "Ollama endpointの形式が正しくありません。" };
+        }
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(EffectiveTagsTimeoutSeconds(settings)));
+        try
+        {
+            using var response = await httpClient.PostAsJsonAsync(
+                new Uri(baseUri, "api/show"), new { model = settings.ChatModel }, timeoutCts.Token);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new OllamaModelCapabilityResult
+                {
+                    Message = $"回答モデル {settings.ChatModel} の能力を確認できませんでした (HTTP {(int)response.StatusCode})。",
+                };
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeoutCts.Token);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: timeoutCts.Token);
+            if (!document.RootElement.TryGetProperty("capabilities", out var capabilities) ||
+                capabilities.ValueKind != JsonValueKind.Array)
+            {
+                return new OllamaModelCapabilityResult
+                {
+                    Message = $"回答モデル {settings.ChatModel} の生成能力を確認できませんでした。",
+                };
+            }
+
+            var canGenerate = capabilities.EnumerateArray().Any(capability =>
+                capability.ValueKind == JsonValueKind.String &&
+                string.Equals(capability.GetString(), "completion", StringComparison.OrdinalIgnoreCase));
+            return new OllamaModelCapabilityResult
+            {
+                CanGenerate = canGenerate,
+                Message = canGenerate ? string.Empty : $"{settings.ChatModel} は文章生成に対応していません。回答用モデルを選択してください。",
+            };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new OllamaModelCapabilityResult { Message = "回答モデルの能力確認がタイムアウトしました。" };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or JsonException)
+        {
+            return new OllamaModelCapabilityResult
+            {
+                Message = $"回答モデルの能力を確認できませんでした ({ex.GetType().Name})。",
+            };
+        }
+    }
+
     internal async Task<ChatTestOutcome> RunChatTestAsync(
         LlmProviderSettings settings,
         bool disableThinking,

@@ -189,15 +189,27 @@ public sealed class QualityMemoryStore
     public IReadOnlyList<QualityMemoryRecord> Retrieve(string product, string audience, string intent, int max = 3)
     {
         var records = Load().Records;
+        var requiredDirection = audience switch
+        {
+            QualityAudience.Customer => QualityDirection.CustomerOutbound,
+            QualityAudience.Manufacturer => QualityDirection.ManufacturerOutbound,
+            _ => string.Empty,
+        };
+        if (string.IsNullOrWhiteSpace(product) || string.IsNullOrWhiteSpace(intent) ||
+            string.IsNullOrWhiteSpace(requiredDirection))
+        {
+            return [];
+        }
+
         var supersededIds = records.Select(record => record.SupersedesId)
             .Where(id => !string.IsNullOrWhiteSpace(id)).ToHashSet(StringComparer.Ordinal);
         return records.Where(record => record.ApprovedByUser && !supersededIds.Contains(record.Id)
-                && record.Audience == audience && !string.IsNullOrWhiteSpace(record.ReusableStyleText)
+                && record.Audience == audience && record.Direction == requiredDirection
+                && record.Intent == intent && record.Product.Equals(product, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(record.ReusableStyleText)
                 && string.Equals(record.ReusableStyleText,
                     QualityStyleSummary.Build(record.ApprovedText, record.Audience), StringComparison.Ordinal))
-            .OrderByDescending(record => record.Intent == intent)
-            .ThenByDescending(record => record.Product.Equals(product, StringComparison.OrdinalIgnoreCase))
-            .ThenByDescending(record => record.ApprovedAt)
+            .OrderByDescending(record => record.ApprovedAt)
             .Take(Math.Clamp(max, 0, 3)).ToArray();
     }
 

@@ -1081,6 +1081,16 @@ public sealed class LaunchContextApplyTests
 
     private sealed class FakeOllamaConnectionChecker : IOllamaConnectionChecker
     {
+        public Task<IReadOnlyList<string>> ListChatModelsAsync(
+            LlmProviderSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<string> models = string.IsNullOrWhiteSpace(settings.ChatModel)
+                ? ["gemma4:26b"]
+                : [settings.ChatModel];
+            return Task.FromResult(models);
+        }
+
         public Task<OllamaConnectionCheckResult> CheckAsync(LlmProviderSettings settings, bool disableThinking = true, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new OllamaConnectionCheckResult { IsSuccess = true });

@@ -216,4 +216,20 @@ public sealed class InquiryFocusExtractorTests
         Assert.Contains("Engine Pack 9.7.7", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Bug ID 256456", focus.TechnicalQuery.CoreQuestion, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Extract_KeepsInstalledVersionBeforeFocusedQuestionButExcludesQuotedMail()
+    {
+        var focus = new InquiryFocusExtractor().Extract("""
+            掲題の件、新環境にCxSAST（9.7.4.1001 HF5）をインストール後、
+            [質問]
+            スキャンが処理待ち中から進みません。
+            -----Original Message-----
+            旧環境の版は8.8.8です。
+            """);
+
+        Assert.Contains("9.7.4.1001", focus.TargetVersions);
+        Assert.DoesNotContain("8.8.8", focus.TargetVersions);
+        Assert.DoesNotContain("9.7.4.1001", focus.FocusText);
+    }
 }

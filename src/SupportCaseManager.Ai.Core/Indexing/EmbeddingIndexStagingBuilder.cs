@@ -1,6 +1,3 @@
-using System.Net.Http.Json;
-using System.Text.Json.Serialization;
-
 namespace SupportCaseManager.Ai.Core.Indexing;
 
 /// <summary>
@@ -10,14 +7,14 @@ namespace SupportCaseManager.Ai.Core.Indexing;
 public sealed class EmbeddingIndexStagingBuilder
 {
     private readonly EmbeddingIndexUpdater updater;
-    private readonly HttpClient httpClient;
+    private readonly IEmbeddingModelDigestResolver digestResolver;
 
     public EmbeddingIndexStagingBuilder(
         EmbeddingIndexUpdater? updater = null,
         HttpClient? httpClient = null)
     {
         this.updater = updater ?? new EmbeddingIndexUpdater();
-        this.httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        digestResolver = new OllamaEmbeddingModelDigestResolver(httpClient);
     }
 
     public async Task<EmbeddingIndexUpdateResult> BuildAsync(
@@ -38,7 +35,18 @@ public sealed class EmbeddingIndexStagingBuilder
 
         var stagingProductFolder = Path.Combine(stagingRoot, productName);
         Directory.CreateDirectory(stagingProductFolder);
-        var digest = await ResolveModelDigestAsync(endpoint, embeddingModel, cancellationToken);
+        var digest = await digestResolver.ResolveAsync(endpoint, embeddingModel, cancellationToken);
+        if (string.IsNullOrWhiteSpace(digest))
+        {
+            return new EmbeddingIndexUpdateResult
+            {
+                EmbeddingModel = embeddingModel,
+                IndexFilePath = Path.Combine(stagingProductFolder, EmbeddingIndexDocument.FileName),
+                Status = "Failed",
+                Warning = "Ollamaの埋め込みモデルdigestを確認できません。ステージングindexは更新していません。",
+            };
+        }
+
         return await updater.UpdateAsync(
             productName,
             stagingProductFolder,
@@ -49,47 +57,5 @@ public sealed class EmbeddingIndexStagingBuilder
             sourceProductIndexFolder,
             digest,
             sanitizeEmbeddingInput: true);
-    }
-
-    private async Task<string> ResolveModelDigestAsync(
-        string endpoint,
-        string embeddingModel,
-        CancellationToken cancellationToken)
-    {
-        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var baseUri))
-        {
-            return string.Empty;
-        }
-
-        try
-        {
-            var response = await httpClient.GetFromJsonAsync<TagsResponse>(new Uri(baseUri, "api/tags"), cancellationToken);
-            var model = response?.Models.FirstOrDefault(item => ModelNameMatches(item.Name, embeddingModel));
-            return model?.Digest ?? string.Empty;
-        }
-        catch (HttpRequestException)
-        {
-            return string.Empty;
-        }
-    }
-
-    private static bool ModelNameMatches(string left, string right) =>
-        string.Equals(left, right, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(left.Replace(":latest", string.Empty, StringComparison.OrdinalIgnoreCase), right, StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(left, right.Replace(":latest", string.Empty, StringComparison.OrdinalIgnoreCase), StringComparison.OrdinalIgnoreCase);
-
-    private sealed record TagsResponse
-    {
-        [JsonPropertyName("models")]
-        public IReadOnlyList<ModelTag> Models { get; init; } = [];
-    }
-
-    private sealed record ModelTag
-    {
-        [JsonPropertyName("name")]
-        public string Name { get; init; } = string.Empty;
-
-        [JsonPropertyName("digest")]
-        public string Digest { get; init; } = string.Empty;
     }
 }

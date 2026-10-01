@@ -37,6 +37,18 @@ public sealed record class AiIndexedNote
     [JsonPropertyName("text")]
     public string Text { get; init; } = string.Empty;
 
+    [JsonPropertyName("sourceTextHash")]
+    public string SourceTextHash { get; init; } = string.Empty;
+
+    [JsonPropertyName("chunkContentHash")]
+    public string ChunkContentHash { get; init; } = string.Empty;
+
+    [JsonPropertyName("chunkStartOffset")]
+    public int ChunkStartOffset { get; init; }
+
+    [JsonPropertyName("chunkOrdinal")]
+    public int ChunkOrdinal { get; init; }
+
     [JsonPropertyName("lastModifiedAt")]
     public DateTimeOffset? LastModifiedAt { get; init; }
 }

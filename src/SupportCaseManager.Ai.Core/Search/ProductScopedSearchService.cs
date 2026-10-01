@@ -3,6 +3,7 @@ using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Ranking;
+using System.Text.RegularExpressions;
 
 namespace SupportCaseManager.Ai.Core.Search;
 
@@ -14,6 +15,7 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
     private readonly OfficialDocDirectResolver officialDocDirectResolver;
     private readonly IQuestionClassifier questionClassifier;
     private readonly IOllamaEmbeddingClient embeddingClient;
+    private readonly IEmbeddingModelDigestResolver embeddingModelDigestResolver;
     private readonly ICaseAnswerPairSearcher answerPairSearcher;
 
     public ProductScopedSearchService(
@@ -23,13 +25,15 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         IQuestionClassifier? questionClassifier = null,
         IOllamaEmbeddingClient? embeddingClient = null,
         ICaseAnswerPairSearcher? answerPairSearcher = null,
-        OfficialDocDirectResolver? officialDocDirectResolver = null)
+        OfficialDocDirectResolver? officialDocDirectResolver = null,
+        IEmbeddingModelDigestResolver? embeddingModelDigestResolver = null)
     {
         this.caseKeywordSearcher = caseKeywordSearcher ?? throw new ArgumentNullException(nameof(caseKeywordSearcher));
         this.manualKeywordSearcher = manualKeywordSearcher ?? throw new ArgumentNullException(nameof(manualKeywordSearcher));
         this.officialDocumentKeywordSearcher = officialDocumentKeywordSearcher ?? new AiOfficialDocumentKeywordSearcher();
         this.questionClassifier = questionClassifier ?? new QuestionClassifier();
         this.embeddingClient = embeddingClient ?? new OllamaEmbeddingClient();
+        this.embeddingModelDigestResolver = embeddingModelDigestResolver ?? new OllamaEmbeddingModelDigestResolver();
         this.answerPairSearcher = answerPairSearcher ?? new CaseAnswerPairSearcher();
         this.officialDocDirectResolver = officialDocDirectResolver ?? new OfficialDocDirectResolver();
     }
@@ -170,7 +174,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         int maxResults = 8,
         CancellationToken cancellationToken = default,
         string ragPipelineMode = RagPipelineModes.Legacy,
-        string? embeddingIndexFolderOverride = null)
+        string? embeddingIndexFolderOverride = null,
+        bool preserveLowRelevanceForRegression = false)
     {
         return SearchAllCoreAsync(
             product,
@@ -180,7 +185,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             maxResults,
             cancellationToken,
             ragPipelineMode,
-            embeddingIndexFolderOverride);
+            embeddingIndexFolderOverride,
+            preserveLowRelevanceForRegression);
     }
 
     private async Task<IReadOnlyList<SearchSource>> SearchAllCoreAsync(
@@ -191,7 +197,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         int maxResults,
         CancellationToken cancellationToken,
         string ragPipelineMode = RagPipelineModes.Legacy,
-        string? embeddingIndexFolderOverride = null)
+        string? embeddingIndexFolderOverride = null,
+        bool preserveLowRelevanceForRegression = false)
     {
         ArgumentNullException.ThrowIfNull(product);
         ArgumentNullException.ThrowIfNull(inquiryFocus);
@@ -277,7 +284,18 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var combined = lexicalCandidates
             .Concat(vectorCandidates)
             .GroupBy(static source => $"{source.SourceType}\n{source.SourceId}", StringComparer.Ordinal)
-            .Select(static group => group.OrderByDescending(source => source.Score ?? 0).First())
+            .Select(static group =>
+            {
+                var lexical = group.OrderByDescending(source => source.Score ?? 0).First();
+                var fullChunk = group.FirstOrDefault(source => !string.IsNullOrWhiteSpace(source.EmbeddingSourceHash));
+                return fullChunk is null ? lexical : fullChunk with
+                {
+                    Score = lexical.Score,
+                    MatchedTerms = lexical.MatchedTerms,
+                    QueryCoverage = lexical.QueryCoverage,
+                    ScoreBreakdown = lexical.ScoreBreakdown,
+                };
+            })
             .ToList();
         var hybridLimit = isHybridV2
             ? Math.Min(Math.Max(100, maxResults), combined.Count)
@@ -292,7 +310,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
                 embeddingClient,
                 hybridLimit,
                 cancellationToken,
-                isHybridV2)
+                isHybridV2,
+                embeddingModelDigestResolver)
             : HybridSearchRanker.Rank(combined, query, product.ProductName, hybridLimit);
 
         return RankAndMergeSources(
@@ -303,7 +322,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             inquiryFocus.IsFreshnessSensitive,
             maxResults,
             isHybridV2,
-            officialDocumentationOnly);
+            officialDocumentationOnly,
+            preserveLowRelevanceForRegression);
     }
 
     private static async Task<IReadOnlyList<SearchSource>> SearchAcrossQueryVariantsAsync(
@@ -392,22 +412,32 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         bool freshnessSensitive,
         int maxResults,
         bool isHybridV2,
-        bool officialDocumentationOnly)
+        bool officialDocumentationOnly,
+        bool preserveLowRelevanceForRegression)
     {
+        var distinctiveTechnicalTerms = ExtractExactTechnicalTerms(queryAnalysis.PrimaryText)
+            .Where(term => sources.Count(source => ContainsExactTechnicalTerm(source.Text, term)) <=
+                Math.Max(1, sources.Count / 4))
+            .ToArray();
         var ranked = sources
             .Select(source => ApplyTopicScore(
                 source,
                 queryAnalysis,
                 catalog,
                 questionTypes,
-                freshnessSensitive))
+                freshnessSensitive,
+                distinctiveTechnicalTerms))
             .OrderByDescending(static item => item.Source.Score ?? 0)
             .ThenByDescending(static item => item.Source.RetrievedAt)
             .ThenBy(static item => item.Source.Title, StringComparer.OrdinalIgnoreCase)
             .ToList();
         var deduplicated = SuppressExactDuplicates(ranked)
             .Where(item => !officialDocumentationOnly || SourceFamily(item.Source.SourceType) != "PastCase")
-            .Where(item => IsEligibleMergedCandidate(item, queryAnalysis.PrimaryProfile))
+            .Where(item => IsEligibleMergedCandidate(item, queryAnalysis.PrimaryProfile,
+                queryAnalysis.PrimaryText))
+            .Where(item => preserveLowRelevanceForRegression ||
+                !RequiresDirectQueueEvidence(queryAnalysis.PrimaryText) ||
+                (item.Source.Score ?? 0) >= 0.30)
             .ToList();
         if (isHybridV2)
         {
@@ -496,7 +526,8 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         NegationAwareTopicAnalysis queryAnalysis,
         TopicEntityCatalog catalog,
         IReadOnlyList<string> questionTypes,
-        bool freshnessSensitive)
+        bool freshnessSensitive,
+        IReadOnlyList<string> distinctiveTechnicalTerms)
     {
         var sourceText = string.Join(
             ' ',
@@ -543,6 +574,42 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
                 reasons.Add("feature=heading-conflict");
             }
 
+        }
+
+        if (queryAnalysis.PrimaryProfile.Components.Count > 0)
+        {
+            if (assessment.MatchedComponents.Count > 0)
+            {
+                adjustment += 0.08;
+                reasons.Add("component=match");
+            }
+            else
+            {
+                adjustment -= 0.18;
+                reasons.Add("component=missing");
+            }
+        }
+
+        if (queryAnalysis.PrimaryProfile.Intents.Count > 0)
+        {
+            var sharedIntent = queryAnalysis.PrimaryProfile.Intents.Any(intent =>
+                candidateProfile.Intents.Contains(intent, StringComparer.OrdinalIgnoreCase));
+            adjustment += sharedIntent ? 0.06 : -0.10;
+            reasons.Add(sharedIntent ? "intent=match" : "intent=missing");
+        }
+
+        var subjectAnchors = ExtractSubjectAnchors(queryAnalysis.PrimaryText);
+        if (subjectAnchors.Count > 0)
+        {
+            var matches = subjectAnchors.Count(anchor => SubjectAppearsInSource(anchor, sourceText));
+            adjustment += matches > 0 ? 0.18 : -0.65;
+            reasons.Add(matches > 0 ? "subject=technical-anchor-match" : "subject=technical-anchor-missing");
+        }
+
+        if (distinctiveTechnicalTerms.Count(term => ContainsExactTechnicalTerm(source.Text, term)) >= 3)
+        {
+            adjustment += 0.30;
+            reasons.Add("technical=distinctive-terms-match");
         }
 
         if (queryAnalysis.PrimaryProfile.Intents.Any(intent =>
@@ -700,8 +767,19 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             item.Assessment.MatchedOperations.Contains("Analysis", StringComparer.Ordinal);
     }
 
-    private static bool IsEligibleMergedCandidate(RankedSource item, TopicEntityProfile queryProfile)
+    private static bool IsEligibleMergedCandidate(RankedSource item, TopicEntityProfile queryProfile,
+        string queryText)
     {
+        if (SourceFamily(item.Source.SourceType) == "PastCase" &&
+            RequiresDirectQueueEvidence(queryText) &&
+            !ContainsAny(string.Join(' ', item.Source.Title, item.Source.SectionTitle, item.Source.Text),
+                "処理待ち", "queue", "pending") &&
+            !ExtractSubjectAnchors(queryText).Any(anchor =>
+                SubjectAppearsInSource(anchor, item.Source.Text)))
+        {
+            return false;
+        }
+
         if (!queryProfile.Features.Contains("File delivery", StringComparer.OrdinalIgnoreCase) ||
             SourceFamily(item.Source.SourceType) != "PastCase")
         {
@@ -715,6 +793,11 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
             "/api/file/download/content");
     }
 
+    private static bool RequiresDirectQueueEvidence(string queryText) =>
+        Regex.IsMatch(queryText, @"GitHub[^\r\n]{0,100}/[A-Za-z][A-Za-z0-9._-]{4,}",
+            RegexOptions.CultureInvariant | RegexOptions.IgnoreCase) &&
+        ContainsAny(queryText, "処理待ち", "queue", "pending");
+
     private static bool ContainsUnrelatedAnalysisTopic(string value) =>
         value.Contains("Dashboard", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("IDE", StringComparison.OrdinalIgnoreCase) ||
@@ -726,6 +809,52 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         value.Contains("license server", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("Installation Notes", StringComparison.OrdinalIgnoreCase) ||
         value.Contains("インストール", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<string> ExtractSubjectAnchors(string query)
+    {
+        var technicalIdentifiers = Regex.Matches(query,
+                @"(?<![A-Za-z0-9])(?:--)?[A-Za-z][A-Za-z0-9]*(?:[-_][A-Za-z0-9]+)+(?![A-Za-z0-9])",
+                RegexOptions.CultureInvariant)
+            .Where(match => match.Index == 0 || match.Index + match.Length >= query.Length ||
+                query[match.Index - 1] != '[' || query[match.Index + match.Length] != ']')
+            .Select(static match => match.Value.TrimStart('-').ToLowerInvariant());
+        var repositorySubjects = Regex.Matches(query,
+                @"GitHub[^\r\n]{0,100}/([A-Za-z][A-Za-z0-9._-]{4,})",
+                RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)
+            .Select(static match => match.Groups[1].Value.ToLowerInvariant());
+        return technicalIdentifiers.Concat(repositorySubjects)
+            .Where(static value => !value.StartsWith("local_path", StringComparison.Ordinal) &&
+                !value.StartsWith("ip_address", StringComparison.Ordinal) &&
+                !value.StartsWith("host_name", StringComparison.Ordinal) &&
+                !value.StartsWith("api_key", StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static IReadOnlyList<string> ExtractExactTechnicalTerms(string query) =>
+        Regex.Matches(query, @"(?<![A-Za-z0-9_])[A-Za-z][A-Za-z0-9_-]{2,}(?![A-Za-z0-9_])",
+                RegexOptions.CultureInvariant)
+            .Where(match => match.Index == 0 || match.Index + match.Length >= query.Length ||
+                query[match.Index - 1] != '[' || query[match.Index + match.Length] != ']')
+            .Select(static match => match.Value)
+            .Where(static term => term is not ("server" or "Server" or "customer" or "Customer" or
+                "person" or "Person" or "Checkmarx" or "CxSAST" or "Klocwork" or "QAC" or "HelixQAC"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+    private static bool ContainsExactTechnicalTerm(string text, string term) =>
+        Regex.IsMatch(text, $@"(?<![A-Za-z0-9_]){Regex.Escape(term)}(?![A-Za-z0-9_])",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static bool SubjectAppearsInSource(string anchor, string sourceText)
+    {
+        if (anchor is "projects-root" or "projects_root")
+        {
+            return ContainsAny(sourceText, "projects-root", "projects_root", "プロジェクトルート");
+        }
+
+        return sourceText.Contains(anchor, StringComparison.OrdinalIgnoreCase);
+    }
 
     private static double AnalysisOperationAdjustment(SearchSource source, string candidateText)
     {

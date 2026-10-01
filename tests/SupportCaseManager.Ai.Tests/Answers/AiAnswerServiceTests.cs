@@ -14,6 +14,25 @@ namespace SupportCaseManager.Ai.Tests.Answers;
 public class AiAnswerServiceTests
 {
     [Fact]
+    public async Task GenerateDraftAsync_OversizedPolishContextKeepsDeterministicAnswer()
+    {
+        var client = new FakeLlmClient("""{"customerReplyDraft":"LLM output"}""");
+        var request = CreateRequest() with
+        {
+            SupplementalContext = new string('根', 2000),
+            Settings = new AiAssistantSettings { MaxPromptChars = 500 },
+        };
+        var service = new AiAnswerService(
+            new PromptBuilder(), new EvidenceBuilder(), new SafetyRedactionService(), client);
+
+        var result = await service.GenerateDraftAsync(request);
+
+        Assert.Equal(AnswerGenerationModes.DeterministicOnly, result.AnswerGenerationMode);
+        Assert.Null(client.LastMessages);
+        Assert.Contains(result.Warnings, warning => warning.Contains("切り捨てず", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GenerateDraftAsync_CreatesAnswerDraftResultFromMockLlmJson()
     {
         var service = CreateService("""

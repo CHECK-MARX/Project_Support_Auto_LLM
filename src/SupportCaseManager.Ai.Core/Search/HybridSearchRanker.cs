@@ -18,7 +18,8 @@ internal static partial class HybridSearchRanker
         IOllamaEmbeddingClient embeddingClient,
         int maxResults,
         CancellationToken cancellationToken,
-        bool useHybridV2 = false)
+        bool useHybridV2,
+        IEmbeddingModelDigestResolver digestResolver)
     {
         try
         {
@@ -36,23 +37,47 @@ internal static partial class HybridSearchRanker
                     : Rank(sources, query, productName, maxResults);
             }
 
+            if (string.IsNullOrWhiteSpace(index.EmbeddingModelDigest))
+            {
+                return useHybridV2
+                    ? RankKeywordOnly(sources, "EmbeddingModelDigestUnknown", maxResults)
+                    : Rank(sources, query, productName, maxResults);
+            }
+
+            var currentDigest = await digestResolver.ResolveAsync(
+                providerSettings.Endpoint, providerSettings.EmbeddingModel!, cancellationToken);
+            if (!string.Equals(index.EmbeddingModelDigest, currentDigest, StringComparison.OrdinalIgnoreCase))
+            {
+                return useHybridV2
+                    ? RankKeywordOnly(sources, "EmbeddingModelDigestMismatch", maxResults)
+                    : Rank(sources, query, productName, maxResults);
+            }
+
+            var entries = index.Entries.ToDictionary(
+                static entry => $"{entry.SourceType}\n{entry.SourceId}",
+                StringComparer.Ordinal);
+            var rankableSources = useHybridV2
+                ? sources.Where(source => source.Score is not null || HasMatchingVector(source, entries)).ToList()
+                : sources;
+            if (useHybridV2 && !rankableSources.Any(source => HasMatchingVector(source, entries)))
+            {
+                return RankKeywordOnly(rankableSources, "EmbeddingSourceChanged", maxResults);
+            }
+
             var queryVectors = await embeddingClient.EmbedAsync(
                 providerSettings.Endpoint,
                 providerSettings.EmbeddingModel!,
                 [query],
                 cancellationToken);
             var queryVector = queryVectors.Single();
-            var vectors = index.Entries.ToDictionary(
-                static entry => $"{entry.SourceType}\n{entry.SourceId}",
-                static entry => entry.Vector,
-                StringComparer.Ordinal);
-            var semanticScores = sources.ToDictionary(
+            var semanticScores = rankableSources.ToDictionary(
                 SourceKey,
-                source => vectors.TryGetValue($"{source.SourceType}\n{source.SourceId}", out var vector)
-                    ? CosineSimilarity(queryVector, vector)
+                source => entries.TryGetValue($"{source.SourceType}\n{source.SourceId}", out var entry) &&
+                    (!useHybridV2 || HasMatchingVector(source, entries))
+                    ? CosineSimilarity(queryVector, entry.Vector)
                     : 0,
                 StringComparer.Ordinal);
-            return RankWithSemanticScores(sources, semanticScores, productName, maxResults, "embedding", useHybridV2);
+            return RankWithSemanticScores(rankableSources, semanticScores, productName, maxResults, "embedding", useHybridV2);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -92,6 +117,7 @@ internal static partial class HybridSearchRanker
         int maxResults)
     {
         return sources
+            .Where(static source => source.Score is not null)
             .OrderByDescending(static source => source.Score ?? 0)
             .ThenBy(static source => source.Title, StringComparer.OrdinalIgnoreCase)
             .Take(maxResults)
@@ -162,6 +188,13 @@ internal static partial class HybridSearchRanker
     }
 
     private static string SourceKey(SearchSource source) => $"{source.SourceType}\n{source.SourceId}";
+
+    private static bool HasMatchingVector(
+        SearchSource source,
+        IReadOnlyDictionary<string, EmbeddingIndexEntry> entries) =>
+        !string.IsNullOrWhiteSpace(source.EmbeddingSourceHash) &&
+        entries.TryGetValue($"{source.SourceType}\n{source.SourceId}", out var entry) &&
+        string.Equals(source.EmbeddingSourceHash, entry.ContentHash, StringComparison.OrdinalIgnoreCase);
 
     private static double CosineSimilarity(IReadOnlyList<float> left, IReadOnlyList<float> right)
     {
