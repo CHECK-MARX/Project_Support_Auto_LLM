@@ -91,7 +91,7 @@ public static class GroundedAnswerPromptBuilder
             "JSONオブジェクトのみ返し、customerReplyDraft、internalMemo、needConfirmations、" +
             "evidence、confidence、warningsを含めてください。" +
             "needConfirmationsはquestion、reason、priorityを持つオブジェクトの配列にしてください。" +
-            "evidenceには使用したsourceIdと、原文から連続した20～60文字の正確なexcerptを入れてください。" +
+            "evidenceには使用したsourceIdと、原文から連続した20～500文字の正確なexcerptを入れてください。" +
             "引用は回答本文の具体的な主張を直接支える場合だけ付け、顧客名・担当者・連絡先を含む原文は引用しないでください。" +
             "Readinessは内部判定です。非Readyのときは可否や原因を断定せず、追加確認を顧客向け本文に具体的に書いてください。";
         var user = new StringBuilder();
@@ -194,8 +194,6 @@ public static class GroundedAnswerPromptBuilder
                 user.AppendLine("Confirmed Fact: 独立した製品仕様の確定Factなし。顧客報告の内容まで『確認できる事実なし』としない。");
 
             var importantFacts = ImportantFactContract.Select(facts);
-            foreach (var fact in importantFacts.Where(static fact => fact.SourceType == "CurrentInquiry"))
-                user.AppendLine(ImportantFactContract.Describe(fact));
 
             var caseObservations = facts.ResolvedFacts.Where(fact =>
                 string.Equals(fact.SourceType, "CurrentCase", StringComparison.Ordinal) &&
@@ -203,10 +201,8 @@ public static class GroundedAnswerPromptBuilder
             if (caseObservations.Length > 0)
                 user.AppendLine("CurrentCase observation (not product specification): 以下は案件履歴・添付の観測であり、製品仕様ではない。");
             foreach (var fact in caseObservations.OrderByDescending(static fact =>
-                         fact.Key == "PriorCaseOutcome"))
-                user.AppendLine(importantFacts.Contains(fact)
-                    ? ImportantFactContract.Describe(fact)
-                    : $"case fact: {fact.Value}; sourceId={fact.EvidenceId}");
+                         fact.Key == "PriorCaseOutcome").Where(fact => !importantFacts.Contains(fact)))
+                user.AppendLine($"case fact: {fact.Value}; sourceId={fact.EvidenceId}");
             if (importantFacts.Count > 0)
                 user.AppendLine("重要FactはsourceTypeを維持して『確認できる事実』へ反映する。" +
                     "polarityを反転せず、version・operation・timingを落とさない。" +
@@ -271,21 +267,25 @@ public static class GroundedAnswerPromptBuilder
             user.AppendLine(source.Text);
         }
 
-        var citationChoices = CitationChoices(request.InquiryText, sources);
+        var citationChoices = CitationChoices(request.InquiryText, sources, request.FactResolution);
         if (citationChoices.Count > 0)
         {
             user.AppendLine("引用する場合は次のsourceIdとexcerptを一組としてそのままコピーしてください。" +
                 "質問の対象を直接扱わない資料なら引用しないでください。");
+            user.AppendLine("選択した公式Factを本文に述べる場合は、そのFactの引用候補をevidenceにも含める。" +
+                "版・条件・時点は省略せず、excerptを要約・言い換えしない。");
             foreach (var choice in citationChoices)
                 user.AppendLine($"引用候補 sourceId={choice.SourceId}; excerpt=「{choice.Excerpt}」");
         }
         else user.AppendLine("原文に一致する引用候補なし。evidenceは空配列にしてください。");
 
         var mustPreserve = new List<string>();
-        if (request.InquiryFocus?.TargetVersions is { Count: > 0 } inquiryVersions)
+        if (request.InquiryFocus?.TargetVersions is { Count: > 0 } inquiryVersions &&
+            !ImportantFactContract.Select(request.FactResolution).Any(static fact =>
+                fact.Key == "ImportantInquiryVersion"))
             mustPreserve.Add($"sourceType=CurrentInquiry; attribution=顧客申告; " +
                 $"version={string.Join(", ", inquiryVersions.Select(version =>
-                    DescribeInquiryVersionWithHotfix(request.InquiryText, version)))}; " +
+                    ImportantFactContract.QualifyInquiryVersion(request.InquiryText, version)))}; " +
                 "customerMeaning=問い合わせに明記された対象版。案件履歴・公式資料の版と混同しない");
         if (request.FactResolution is { } resolution)
         {
@@ -300,6 +300,9 @@ public static class GroundedAnswerPromptBuilder
         user.AppendLine("生成契約（customerReplyDraft）: 問い合わせと選択根拠に基づく顧客向け本文を作成する。" +
             "指示文や見出しの説明を本文へ転記しない。needConfirmationsだけに必要事項を書いて本文を省略しない。" +
             "原文・Fact・Evidenceに存在しない技術的識別子を作らず、Version・製品名・コマンド名・ヘッダ名の原文表記を保持する。");
+        if (ImportantFactContract.Select(request.FactResolution).Any(static fact => fact.Key == "ImportantInquiryAbsence"))
+            user.AppendLine("顧客申告の未付与・不使用は確認できる顧客申告として本文に保持する。" +
+                "追加確認は未確認のメーカー原文・適用条件・再検証に向け、既知の未付与・不使用の有無を再質問しない。");
         if (request.FactResolution?.AnswerReadiness is AnswerReadiness.NeedsReview or
             AnswerReadiness.InsufficientEvidence or AnswerReadiness.NeedsManufacturerConfirmation or
             AnswerReadiness.NeedsCustomerConfirmation or AnswerReadiness.Blocked)
@@ -369,22 +372,28 @@ public static class GroundedAnswerPromptBuilder
     }
 
     private static IReadOnlyList<(string SourceId, string Excerpt)> CitationChoices(
-        string inquiry, IReadOnlyList<SearchSource> sources)
+        string inquiry, IReadOnlyList<SearchSource> sources, FactResolutionResult? resolution)
     {
         var choices = new List<(string SourceId, string Excerpt)>();
         var redactor = new SafetyRedactionService();
         foreach (var source in sources)
         {
             if (DirectApplicability(inquiry, source.Text) == "NO") continue;
-            var pieces = Regex.Split(source.Text, @"(?<=[。.!?])\s*|[\r\n]+")
+            var selectedFacts = resolution?.ResolvedFacts.Where(fact =>
+                fact.Key == "SelectedOfficialStatement" && fact.Status == FactStatuses.Confirmed &&
+                fact.SourceType == "OfficialDoc" && source.SourceType == "OfficialDoc" &&
+                fact.EvidenceId == source.SourceId && source.Text.Contains(fact.Value, StringComparison.Ordinal))
+                .Select(static fact => fact.Value) ?? [];
+            var pieces = selectedFacts.Concat(Regex.Split(source.Text, @"(?<=[。!?])\s*|(?<=\.)(?!\d)\s+|[\r\n]+"))
                 .Select(static piece => piece.Trim())
-                .Where(static piece => piece.Length >= 20)
+                .Where(static piece => piece.Length is >= 20 and <= 500)
+                .Distinct(StringComparer.Ordinal)
                 .Take(12);
             foreach (var piece in pieces)
             {
-                var excerpt = piece[..Math.Min(piece.Length, 60)];
+                var excerpt = piece;
                 if (!IsSafeCitationSpan(excerpt, redactor) ||
-                    !SharesCitationSubject(inquiry, excerpt)) continue;
+                    !CitationMatchesSubject(inquiry, excerpt, source, resolution)) continue;
                 choices.Add((source.SourceId, excerpt));
                 if (choices.Count >= 6) return choices;
             }
@@ -421,6 +430,15 @@ public static class GroundedAnswerPromptBuilder
         return terms.Any(term => excerpt.Contains(term, StringComparison.OrdinalIgnoreCase));
     }
 
+    internal static bool CitationMatchesSubject(string subject, string excerpt, SearchSource source,
+        FactResolutionResult? resolution) => SharesCitationSubject(subject, excerpt) ||
+        (resolution?.ResolvedFacts.Any(fact => fact.Key == "SelectedOfficialStatement" &&
+            fact.Status == FactStatuses.Confirmed && fact.SourceType == "OfficialDoc" &&
+            source.SourceType == "OfficialDoc" && fact.EvidenceId == source.SourceId &&
+            source.Text.Contains(fact.Value, StringComparison.Ordinal) &&
+            (fact.Value.Contains(excerpt, StringComparison.Ordinal) || excerpt.Contains(fact.Value, StringComparison.Ordinal)) &&
+            SelectedOfficialFactProjector.SharesFactSubject(fact.Value, subject)) ?? false);
+
     private static string JoinNonEmpty(params IReadOnlyList<string>?[] groups) =>
         string.Join(", ", groups.Where(static group => group is not null)
             .SelectMany(static group => group!)
@@ -455,14 +473,6 @@ public static class GroundedAnswerPromptBuilder
             $"timing={(timing.Success ? timing.Groups["action"].Value.Trim() + "より前" : "原文に明記なし")}; " +
             $"condition={fact.Statement}; supportedFact={fact.Value}; " +
             "customerMeaning=条件・対象版・確認時点を保持し、未記載の仕様へ拡張しない";
-    }
-
-    private static string DescribeInquiryVersionWithHotfix(string inquiry, string version)
-    {
-        var qualified = Regex.Match(inquiry,
-            Regex.Escape(version) + @"\s*(?<hotfix>(?:HF|Hotfix|ホットフィックス)\s*\d+)",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        return qualified.Success ? $"{version} {qualified.Groups["hotfix"].Value}" : version;
     }
 
     private static (string Target, string Conflicting, string Setting)? ExtractReportedServerRelation(

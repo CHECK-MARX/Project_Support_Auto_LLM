@@ -24,6 +24,10 @@ public static partial class AnswerQualityEvaluator
         AnswerQualityThresholds? thresholds = null)
     {
         ArgumentNullException.ThrowIfNull(input);
+        var caseEvidence = input.Evidence.Where(static item => item.SourceType == "CurrentCase").ToArray();
+        // Case observations support attributed statements only. They do not increase
+        // independent product evidence coverage, grounding or customer readiness.
+        input = input with { Evidence = input.Evidence.Where(static item => item.SourceType != "CurrentCase").ToArray() };
         var rules = thresholds ?? AnswerQualityThresholds.Default;
         var catalog = EnsureCatalog(input.Catalog, input.ProductName);
         var queryProfile = TopicEntityAnalyzer.Extract(input.Question, catalog);
@@ -40,6 +44,7 @@ public static partial class AnswerQualityEvaluator
             .ToHashSet(StringComparer.Ordinal);
         var unsupported = answerClaims
             .Where(claim => !supportedKeys.Contains($"{claim.Kind}|{claim.NormalizedValue}") &&
+                !SupportsAttributedCaseClaim(claim, input.Answer, caseEvidence, catalog) &&
                 !(claim.Kind == "Version" && Regex.IsMatch(input.Question,
                     $@"(?<![0-9.]){Regex.Escape(claim.NormalizedValue)}(?![0-9.])")))
             .Select(static claim => new UnsupportedTechnicalClaim
@@ -159,6 +164,22 @@ public static partial class AnswerQualityEvaluator
 
     public static TopicEntityCatalog CreateSupportCatalog(string? productName = null) =>
         SupportTopicCatalog.Create(productName);
+
+    private static bool SupportsAttributedCaseClaim(AnswerTechnicalClaim claim, string answer,
+        IReadOnlyList<AnswerQualityEvidence> cases, TopicEntityCatalog catalog)
+    {
+        var supporting = cases.Where(item => TechnicalClaimExtractor.Extract(item.Text, catalog)
+            .Any(value => value.Kind == claim.Kind && value.NormalizedValue == claim.NormalizedValue)).ToArray();
+        if (supporting.Length == 0) return false;
+        var sentences = Regex.Split(answer, @"[。！？!?\r\n]").Where(sentence =>
+            TechnicalClaimExtractor.Extract(sentence, catalog).Any(value =>
+                value.Kind == claim.Kind && value.NormalizedValue == claim.NormalizedValue)).ToArray();
+        return sentences.Length > 0 && sentences.All(sentence =>
+            Regex.IsMatch(sentence, @"案件履歴|案件記録|添付ログ") &&
+            !Regex.IsMatch(sentence, @"正式保証|公式仕様|公式資料|正式サポート|必ず|確実に") &&
+            supporting.Any(item => !item.Text.Contains("メーカー原文未確認", StringComparison.Ordinal) ||
+                Regex.IsMatch(sentence, @"メーカー.{0,12}原文.{0,12}(?:未確認|確認できません|確認されていない)")));
+    }
 
     private static string Decide(
         AnswerQualityEvaluationInput input,

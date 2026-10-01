@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using SupportCaseManager.Ai.Contracts;
 
@@ -44,6 +45,26 @@ public static partial class PolishedAnswerValidator
     public static IReadOnlyList<string> ExtractInquiryTechnicalValues(string inquiryText) =>
         HeaderName().Matches(inquiryText).Select(static match => match.Value.Trim())
             .Distinct(StringComparer.Ordinal).ToArray();
+
+    // Only restore an unambiguous width/case variant of a header named in the
+    // inquiry. Different letters (for example CR-O versus CROS) remain invalid.
+    public static string RestoreUnambiguousInquiryHeader(string reply, string inquiryText)
+    {
+        var required = ExtractInquiryTechnicalValues(inquiryText);
+        var missing = required.Where(value => !reply.Contains(value, StringComparison.Ordinal))
+            .ToArray();
+        if (missing.Length != 1) return reply;
+
+        var generated = HeaderName().Matches(reply).Select(static match => match.Value.Trim())
+            .Where(value => !required.Contains(value, StringComparer.Ordinal))
+            .Distinct(StringComparer.Ordinal).ToArray();
+        if (generated.Length != 1 ||
+            !string.Equals(generated[0].Normalize(NormalizationForm.FormKC).ToUpperInvariant(),
+                missing[0].Normalize(NormalizationForm.FormKC).ToUpperInvariant(),
+                StringComparison.Ordinal))
+            return reply;
+        return reply.Replace(generated[0], missing[0], StringComparison.Ordinal);
+    }
 
     public static IReadOnlyList<string> ExtractProtectedValues(string answer)
     {

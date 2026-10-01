@@ -1427,7 +1427,7 @@ public sealed class GroundedAnswerComparisonTests
                 shadowReview: new ShadowReviewCriteria([], [], [], "NeedsManufacturerConfirmation"));
 
         Assert.DoesNotContain(result.Reasons, reason => reason.Contains("重要Fact", StringComparison.Ordinal));
-        Assert.Equal(reply, result.GeneratedReplyDraft);
+        Assert.Equal(reply.Replace("記録があります。", "記録があります（メーカー原文未確認の案件履歴です）。", StringComparison.Ordinal), result.GeneratedReplyDraft);
     }
 
     [Fact]
@@ -1574,6 +1574,373 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
         Assert.Contains(result.Reasons, reason => reason.Contains("技術値", StringComparison.Ordinal));
         Assert.Contains("ＣＲＯＳヘッダ", client.Prompts[1].UserPrompt);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RequiresInquiryVersionAndHotfixWithoutBaselineVersion()
+    {
+        const string inquiry = "CxSAST 9.7.4.1001 HF5でスキャンが処理待ち中です。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            Case = new CaseContext { ProductName = "Checkmarx" },
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var omitted = "確認できる事実: CxSASTのスキャンが処理待ち中と報告されています。" +
+            "現時点で断定できない事項: 原因は確認できません。" +
+            "追加で必要な確認: 実行時刻と関連ログを確認してください。";
+        var retained = "確認できる事実: CxSAST 9.7.4.1001 HF5のスキャンが処理待ち中と報告されています。" +
+            "現時点で断定できない事項: 原因は確認できません。" +
+            "追加で必要な確認: 実行時刻と関連ログを確認してください。";
+        var client = new SequenceLlmClient(NonReadyResponse(omitted), NonReadyResponse(retained));
+
+        var result = await new GroundedAnswerComparisonService(client,
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(
+            request, Baseline() with { CustomerReplyDraft = "確認中です。", Evidence = [], Readiness = "NeedsReview" },
+            shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(2, client.CallCount);
+        Assert.Contains("9.7.4.1001 HF5", client.Prompts[0].UserPrompt);
+        Assert.Contains("問い合わせ対象版 9.7.4.1001 HF5", client.Prompts[1].UserPrompt);
+        Assert.Equal(1, client.Prompts[1].UserPrompt.Split("Must Preserve Fact:").Length - 1);
+        Assert.Contains("再生成必須Fact:", client.Prompts[1].UserPrompt);
+        Assert.Contains("customerMeaning=問い合わせで明示された対象版は9.7.4.1001 HF5",
+            client.Prompts[1].UserPrompt);
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RetryDirectlyRestatesOnlyMissingInquiryAndLogFacts()
+    {
+        const string inquiry = "CxSAST 9.7.4.1001 HF5でスキャンが処理待ち中です。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            Case = new CaseContext { ProductName = "Checkmarx" },
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts =
+                [
+                    new ResolvedFact
+                    {
+                        Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
+                        EvidenceId = "case:history:1",
+                        Value = "CxJobManager and CxSystemManager were stopped. After starting both services, the scan completed successfully.",
+                    },
+                    new ResolvedFact
+                    {
+                        Key = "ObservedLogFailure", Status = "Candidate", SourceType = "CurrentCase",
+                        EvidenceId = "case:log:1",
+                        Value = "添付ログにResultsReceiverのMQ接続失敗が記録されている。",
+                    },
+                ],
+            },
+        };
+        const string recovery = "CxJobManagerとCxSystemManagerが停止し、両サービスの起動後にスキャン完了と案件履歴に記録されています。";
+        const string ending = "現時点で断定できない事項: 根本原因は未確認です。" +
+            "追加で必要な確認: CxSASTの設定値を確認してください。";
+        var client = new SequenceLlmClient(
+            NonReadyResponse("確認できる事実: " + recovery + ending),
+            NonReadyResponse("確認できる事実: 顧客の対象版は9.7.4.1001 HF5です。" + recovery +
+                "添付ログにResultsReceiverのMQ接続失敗が記録されています。" + ending));
+
+        var result = await new GroundedAnswerComparisonService(client,
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(request,
+            Baseline() with { CustomerReplyDraft = "確認中です。", Evidence = [], Readiness = "NeedsReview" },
+            shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(2, client.CallCount);
+        var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
+        Assert.Contains("再生成必須Fact:", retry);
+        Assert.Contains("添付ログにResultsReceiverのMQ接続失敗が記録されている。", retry);
+        Assert.Contains("attribution=CurrentCase案件履歴・添付の観測", retry);
+        Assert.Contains("9.7.4.1001 HF5", retry);
+        Assert.Contains("本文へそのままコピーする原文技術値: [\"9.7.4.1001 HF5\"]", retry);
+        Assert.Contains("attribution=顧客申告", retry);
+        Assert.DoesNotContain("CxJobManager", retry);
+        Assert.DoesNotContain("帰属付きFactの内容と未確認条件は一体", retry);
+        Assert.DoesNotContain("既にお客様から提示された認識", retry);
+        Assert.Equal(client.Prompts[0].OutputSchema?.GetRawText(), client.Prompts[1].OutputSchema?.GetRawText());
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Equal("NeedsReview", result.Candidate?.Readiness);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RetryCopiesOriginalTechnicalSpellingWithoutUnicodeEscapes()
+    {
+        const string inquiry = "CxSASTのＣＲＯＳヘッダについて確認してください。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        const string ending = "現時点で断定できない事項: 仕様は未確認です。" +
+            "追加で必要な確認: CxSASTの設定値を確認してください。";
+        var client = new SequenceLlmClient(
+            NonReadyResponse("確認できる事実: CxSASTのCR-OPTIONSヘッダについてご申告があります。" + ending),
+            NonReadyResponse("確認できる事実: CxSASTのＣＲＯＳヘッダについてご申告があります。" + ending));
+
+        var result = await new GroundedAnswerComparisonService(client,
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(request,
+            Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+            shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(2, client.CallCount);
+        var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
+        Assert.Contains("本文へそのままコピーする原文技術値: [\"ＣＲＯＳヘッダ\"]", retry);
+        Assert.DoesNotContain("\\u", retry);
+        Assert.DoesNotContain("CR-OPTIONS", retry);
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Contains("ＣＲＯＳヘッダ", result.Candidate!.CustomerReplyDraft);
+    }
+
+    [Fact]
+    public async Task CompareAsync_RetryRetainsUnverifiedManufacturerAttributionForKnownHistory()
+    {
+        const string inquiry = "CxSAST 9.7.2 ホットフィックス1でＣＲＯＳヘッダを付与していない認識です。誤検知でしょうか。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsManufacturerConfirmation",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
+                    EvidenceId = "case:history:1",
+                    Value = "メーカーより、バージョン9.7.7で不具合が修正されたとの回答がございました。",
+                }],
+            },
+        };
+        const string reply = "確認できる事実: CxSAST 9.7.2 ホットフィックス1でＣＲＯＳヘッダを付与していないとのご申告があります。" +
+            "案件履歴には9.7.7で不具合が修正されたとの記録があります。" +
+            "現時点で断定できない事項: 誤検知かどうかは未確認です。" +
+            "追加で必要な確認: 原文と設定値を確認してください。";
+        var client = new SequenceLlmClient(
+            NonReadyResponse(reply.Replace("ＣＲＯＳヘッダ", "CR-Oヘッダ", StringComparison.Ordinal)),
+            NonReadyResponse(reply.Replace("案件履歴には", "メーカー原文は未確認ですが、案件履歴には", StringComparison.Ordinal)));
+
+        var result = await new GroundedAnswerComparisonService(client,
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(request,
+            Baseline() with { Evidence = [], Readiness = "NeedsManufacturerConfirmation" },
+            shadowReview: new ShadowReviewCriteria([], [], [], "NeedsManufacturerConfirmation"));
+
+        Assert.Equal(2, client.CallCount);
+        var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
+        Assert.Contains("attribution=メーカー原文未確認のCurrentCase案件履歴", client.Prompts[1].UserPrompt);
+        Assert.Contains("9.7.7で不具合修正とのメーカー回答があったという案件記録。メーカー原文は未確認", client.Prompts[1].UserPrompt);
+        Assert.Contains("未提示情報として再質問しない", client.Prompts[1].UserPrompt);
+        Assert.Contains("メーカー原文は未確認", result.GeneratedReplyDraft);
+        Assert.Equal(client.Prompts[0].OutputSchema?.GetRawText(), client.Prompts[1].OutputSchema?.GetRawText());
+    }
+
+    [Fact]
+    public async Task CompareAsync_RetryWithoutLostTechnicalIdentityDoesNotDuplicateHistory()
+    {
+        var request = NonReadyRequest("QACの設定変更後の再発について確認したいです。") with
+        {
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Key = "ObservedLogFailure", Status = "Candidate", SourceType = "CurrentCase",
+                    EvidenceId = "case:log:1", Value = "添付ログにMQ接続の失敗が記録されている。",
+                }],
+            },
+        };
+        const string ending = "現時点で断定できない事項: 今回の原因は未確認です。" +
+            "追加で必要な確認: QACの設定変更履歴を教えていただけますか？";
+        var client = new SequenceLlmClient(
+            NonReadyResponse("確認できる事実: QACの設定変更後に再発したとのご申告があります。" + ending),
+            NonReadyResponse("確認できる事実: 添付ログにMQ接続の失敗が記録されています。" + ending));
+
+        var result = await new GroundedAnswerComparisonService(client,
+            new SafetyRedactionService(), new FixedChecker()).CompareAsync(request,
+            Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+            shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(2, client.CallCount);
+        var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
+        Assert.DoesNotContain("再生成必須Fact:", retry);
+        Assert.Contains("検証失敗: 重要Factの欠落", retry);
+        Assert.Contains("添付ログにMQ接続の失敗が記録されている。", client.Prompts[1].UserPrompt);
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+    }
+
+    [Fact]
+    public async Task CompareAsync_AcceptsConcreteActionWithInquiryAnchorAndPreciseVerb()
+    {
+        const string inquiry = "Validateサーバーを起動できません。プロジェクトルートを確認したいです。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var reply = "確認できる事実: Validateサーバーの起動失敗が報告されています。" +
+            "現時点で断定できない事項: 設定が正しいかは確認できません。" +
+            "追加で必要な確認: Validateサーバーのプロジェクトルートを明記してください。";
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Equal("NeedsReview", result.Candidate?.Readiness);
+    }
+
+    [Fact]
+    public async Task CompareAsync_CompletesPriorOutcomeAttributionAndResolutionTogether()
+    {
+        var request = NonReadyRequest("QACの設定変更後の再発について確認したいです。") with
+        {
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Key = "PriorCaseOutcome", Status = "Candidate", SourceType = "CurrentCase",
+                    EvidenceId = "case:history:1",
+                    Value = "ユーザーデータ領域変更後、約1週間再発しなかったため、当時は解決としてクローズした。",
+                }],
+            },
+        };
+        var reply = "確認できる事実: ユーザーデータ領域変更後、約1週間再発しなかった記録があります。" +
+            "現時点で断定できない事項: 今回の原因は確認できません。" +
+            "追加で必要な確認: 現在のQAC設定値を確認してください。";
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Contains("案件履歴", result.GeneratedReplyDraft);
+        Assert.Contains("解決としてクローズ", result.GeneratedReplyDraft);
+        Assert.DoesNotContain(result.Reasons, reason => reason.Contains("重要Fact", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("QACの設定変更履歴と発生タイミングを教えていただけますか？")]
+    [InlineData("QACのログ内容をご確認いただけますか？")]
+    [InlineData("QACのログ内容を共有いただけますか？")]
+    public async Task CompareAsync_AcceptsPoliteRequestForConcreteInquiryItem(string action)
+    {
+        var request = NonReadyRequest("QACの言語設定が変わります。再発原因を調査してください。") with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var reply = "確認できる事実: QACの言語設定が変わるとのご申告があります。" +
+            "現時点で断定できない事項: 再発原因は未確認です。" +
+            "追加で必要な確認: " + action;
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
+        Assert.Equal("NeedsReview", result.Candidate?.Readiness);
+    }
+
+    [Theory]
+    [InlineData("QACについて教えていただけますか？")]
+    [InlineData("他製品のログ内容をご確認いただけますか？")]
+    [InlineData("QACの設定変更履歴があります。その他を教えていただけますか？")]
+    [InlineData("QACの設定変更履歴は参考情報です。")]
+    public async Task CompareAsync_RejectsPoliteRequestWithoutConcreteInquiryItem(string action)
+    {
+        var request = NonReadyRequest("QACの言語設定が変わります。再発原因を調査してください。") with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsReview" },
+        };
+        var reply = "確認できる事実: QACの言語設定が変わるとのご申告があります。" +
+            "現時点で断定できない事項: 再発原因は未確認です。" +
+            "追加で必要な確認: " + action;
+
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("具体的な追加確認", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false, true, "付与状況")]
+    [InlineData(true, true, "付与状況")]
+    [InlineData(true, false, "付与状況")]
+    [InlineData(true, false, "実装状況")]
+    public async Task CompareAsync_SupportsConditionalHistoryAndSeparatesKnownAbsenceFromMissingProvenance(bool historyInUnknown, bool includesSourceCondition, string repeatedKnownItem)
+    {
+        const string inquiry = "CxSAST 9.7.2 ホットフィックス1でＣＲＯＳヘッダを付与していない認識です。検出された指摘は誤検知でしょうか。";
+        var request = NonReadyRequest(inquiry) with
+        {
+            Case = new CaseContext { ProductName = "Checkmarx" },
+            InquiryFocus = new InquiryFocusExtractor().Extract(inquiry),
+            Sources = [new SearchSource { SourceId = "past", SourceType = "PastCaseNote", ProductName = "Checkmarx", Text = "CxSAST バージョン9.7.2の言語サポート照会。", Score = .8 }],
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsManufacturerConfirmation",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
+                    EvidenceId = "case:history:1", Value = "メーカーより、バージョン9.7.7で不具合が修正されたとの回答がございました。",
+                }],
+            },
+        };
+        var reply = historyInUnknown
+            ? "確認できる事実: 顧客の対象版は9.7.2 ホットフィックス1です。" +
+                (includesSourceCondition
+                    ? "現時点で断定できない事項: バージョン9.7.7で修正との案件記録は、メーカー原文が未確認であるため製品仕様の確定事実とは言えません。"
+                    : "現時点で断定できない事項: 9.7.7バージョンでの不具合修正に関するメーカー回答は案件履歴に記録されていますが、本件の検出内容との直接的な関連性は確認できません。") +
+                $"追加で必要な確認: ＣＲＯＳヘッダの{repeatedKnownItem}を再確認いただけますか？"
+            : "確認できる事実: 顧客の対象版は9.7.2 ホットフィックス1です。案件履歴にはバージョン9.7.7で不具合が修正されたとの記録があります。" +
+                "現時点で断定できない事項: 誤検知かどうかはＣＲＯＳヘッダの有無を確認する必要があります。" +
+                "追加で必要な確認: ＣＲＯＳヘッダが実際に付与されていないかを確認してください。";
+        reply = reply.Replace("確認できる事実:", "確認できる事実: 誤検知の可能性をご相談いただいています。", StringComparison.Ordinal);
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { CustomerReplyDraft = "確認中です。", Readiness = "NeedsManufacturerConfirmation",
+                Evidence = [new EvidenceItem { SourceId = "past", SourceType = "PastCaseNote" }] },
+                shadowReview: new ShadowReviewCriteria(["Spring CORS疑義と修正記録、メーカー原文未確認"], ["正式保証をしない"], ["メーカー原文"], "NeedsManufacturerConfirmation"));
+        Assert.True(result.Status == GroundedComparisonStatuses.ReadyForHumanReview, string.Join("; ", result.Reasons));
+        Assert.Equal(0, result.CandidateQuality!.UnsupportedClaimCount);
+        Assert.Equal("NeedsManufacturerConfirmation", result.Candidate!.Readiness);
+        Assert.Contains("メーカー原文未確認の案件履歴", result.GeneratedReplyDraft);
+        Assert.Contains("お客様からは「ＣＲＯＳヘッダを付与していない」との申告", result.GeneratedReplyDraft);
+        Assert.Contains("メーカー回答原文", result.GeneratedReplyDraft);
+        Assert.DoesNotContain("実際に付与されていないか", result.GeneratedReplyDraft);
+        Assert.DoesNotContain("ヘッダの有無を確認", result.GeneratedReplyDraft);
+        Assert.DoesNotContain("ヘッダの付与状況を再確認", result.GeneratedReplyDraft);
+        Assert.DoesNotContain("ヘッダの実装状況を再確認", result.GeneratedReplyDraft);
+        Assert.Matches("断定できません|確認できません", result.GeneratedReplyDraft);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompareAsync_RejectsCaseHistoryPromotedToGuarantee(bool inUnknownSection)
+    {
+        var request = NonReadyRequest("CxSASTの指摘は誤検知でしょうか。") with
+        {
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsManufacturerConfirmation",
+                ResolvedFacts = [new ResolvedFact { Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
+                    EvidenceId = "case:history:1", Value = "メーカーより、バージョン9.7.7で不具合が修正されたとの回答がございました。" }],
+            },
+        };
+        var reply = inUnknownSection
+            ? "確認できる事実: 案件履歴にはバージョン9.7.7で修正との記録があります（メーカー原文未確認）。" +
+                "現時点で断定できない事項: 案件履歴によりバージョン9.7.7で修正が正式保証されています。追加で必要な確認: メーカー回答原文を確認してください。"
+            : "確認できる事実: 案件履歴によりバージョン9.7.7で修正が正式保証されています。" +
+                "現時点で断定できない事項: 環境は未確認です。追加で必要な確認: メーカー回答原文を確認してください。";
+        var result = await new GroundedAnswerComparisonService(new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsManufacturerConfirmation" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsManufacturerConfirmation"));
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Contains(result.Reasons, reason => reason.Contains("帰属の昇格", StringComparison.Ordinal));
     }
 
     private static AnswerDraftRequest NonReadyRequest(string inquiry) => Request() with

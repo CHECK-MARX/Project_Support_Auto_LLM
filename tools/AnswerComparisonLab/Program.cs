@@ -7,6 +7,7 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
 using SupportCaseManager.Ai.Core.Evidence;
 using SupportCaseManager.Ai.Core.Facts;
+using SupportCaseManager.Ai.Core.Quality;
 using SupportCaseManager.Ai.Core.Inquiries;
 using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Core.Prompts;
@@ -375,6 +376,7 @@ foreach (var item in selected)
         SelectedEvidence = sources.Select(DescribeSource).ToArray(),
         ExcludedHoldoutSources = holdoutHits,
         ExpectedClaimsCoverage = compared.ExpectedClaimsCoverage,
+        ExpectedClaimAssessment = compared.ExpectedClaimAssessment,
         CitationTraceable = compared.CitationTraces.Count,
         CitationCount = compared.GeneratedCitationCount,
         CitationRelevantCount = compared.CitationRelevantCount,
@@ -391,8 +393,13 @@ foreach (var item in selected)
                 ? llm.Contents.ElementAtOrDefault(firstLlmCall) : null,
             groundedModelRaw = llm.Contents.ElementAtOrDefault(candidateFirstLlmCall),
             groundedPrompt = llm.Prompts.ElementAtOrDefault(candidateFirstLlmCall)?.UserPrompt,
+            groundedAttempts = llm.Prompts.Skip(candidateFirstLlmCall).Select((prompt, attempt) => new
+            {
+                attempt = attempt + 1, prompt.SystemPrompt, prompt.UserPrompt, prompt.OutputSchema,
+                prompt.Diagnostics, modelRaw = llm.Contents.ElementAtOrDefault(candidateFirstLlmCall + attempt),
+            }).ToArray(),
             generationInput = new { inputFacts.AnswerReadiness, inputFacts.MissingFacts,
-                inputFacts.ResolvedFacts, focus.TechnicalQuery.Component,
+                ResolvedFacts = compared.GenerationFacts, focus.TechnicalQuery.Component,
                 focus.TechnicalQuery.Operation },
             groundedReply = compared.Candidate?.CustomerReplyDraft,
             generatedReply = compared.GeneratedReplyDraft,
@@ -400,7 +407,7 @@ foreach (var item in selected)
             groundedReadiness = compared.GeneratedReadiness,
             rawGroundedReadiness = compared.RawGeneratedReadiness,
             compared.Status, compared.Reasons,
-            compared.CitationTraces, compared.ExpectedClaimsCoverage,
+            compared.CitationTraces, compared.ExpectedClaimsCoverage, compared.ExpectedClaimAssessment,
             selectedSources = sources.Select(source => new { source.SourceType, source.Title,
                 source.SectionTitle, source.SourceId, source.SupportNumber,
                 source.FilePath, source.Text }).ToArray() });
@@ -570,6 +577,7 @@ internal sealed record CaseResult(
     public int ExcludedHoldoutSources { get; init; }
     public string? ExpectedReadiness { get; init; }
     public double? ExpectedClaimsCoverage { get; init; }
+    public ExpectedClaimAssessment? ExpectedClaimAssessment { get; init; }
     public int CitationTraceable { get; init; }
     public int CitationCount { get; init; }
     public int CitationRelevantCount { get; init; }

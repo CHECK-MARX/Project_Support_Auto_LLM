@@ -1,4 +1,6 @@
 using System.Text;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
@@ -2289,6 +2291,42 @@ public sealed class CodexChatViewModelTests
 
         Assert.Equal(source, viewModel.ArtifactSourceFile);
         Assert.Equal("Inquiry_Details_EN.xlsx", viewModel.ArtifactOutputFileName);
+    }
+
+    [Fact]
+    public async Task ArtifactPlan_UsesTranslatedLicenseFileNameAndPreservesManualOverride()
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "CxAudit_ライセンス・利用権限確認手順.docx");
+        using (var document = WordprocessingDocument.Create(source, DocumentFormat.OpenXml.WordprocessingDocumentType.Document))
+        {
+            document.AddMainDocumentPart().Document = new Document(
+                new Body(new Paragraph(new Run(new Text("ライセンスを確認します。")))));
+        }
+        var originalBytes = await File.ReadAllBytesAsync(source);
+        var fakeClient = new FakeClient();
+        var viewModel = CreateViewModel(temp, fakeClient);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "CxAudit_ライセンス・利用権限確認手順.docxを英訳して別名で保存してください";
+
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+
+        const string translatedName = "CxAudit_License_Access_Permissions_Verification_Procedure_EN.docx";
+        Assert.Equal(source, viewModel.ArtifactSourceFile);
+        Assert.Equal(translatedName, viewModel.ArtifactOutputFileName);
+        Assert.DoesNotContain("安全な既定名", viewModel.ArtifactWarnings, StringComparison.Ordinal);
+
+        viewModel.ArtifactOutputFileName = "Custom_License_Guide_EN.docx";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        Assert.Equal("Custom_License_Guide_EN.docx", viewModel.ArtifactOutputFileName);
+
+        viewModel.ResetArtifactOutputNameCommand.Execute(null);
+        Assert.Equal(translatedName, viewModel.ArtifactOutputFileName);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(source));
+        Assert.False(File.Exists(Path.Combine(temp.Path, translatedName)));
+        Assert.Equal(0, fakeClient.TurnCount);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)

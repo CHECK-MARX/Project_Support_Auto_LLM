@@ -47,6 +47,21 @@ public sealed class Phase23PolisherTests
     }
 
     [Fact]
+    public void Validator_RestoresOnlyUnambiguousWidthAndCaseHeaderVariant()
+    {
+        const string inquiry = "ＣＲＯＳヘッダについて確認してください。";
+        Assert.Equal("ＣＲＯＳヘッダを確認します。",
+            PolishedAnswerValidator.RestoreUnambiguousInquiryHeader(
+                "CROsヘッダを確認します。", inquiry));
+        Assert.Equal("CRORヘッダを確認します。",
+            PolishedAnswerValidator.RestoreUnambiguousInquiryHeader(
+                "CRORヘッダを確認します。", inquiry));
+        Assert.Equal("CROsヘッダとCRORヘッダを確認します。",
+            PolishedAnswerValidator.RestoreUnambiguousInquiryHeader(
+                "CROsヘッダとCRORヘッダを確認します。", inquiry));
+    }
+
+    [Fact]
     public void PolisherPrompt_ForbidsTechnicalAdditions()
     {
         var prompt = PolisherPromptBuilder.Build("qacli validate build --qaf-project .");

@@ -34,11 +34,32 @@ internal static class ImportantFactContract
         foreach (Match migration in Migration.Matches(inquiry))
             additions.Add(InquiryFact("ImportantInquiryOperation", migration.Value.Trim(),
                 migration.Groups["operation"].Value, redactor));
+        foreach (var header in SupportCaseManager.Ai.Core.Answers.PolishedAnswerValidator.ExtractInquiryTechnicalValues(inquiry))
+        {
+            var absence = Regex.Match(inquiry, Regex.Escape(header) +
+                @"\s*(?:を|が|は)?\s*(?:付与|設定|使用)(?:していない|されていない|しない)");
+            if (absence.Success)
+                additions.Add(InquiryFact("ImportantInquiryAbsence", absence.Value, "未付与・不使用", redactor));
+        }
         foreach (var version in focus?.TargetVersions ?? [])
         {
             if (!inquiry.Contains(version, StringComparison.Ordinal)) continue;
             var qualified = QualifyInquiryVersion(inquiry, version);
             additions.Add(InquiryFact("ImportantInquiryVersion", qualified, "対象Version", redactor));
+        }
+        if (Regex.IsMatch(inquiry, @"選択肢|(?:以下|次).{0,40}(?:うち|構成|サービス|どれ)|利用可能な|使用可能な"))
+            foreach (Match option in Regex.Matches(inquiry, @"(?m)^\s*[0-9０-９]+[．.、)）]\s*(?<value>[^\r\n]{3,120})"))
+                additions.Add(InquiryFact("ImportantInquiryOption", option.Groups["value"].Value.Trim(),
+                    "問い合わせの選択肢", redactor));
+        foreach (Match transition in Regex.Matches(inquiry,
+            @"v?(?<from>\d+(?:\.\d+){1,3})から\s*v?(?<to>\d+(?:\.\d+){1,3})へ[^。\r\n]{0,50}(?:更新|移行|バージョンアップ)",
+            RegexOptions.IgnoreCase))
+            additions.Add(InquiryFact("ImportantInquiryTransition", transition.Value, "版の移行計画", redactor));
+        foreach (var clause in Regex.Split(inquiry, @"[。！？\r\n]+").Select(static value => value.Trim()))
+        {
+            if (Regex.IsMatch(clause, @"誤検知|false positive|enabled|既定.{0,20}変更|デフォルト.{0,20}変更|変更がある|変更の有無|記載.{0,15}理由",
+                RegexOptions.IgnoreCase))
+                additions.Add(InquiryFact("ImportantInquiryIntent", clause, "問い合わせ論点（結論ではない）", redactor));
         }
         return additions.Count == 0 ? resolution : resolution with
         {
@@ -65,6 +86,9 @@ internal static class ImportantFactContract
             "ImportantInquiryFailure" or "ObservedLogFailure" => "失敗",
             "ImportantInquiryOperation" => "計画・可否未確認",
             "ImportantInquiryVersion" => "顧客が明示した対象版",
+            "ImportantInquiryAbsence" => "顧客申告の未付与・不使用",
+            "ImportantInquiryOption" or "ImportantInquiryIntent" => "顧客の質問・可否未確認",
+            "ImportantInquiryTransition" => "顧客の更新計画・未実施",
             "PriorCaseOutcome" => "当時の非再発・復旧観測",
             "CaseObservation" when IsServiceRecovery(fact.Value) => "停止→起動後に完了",
             "CaseObservation" when IsVersionedFix(fact.Value) => "案件履歴に修正の記録・メーカー原文未確認",
@@ -97,6 +121,10 @@ internal static class ImportantFactContract
             "ImportantInquiryFailure" when StartupFailure.Match(fact.Value) is { Success: true } failure =>
                 $"{failure.Groups["entity"].Value}は起動できない。起動を試みたことを起動成功と書かない",
             "ImportantInquiryVersion" => $"問い合わせで明示された対象版は{fact.Value}。資料や案件履歴の版に帰属させない",
+            "ImportantInquiryAbsence" => $"お客様の申告は『{fact.Value}』。製品仕様の証明ではないが、未提示情報として再質問しない",
+            "ImportantInquiryOption" => $"問い合わせの選択肢は『{fact.Value}』。各選択肢を本文で扱い、未確認ならその選択肢の可否が未確認と明示する",
+            "ImportantInquiryIntent" => $"顧客の質問軸は『{fact.Value}』。質問として本文に保持し、既定値や誤検知の結論を推定しない",
+            "ImportantInquiryTransition" => $"顧客の版の移行計画は『{fact.Value}』。移行元・移行先と操作を一体で保持し、比較資料の版へ置き換えない",
             "CaseObservation" when IsServiceRecovery(fact.Value) =>
                 DescribeRecovery(fact.Value),
             "CaseObservation" when IsVersionedFix(fact.Value) =>
@@ -120,7 +148,41 @@ internal static class ImportantFactContract
             StringSplitOptions.None)[0];
         foreach (var fact in Select(resolution))
         {
-            if (fact.Key == "ImportantInquiryVersion")
+            if (fact.Key == "ImportantInquiryOption")
+            {
+                if (!NormalizeAxis(reply).Contains(NormalizeAxis(fact.Value), StringComparison.Ordinal))
+                    return "重要Factの欠落: 問い合わせの選択肢が回答本文にありません。";
+            }
+            else if (fact.Key == "ImportantInquiryIntent")
+            {
+                if (Regex.IsMatch(fact.Value, @"誤検知|false positive", RegexOptions.IgnoreCase) &&
+                    !Regex.IsMatch(reply, @"誤検知|false positive", RegexOptions.IgnoreCase) ||
+                    fact.Value.Contains("enabled", StringComparison.OrdinalIgnoreCase) &&
+                    (!reply.Contains("enabled", StringComparison.OrdinalIgnoreCase) || !Regex.IsMatch(reply, @"変更|change", RegexOptions.IgnoreCase)) ||
+                    Regex.IsMatch(fact.Value, @"変更がある|変更の有無") &&
+                    !Regex.IsMatch(reply, @"変更|change", RegexOptions.IgnoreCase))
+                    return "重要Factの欠落: 顧客の質問軸・Intentが回答本文にありません。";
+            }
+            else if (fact.Key == "ImportantInquiryTransition")
+            {
+                var versions = Version.Matches(fact.Value).Select(static match => match.Value).Take(2).ToArray();
+                if (versions.Length == 2 && !Regex.IsMatch(reply,
+                    Regex.Escape(versions[0]) + @".{0,12}(?:から|→|to).{0,12}" + Regex.Escape(versions[1]) + @".{0,30}(?:移行|更新|バージョンアップ)",
+                    RegexOptions.IgnoreCase))
+                    return "重要Factの欠落: 移行元・移行先VersionとOperationの関係がありません。";
+            }
+            else if (fact.Key == "ImportantInquiryAbsence")
+            {
+                var header = SupportCaseManager.Ai.Core.Answers.PolishedAnswerValidator.ExtractInquiryTechnicalValues(fact.Value).Single();
+                var mentions = Regex.Split(factSection, @"[。！？!?\r\n]").Where(sentence => sentence.Contains(header, StringComparison.Ordinal)).ToArray();
+                if (mentions.Length == 0 || mentions.Any(sentence => !Regex.IsMatch(sentence,
+                    @"(?:付与|設定|使用)(?:していない|されていない|しない|されておらず)")))
+                    return "重要Factの欠落・反転: 顧客申告の未付与・不使用が回答本文に保持されていません。";
+                var actions = reply.Split("現時点で断定できない事項", 2, StringSplitOptions.None).Last();
+                if (Regex.Split(actions, @"[。！？!?\r\n]").Any(sentence => ReasksKnownAbsence(sentence, header)))
+                    return "既知事項の再質問: 顧客が申告済みの未付与・不使用を追加確認として再質問しています。";
+            }
+            else if (fact.Key == "ImportantInquiryVersion")
             {
                 if (!reply.Contains(fact.Value, StringComparison.OrdinalIgnoreCase))
                     return $"重要Factの欠落: 問い合わせ対象版 {fact.Value} が顧客向け本文にありません。";
@@ -185,6 +247,15 @@ internal static class ImportantFactContract
                 if (Regex.IsMatch(factSection,
                     Regex.Escape(version) + @".{0,50}修正(?:されていない|されず|なし|未実施)"))
                     return "重要Factの極性反転: 案件履歴の版付き修正記録を否定しています。";
+                var statements = Regex.Split(reply, @"[。！？!?\r\n]")
+                    .Where(sentence => sentence.Contains(version, StringComparison.Ordinal) && Regex.IsMatch(sentence, @"修正|fixed", RegexOptions.IgnoreCase));
+                if (statements.Any(sentence => Regex.IsMatch(sentence, @"修正(?:されていない|されず|なし|未実施)")))
+                    return "重要Factの極性反転: 案件履歴の版付き修正記録を否定しています。";
+                if (statements.Any(sentence => Regex.IsMatch(sentence, @"正式保証|公式仕様|公式資料|正式サポート|必ず|確実に")))
+                    return "帰属の昇格: CurrentCaseの修正記録を公式仕様や正式保証として扱っています。";
+                if (statements.Any(sentence => !Regex.IsMatch(sentence, @"案件履歴|案件記録") ||
+                    !Regex.IsMatch(sentence, @"メーカー.{0,12}原文.{0,12}(?:未確認|確認できません|確認されていない)")))
+                    return "帰属条件の欠落: 修正記録をメーカー原文未確認の案件履歴として保持していません。";
             }
             else if (fact.Key == "ObservedLogFailure")
             {
@@ -203,6 +274,100 @@ internal static class ImportantFactContract
         }
         return null;
     }
+
+    internal static string PreserveSourceConditions(FactResolutionResult? resolution, string reply,
+        ISafetyRedactionService redactor)
+    {
+        var split = reply.IndexOf("現時点で断定できない事項", StringComparison.Ordinal);
+        if (split < 0) return reply;
+        var facts = Select(resolution);
+        var conditionalHistory = facts.Where(fact => fact.SourceType == "CurrentCase" &&
+            fact.Key == "CaseObservation" && IsVersionedFix(fact.Value)).ToArray();
+        if (conditionalHistory.Length > 0)
+            reply = reply.Replace("CurrentCase案件履歴", "案件履歴", StringComparison.Ordinal);
+        // Attribution applies to every occurrence, including a record placed
+        // under uncertainty. Repositioning never removes the original claim.
+        foreach (var fact in conditionalHistory)
+        {
+            var version = Version.Match(fact.Value).Value;
+            reply = Regex.Replace(reply, @"[^。！？!?\r\n]+", match =>
+                match.Value.Contains(version, StringComparison.Ordinal) &&
+                Regex.IsMatch(match.Value, @"案件履歴|案件記録") &&
+                Regex.IsMatch(match.Value, @"修正|fixed", RegexOptions.IgnoreCase) &&
+                !Regex.IsMatch(match.Value, @"メーカー.{0,12}原文.{0,12}(?:未確認|確認できません|確認されていない)")
+                    ? match.Value + "（メーカー原文未確認の案件履歴です）" : match.Value);
+        }
+        split = reply.IndexOf("現時点で断定できない事項", StringComparison.Ordinal);
+        var section = reply[..split];
+        foreach (var fact in conditionalHistory)
+        {
+            var version = Version.Match(fact.Value).Value;
+            // The existence of the case record is known even when the product
+            // conclusion remains unknown. Preserve that record in the facts
+            // section without asserting that its manufacturer claim is verified.
+            if (!Regex.Split(section, @"[。！？!?\r\n]").Any(sentence =>
+                    sentence.Contains(version, StringComparison.Ordinal) &&
+                    sentence.Contains("案件履歴", StringComparison.Ordinal) &&
+                    Regex.IsMatch(sentence, @"修正|fixed", RegexOptions.IgnoreCase)) &&
+                Regex.Split(reply[split..], @"[。！？!?\r\n]").Any(sentence =>
+                    sentence.Contains(version, StringComparison.Ordinal) &&
+                    Regex.IsMatch(sentence, @"案件履歴|案件記録") &&
+                    Regex.IsMatch(sentence, @"修正|fixed", RegexOptions.IgnoreCase) &&
+                    !Regex.IsMatch(sentence, @"修正(?:されていない|されず|なし|未実施)|正式保証|公式仕様|正式サポート") &&
+                    Regex.IsMatch(sentence, @"メーカー.{0,12}原文.{0,12}(?:未確認|確認できません|確認されていない)")) &&
+                fact.Value.Length <= 320 && redactor.RedactForCloud(fact.Value) == fact.Value)
+                section += $"案件履歴には「{fact.Value.TrimEnd('。', '\r', '\n')}」との記録があります（メーカー原文未確認の案件履歴です）。";
+        }
+        foreach (var fact in facts.Where(static fact => fact.Key == "ImportantInquiryAbsence"))
+        {
+            var header = SupportCaseManager.Ai.Core.Answers.PolishedAnswerValidator.ExtractInquiryTechnicalValues(fact.Value).Single();
+            if (!section.Contains(header, StringComparison.Ordinal) && fact.Value.Length <= 160 &&
+                redactor.RedactForCloud(fact.Value) == fact.Value)
+                section += $"お客様からは「{fact.Value}」との申告があります。";
+        }
+        reply = section + reply[split..];
+        if (conditionalHistory.Length > 0)
+        {
+            var end = reply.IndexOf("追加で必要な確認", section.Length, StringComparison.Ordinal);
+            if (end >= 0)
+            {
+                var unknown = reply[section.Length..end];
+                foreach (var fact in facts.Where(static fact => fact.Key == "ImportantInquiryAbsence"))
+                {
+                    var header = SupportCaseManager.Ai.Core.Answers.PolishedAnswerValidator.ExtractInquiryTechnicalValues(fact.Value).Single();
+                    unknown = Regex.Replace(unknown, @"[^。！？!?\r\n]+", match => ReasksKnownAbsence(match.Value, header)
+                        ? (match.Value.Contains("現時点で断定できない事項", StringComparison.Ordinal) ? "現時点で断定できない事項: " : string.Empty) +
+                            "メーカー原文が未確認のため、検出の判定と記録された修正の適用範囲は断定できません" : match.Value);
+                }
+                reply = section + unknown + reply[end..];
+            }
+        }
+        if (conditionalHistory.Length > 0 &&
+            !Regex.IsMatch(reply[section.Length..], @"確認できません|断定できません|判断できません|不明|見解が必要"))
+            reply = reply.Replace("現時点で断定できない事項:",
+                "現時点で断定できない事項: メーカー原文が未確認のため、対象版・個別条件への修正の適用は断定できません。",
+                StringComparison.Ordinal);
+        // Replace a redundant question only when the existing history itself supplies
+        // the specific missing manufacturer provenance. No product fact is invented.
+        var actionStart = reply.IndexOf("追加で必要な確認", StringComparison.Ordinal);
+        if (conditionalHistory.Length == 0 || actionStart < 0) return reply;
+        var actions = reply[actionStart..];
+        foreach (var fact in facts.Where(static fact => fact.Key == "ImportantInquiryAbsence"))
+        {
+            var header = SupportCaseManager.Ai.Core.Answers.PolishedAnswerValidator.ExtractInquiryTechnicalValues(fact.Value).Single();
+            actions = Regex.Replace(actions, @"[^。！？!?\r\n]+", match =>
+                ReasksKnownAbsence(match.Value, header)
+                    ? (match.Value.Contains("追加で必要な確認", StringComparison.Ordinal) ? "追加で必要な確認: " : string.Empty) +
+                        "案件履歴のメーカー回答原文と、今回の対象版・検出条件への修正の適用範囲をメーカーへ確認してください"
+                    : match.Value);
+        }
+        return reply[..actionStart] + actions;
+    }
+
+    private static bool ReasksKnownAbsence(string sentence, string header) =>
+        sentence.Contains(header, StringComparison.Ordinal) && Regex.IsMatch(sentence,
+            @"有無|(?:付与|設定|使用|実装)状況|(?:付与|設定|使用)(?:されていない|されている|していない|している|される|する)か|実際に(?:付与|設定|使用)") &&
+        Regex.IsMatch(sentence, @"確認|教えて|ご教示|お知らせ|共有");
 
     internal static bool IsPriorCaseOutcomePreserved(ResolvedFact fact, string reply)
     {
@@ -223,7 +388,7 @@ internal static class ImportantFactContract
 
     private static bool IsImportant(ResolvedFact fact) =>
         fact.Status == FactStatuses.Candidate &&
-        (fact.SourceType == "CurrentInquiry" && fact.Key is "ImportantInquiryFailure" or "ImportantInquiryOperation" or "ImportantInquiryVersion" ||
+        (fact.SourceType == "CurrentInquiry" && fact.Key is "ImportantInquiryFailure" or "ImportantInquiryOperation" or "ImportantInquiryVersion" or "ImportantInquiryAbsence" or "ImportantInquiryOption" or "ImportantInquiryIntent" or "ImportantInquiryTransition" ||
          fact.SourceType == "CurrentCase" &&
          (fact.Key is "PriorCaseOutcome" or "ObservedLogFailure" ||
           fact.Key == "CaseObservation" && (IsServiceRecovery(fact.Value) || IsVersionedFix(fact.Value))));
@@ -245,6 +410,9 @@ internal static class ImportantFactContract
         return tokens.Length > 0 && tokens.All(token =>
             reply.Contains(token, StringComparison.OrdinalIgnoreCase));
     }
+
+    private static string NormalizeAxis(string value) => Regex.Replace(
+        value.Normalize(NormalizationForm.FormKC).ToLowerInvariant(), @"\s+", string.Empty);
 
     private static ResolvedFact InquiryFact(string key, string value, string operation,
         ISafetyRedactionService redactor)

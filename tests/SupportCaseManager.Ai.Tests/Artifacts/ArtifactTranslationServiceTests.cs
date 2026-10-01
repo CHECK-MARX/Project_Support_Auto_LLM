@@ -45,6 +45,36 @@ public sealed class ArtifactTranslationServiceTests
         Assert.DoesNotContain('?', normalized.OutputFileName);
     }
 
+    [Theory]
+    [InlineData("CxAudit_ライセンス・利用権限確認手順.docx", "CxAudit_License_Access_Permissions_Verification_Procedure_EN.docx")]
+    [InlineData("ライセンス設定確認手順.xlsx", "License_Settings_Verification_Procedure_EN.xlsx")]
+    [InlineData("利用権限確認.csv", "Access_Permissions_Check_EN.csv")]
+    [InlineData("CxAudit利用権限確認手順_v9.7.7.txt", "CxAudit_Access_Permissions_Verification_Procedure_v9.7.7_EN.txt")]
+    [InlineData("ライセンス確認手順_EN_20261001_2.md", "License_Verification_Procedure_EN_20261001_2.md")]
+    [InlineData("調査・メモ.txt", "Investigation_Notes_EN.txt")]
+    public void FilenamePreview_TranslatesCommonLicenseAndPermissionTermsWithoutLosingIdentifiers(
+        string sourceFileName,
+        string expectedOutputFileName)
+    {
+        var preview = new ArtifactFilenameTranslationService().CreatePreview(sourceFileName);
+
+        Assert.False(preview.UsedFallback);
+        Assert.Empty(preview.Warning);
+        Assert.Equal(expectedOutputFileName, preview.OutputFileName);
+        Assert.Equal(expectedOutputFileName, CaseArtifactPathPolicy.SuggestDefaultFileName(sourceFileName));
+        CaseArtifactPathPolicy.ValidateOutputFileName(preview.OutputFileName);
+    }
+
+    [Fact]
+    public void FilenamePreview_StillWarnsWhenTranslationIsIncomplete()
+    {
+        var preview = new ArtifactFilenameTranslationService().CreatePreview("CxAudit_未対応語_ライセンス.docx");
+
+        Assert.True(preview.UsedFallback);
+        Assert.NotEmpty(preview.Warning);
+        Assert.Equal("Translated_File_EN.docx", preview.OutputFileName);
+    }
+
     [Fact]
     public async Task FilenamePreview_DoesNotWriteOrModifySource()
     {

@@ -23,6 +23,8 @@ public sealed record TopicAliasDefinition
     public string CanonicalName { get; init; } = string.Empty;
 
     public IReadOnlyList<string> Aliases { get; init; } = [];
+    // Optional explicit mentions for claim extraction; retrieval intent aliases remain unchanged.
+    public IReadOnlyList<string>? ClaimAliases { get; init; }
 }
 
 public sealed record TopicEntityAliasDefinition

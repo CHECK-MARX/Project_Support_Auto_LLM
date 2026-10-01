@@ -106,4 +106,10 @@ public static class SelectedOfficialFactProjector
 
     private static bool ContainsAny(string text, IReadOnlyList<string> aliases) =>
         aliases.Any(alias => text.Contains(alias, StringComparison.OrdinalIgnoreCase));
+
+    public static bool SharesFactSubject(string statement, string text)
+    {
+        var concepts = ConceptAliases.Where(aliases => ContainsAny(statement, aliases)).ToArray();
+        return concepts.Length >= 2 && concepts.Count(aliases => ContainsAny(text, aliases)) >= 2;
+    }
 }
