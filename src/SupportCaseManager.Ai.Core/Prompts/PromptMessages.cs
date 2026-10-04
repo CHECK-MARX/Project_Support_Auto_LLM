@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace SupportCaseManager.Ai.Core.Prompts;
 
 public sealed record class PromptMessages
@@ -5,6 +7,8 @@ public sealed record class PromptMessages
     public string SystemPrompt { get; init; } = string.Empty;
 
     public string UserPrompt { get; init; } = string.Empty;
+
+    public JsonElement? OutputSchema { get; init; }
 
     public PromptDiagnostics Diagnostics { get; init; } = new();
 }

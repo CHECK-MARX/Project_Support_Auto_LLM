@@ -50,7 +50,7 @@ public sealed class OutlookCaseStatusService
     public Task<bool> OpenMailAsync(OutlookCaseKey key, OutlookMailReference reference, CancellationToken token = default) =>
         RunSta(() => gateway.OpenMail(key, reference, token), token);
 
-    private static Task<T> RunSta<T>(Func<T> action, CancellationToken token)
+    internal static Task<T> RunSta<T>(Func<T> action, CancellationToken token)
     {
         var source = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>
@@ -75,7 +75,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
     private const string SmtpAddressProperty = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E";
     private readonly IOutlookComGateway com;
 
-    private sealed record MailRecipients(IReadOnlyList<string> To, IReadOnlyList<string> Cc)
+    internal sealed record MailRecipients(IReadOnlyList<string> To, IReadOnlyList<string> Cc)
     {
         public string Signature => string.Join(';', To.Concat(Cc).Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase));
@@ -408,7 +408,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
         return "@SQL=" + string.Join(" OR ", terms);
     }
 
-    private static string GetSender(dynamic mail)
+    internal static string GetSender(dynamic mail)
     {
         string address;
         try
@@ -459,7 +459,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
 
     private static string GetRecipients(dynamic mail) => ReadRecipients(mail).Signature;
 
-    private static MailRecipients ReadRecipients(dynamic mail)
+    internal static MailRecipients ReadRecipients(dynamic mail, bool includeInternal = false)
     {
         var to = new List<string>();
         var cc = new List<string>();
@@ -498,7 +498,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
                         }
                     }
                     if (!address.Contains('@')) address = "unknown";
-                    if (address.EndsWith("@toyo.co.jp", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!includeInternal && address.EndsWith("@toyo.co.jp", StringComparison.OrdinalIgnoreCase)) continue;
                     (recipientType == 1 ? to : cc).Add(address.ToLowerInvariant());
                 }
                 catch (Exception) { to.Add("unknown"); }
@@ -509,7 +509,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
         return new(to, cc);
     }
 
-    private static void Release(object? value)
+    internal static void Release(object? value)
     {
         if (value is not null && Marshal.IsComObject(value)) _ = Marshal.ReleaseComObject(value);
     }

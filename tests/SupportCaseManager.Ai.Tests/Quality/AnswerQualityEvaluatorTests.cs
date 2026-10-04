@@ -6,6 +6,29 @@ namespace SupportCaseManager.Ai.Tests.Quality;
 
 public sealed class AnswerQualityEvaluatorTests
 {
+    [Theory]
+    [InlineData("案件履歴にはバージョン9.7.7で修正との記録があります（メーカー原文未確認の案件履歴です）。", 0)]
+    [InlineData("案件履歴にはバージョン9.7.7で修正との記録があります。", 1)]
+    [InlineData("公式資料によりバージョン9.7.7で修正が正式保証されています。", 1)]
+    [InlineData("案件履歴にはバージョン9.7.7で修正との記録があります（メーカー原文未確認）。バージョン9.7.7にすれば必ず解決します。", 1)]
+    [InlineData("案件履歴にはバージョン9.7.8で修正との記録があります（メーカー原文未確認）。", 1)]
+    public void Evaluate_CurrentCaseSupportsOnlyAttributedHistory(string answer, int unsupported)
+    {
+        var result = AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
+        {
+            Question = "CxSASTの指摘は誤検知でしょうか。", Answer = answer, ProductName = "Checkmarx",
+            Evidence = [new AnswerQualityEvidence
+            {
+                SourceId = "case:history:1", SourceType = "CurrentCase",
+                Text = "メーカー原文未確認の案件履歴: バージョン9.7.7で不具合修正との記録。",
+            }],
+            Catalog = AnswerQualityEvaluator.CreateSupportCatalog("Checkmarx"),
+        });
+        Assert.Equal(unsupported, result.UnsupportedClaimCount);
+        Assert.Equal(0, result.Grounding);
+        Assert.NotEqual(AnswerQualityDecisions.CustomerReady, result.Decision);
+    }
+
     [Fact]
     public void Evaluate_MatchesSyntheticPhase17Expectations()
     {
@@ -85,6 +108,21 @@ public sealed class AnswerQualityEvaluatorTests
         Assert.Contains(
             result.UnsupportedTechnicalClaims,
             item => item.Kind == "Version" && item.Value.Contains("9.9", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Evaluate_AcceptsExactVersionMentionedWithoutVersionPrefixInQuestion()
+    {
+        var result = AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
+        {
+            Question = "QAC2026.1の設定が消えます。",
+            Answer = "お客様のご説明ではバージョン2026.1で設定が消えるとのことです。",
+            ProductName = "HelixQAC",
+            Catalog = AnswerQualityEvaluator.CreateSupportCatalog("HelixQAC"),
+        });
+
+        Assert.DoesNotContain(result.UnsupportedTechnicalClaims, claim =>
+            claim.Kind == "Version" && claim.Value.Contains("2026.1", StringComparison.Ordinal));
     }
 
     [Fact]

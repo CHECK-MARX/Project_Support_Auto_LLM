@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Core.Cases;
@@ -56,6 +57,59 @@ public class AiCaseIndexBuilderTests
         Assert.Equal("00001234", document.Notes[0].SupportNumber);
         Assert.Equal("株式会社サンプル", document.Notes[0].CompanyName);
         Assert.Contains("起動時にエラー", document.Notes[0].Text);
+    }
+
+    [Fact]
+    public async Task BuildAsync_RecordsChunkOffsetsAndHashesForCaseNotes()
+    {
+        using var temp = new TempDirectory();
+        var sourceFolder = Path.Combine(temp.Path, "closed");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var caseFolder = CreateCaseFolder(sourceFolder);
+        var text = new string('A', 3200) + "最終条件";
+        await File.WriteAllTextAsync(Path.Combine(caseFolder, "お客様ご相談内容_00001234.txt"), text, Encoding.UTF8);
+
+        var result = await CreateBuilder().BuildAsync(sourceFolder, aiIndexFolder);
+        var document = await ReadIndexAsync(result.IndexFilePath);
+        var notes = document.Notes.OrderBy(note => note.ChunkOrdinal).ToArray();
+
+        Assert.Equal(2, notes.Length);
+        Assert.Equal(0, notes[0].ChunkStartOffset);
+        Assert.Equal(2800, notes[1].ChunkStartOffset);
+        Assert.Equal(text[notes[1].ChunkStartOffset..], notes[1].Text);
+        Assert.Equal(notes[0].SourceTextHash, notes[1].SourceTextHash);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant(),
+            notes[0].SourceTextHash);
+        Assert.Equal(Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(notes[1].Text))).ToLowerInvariant(),
+            notes[1].ChunkContentHash);
+    }
+
+    [Fact]
+    public async Task BuildIncrementalAsync_BackfillsLegacyChunkProvenance()
+    {
+        using var temp = new TempDirectory();
+        var sourceFolder = Path.Combine(temp.Path, "closed");
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var caseFolder = CreateCaseFolder(sourceFolder);
+        await File.WriteAllTextAsync(Path.Combine(caseFolder, "お客様ご相談内容_00001234.txt"), "QAC analysis", Encoding.UTF8);
+        var builder = CreateBuilder();
+        var first = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        var document = await ReadIndexAsync(first.IndexFilePath);
+        var legacy = document with
+        {
+            Notes = document.Notes.Select(note => note with
+            {
+                SourceTextHash = string.Empty,
+                ChunkContentHash = string.Empty,
+            }).ToArray(),
+        };
+        await File.WriteAllTextAsync(first.IndexFilePath, JsonSerializer.Serialize(legacy), Encoding.UTF8);
+
+        var result = await builder.BuildIncrementalAsync(sourceFolder, aiIndexFolder);
+        var rebuilt = await ReadIndexAsync(result.IndexFilePath);
+
+        Assert.Equal(0, result.UnchangedCaseCount);
+        Assert.All(rebuilt.Notes, note => Assert.False(string.IsNullOrWhiteSpace(note.ChunkContentHash)));
     }
 
     [Fact]

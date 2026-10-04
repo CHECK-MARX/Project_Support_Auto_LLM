@@ -145,6 +145,11 @@ public sealed class ConfigStore
                 ? ProductDefinitionDefaults.CommonPromptFilePath
                 : settings.CommonPromptFilePath,
             ["ExcludedCases"] = settings.ExcludedCases ?? new List<string>(),
+            ["AcceptanceDetectionEnabledAtUtc"] = settings.AcceptanceDetectionEnabledAtUtc,
+            ["AcceptanceLastSuccessfulScanUtc"] = settings.AcceptanceLastSuccessfulScanUtc,
+            ["AcceptanceProcessedMailKeys"] = settings.AcceptanceProcessedMailKeys,
+            ["AcceptanceRejectedMailKeys"] = settings.AcceptanceRejectedMailKeys,
+            ["AcceptanceProcessedBodyHashes"] = settings.AcceptanceProcessedBodyHashes,
         };
 
         var options = new JsonSerializerOptions
@@ -191,6 +196,11 @@ public sealed class ConfigStore
             ActiveProductId = ReadGuid(root, "ActiveProductId"),
             CommonPromptFilePath = ReadString(root, "CommonPromptFilePath") ?? ProductDefinitionDefaults.CommonPromptFilePath,
             ExcludedCases = ReadStringList(root, "ExcludedCases"),
+            AcceptanceDetectionEnabledAtUtc = ReadString(root, "AcceptanceDetectionEnabledAtUtc") ?? string.Empty,
+            AcceptanceLastSuccessfulScanUtc = ReadString(root, "AcceptanceLastSuccessfulScanUtc") ?? string.Empty,
+            AcceptanceProcessedMailKeys = ReadStringList(root, "AcceptanceProcessedMailKeys"),
+            AcceptanceRejectedMailKeys = ReadStringList(root, "AcceptanceRejectedMailKeys"),
+            AcceptanceProcessedBodyHashes = ReadStringList(root, "AcceptanceProcessedBodyHashes"),
         };
 
         if (settings.Statuses.Count == 0)

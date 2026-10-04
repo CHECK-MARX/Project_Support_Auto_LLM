@@ -641,7 +641,8 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
 
         if (submitButton is not null && TryInvoke(submitButton))
         {
-            await ConfirmSubmissionAsync(browserWindow, cancellationToken).ConfigureAwait(false);
+            await ConfirmSubmissionAsync(
+                browserWindow, cancellationToken, expectedTargetUrl).ConfigureAwait(false);
             return;
         }
 
@@ -663,12 +664,14 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         }
 
         WinForms.SendKeys.SendWait("{ENTER}");
-        await ConfirmSubmissionAsync(browserWindow, cancellationToken).ConfigureAwait(false);
+        await ConfirmSubmissionAsync(
+            browserWindow, cancellationToken, expectedTargetUrl).ConfigureAwait(false);
     }
 
     private static async Task ConfirmSubmissionAsync(
         AutomationElement browserWindow,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedTargetUrl)
     {
         var deadline = DateTime.UtcNow + SearchTimeout;
         while (DateTime.UtcNow < deadline)
@@ -687,6 +690,12 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                         return;
                     }
                 }
+
+                if (!string.IsNullOrWhiteSpace(expectedTargetUrl) &&
+                    NewTargetConversationVisible(browserWindow, root, expectedTargetUrl))
+                {
+                    return;
+                }
             }
             catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException)
             {
@@ -699,6 +708,38 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         throw new InvalidOperationException(
             "ChatGPTの送信完了を確認できませんでした。入力欄を確認し、重複送信を避けてください。");
     }
+
+    private static bool NewTargetConversationVisible(
+        AutomationElement browserWindow,
+        AutomationElement? webRoot,
+        string expectedTargetUrl)
+    {
+        if (webRoot is null || webRoot.Current.IsOffscreen)
+        {
+            return false;
+        }
+
+        foreach (AutomationElement edit in browserWindow.FindAll(
+                     TreeScope.Descendants,
+                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
+        {
+            if (IsBrowserChromeEdit(edit) && TryReadValue(edit, out var actualUrl) &&
+                NewTargetConversationConfirmsSubmission(
+                    expectedTargetUrl, actualUrl,
+                    DocumentHasConversationUrl(webRoot, actualUrl)))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool NewTargetConversationConfirmsSubmission(
+        string expectedTargetUrl,
+        string? actualUrl,
+        bool documentMatchesConversation) =>
+        documentMatchesConversation && TargetConversationMatches(expectedTargetUrl, actualUrl);
 
     internal static bool ComposerIsCleared(bool hasValue, string? value, bool hasText, string? text) =>
         hasValue ? string.IsNullOrWhiteSpace(value)
@@ -775,7 +816,7 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         return false;
     }
 
-    private static bool DestinationMatches(
+    private bool DestinationMatches(
         AutomationElement browserWindow,
         string? expectedConversationUrl,
         string? expectedTargetUrl,
@@ -798,6 +839,15 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         var webRoot = FindChatGptWebContentRoot(browserWindow);
         if (webRoot is null)
         {
+            logger.Warning("GPT destination verification failed: active web content unavailable.");
+            return false;
+        }
+
+        var activePageMatches = ActiveChatGptPageMatches(
+            browserWindow, webRoot, expectedTargetName ?? string.Empty);
+        if (!activePageMatches)
+        {
+            logger.Warning("GPT destination verification failed: active GPT header or selected tab mismatch.");
             return false;
         }
 
@@ -806,32 +856,41 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                      new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
         {
             if (IsBrowserChromeEdit(edit) && TryReadValue(edit, out var actualUrl) &&
-                TargetIdentityMatches(
-                    expectedTargetUrl,
-                    actualUrl,
-                    expectedTargetName,
-                    browserWindow.Current.Name,
-                    webRoot.Current.Name))
+                NewRegistrationDestinationMatches(expectedTargetUrl, actualUrl, activePageMatches))
             {
                 return true;
             }
         }
 
+        logger.Warning("GPT destination verification failed: browser address does not match target GPT.");
         return false;
     }
 
-    internal static bool TargetIdentityMatches(
-        string expectedUrl,
+    internal static bool NewRegistrationDestinationMatches(
+        string expectedTargetUrl,
         string? actualUrl,
-        string? expectedName,
-        string? browserTitle,
-        string? webTitle) =>
-        GptConversationUrl.TryValidateTarget(expectedUrl, out var expected) &&
-        GptConversationUrl.TryValidateTarget(actualUrl, out var actual) &&
-        string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase) &&
-        !string.IsNullOrWhiteSpace(expectedName) &&
-        ((browserTitle?.Contains(expectedName, StringComparison.OrdinalIgnoreCase) ?? false) ||
-         (webTitle?.Contains(expectedName, StringComparison.OrdinalIgnoreCase) ?? false));
+        bool activePageMatches) =>
+        activePageMatches &&
+        ((GptConversationUrl.TryValidateTarget(expectedTargetUrl, out var expected) &&
+          GptConversationUrl.TryValidateTarget(actualUrl, out var actual) &&
+          string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase)) ||
+         TargetConversationMatches(expectedTargetUrl, actualUrl));
+
+    internal static bool TargetConversationMatches(string expectedTargetUrl, string? actualUrl)
+    {
+        if (!GptConversationUrl.TryValidateTarget(expectedTargetUrl, out var target) ||
+            !GptConversationUrl.TryValidateConversation(actualUrl, out _))
+        {
+            return false;
+        }
+
+        var prefix = new Uri(target).AbsolutePath.TrimEnd('/') + "/c/";
+        var path = new Uri(actualUrl!).AbsolutePath;
+        return path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+            path.Length > prefix.Length &&
+            !path[prefix.Length..].Contains('/') &&
+            !path[prefix.Length..].Contains('%');
+    }
 
     private static async Task<bool> FocusComposerAsync(
         AutomationElement promptInput,

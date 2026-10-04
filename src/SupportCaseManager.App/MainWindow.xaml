@@ -247,6 +247,7 @@
                     <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
                         <TextBlock Text="更新停滞の判定: 7日以上更新なし (未クローズのみ)" VerticalAlignment="Center" />
                         <Button x:Name="StatusRefreshButton" Content="再読み込み" Margin="16,0,0,0" Click="OnStatusRefresh" />
+                        <Button Content="受付メール DRY RUN" Margin="8,0,0,0" Click="OnAcceptanceDryRun" ToolTip="過去の受付メールを読み取りのみで確認します" />
                     </StackPanel>
 
                     <GroupBox Grid.Row="1" Header="プロダクト状況" Margin="0,0,0,8">
