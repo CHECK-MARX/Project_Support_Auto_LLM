@@ -122,8 +122,12 @@ internal static class ImportantFactContract
                 $"{failure.Groups["entity"].Value}は起動できない。起動を試みたことを起動成功と書かない",
             "ImportantInquiryVersion" => $"問い合わせで明示された対象版は{fact.Value}。資料や案件履歴の版に帰属させない",
             "ImportantInquiryAbsence" => $"お客様の申告は『{fact.Value}』。製品仕様の証明ではないが、未提示情報として再質問しない",
-            "ImportantInquiryOption" => $"問い合わせの選択肢は『{fact.Value}』。各選択肢を本文で扱い、未確認ならその選択肢の可否が未確認と明示する",
-            "ImportantInquiryIntent" => $"顧客の質問軸は『{fact.Value}』。質問として本文に保持し、既定値や誤検知の結論を推定しない",
+            "ImportantInquiryOption" => $"問い合わせの選択肢（可否未確認）={fact.Value}",
+            "ImportantInquiryIntent" when Regex.IsMatch(fact.Value, @"誤検知|false positive", RegexOptions.IgnoreCase) =>
+                "顧客の質問軸=誤検知の可能性についての相談。誤検知という結論は未確認",
+            "ImportantInquiryIntent" when fact.Value.Contains("enabled", StringComparison.OrdinalIgnoreCase) =>
+                "顧客の質問軸=既定enabledフィールドの変更有無。変更有無の結論は未確認",
+            "ImportantInquiryIntent" => $"顧客の質問軸は『{fact.Value}』。質問として本文に保持する",
             "ImportantInquiryTransition" => $"顧客の版の移行計画は『{fact.Value}』。移行元・移行先と操作を一体で保持し、比較資料の版へ置き換えない",
             "CaseObservation" when IsServiceRecovery(fact.Value) =>
                 DescribeRecovery(fact.Value),
@@ -131,7 +135,10 @@ internal static class ImportantFactContract
                 $"{Version.Match(fact.Value).Value}で不具合修正とのメーカー回答があったという案件記録。メーカー原文は未確認",
             _ => fact.Value,
         };
-        return $"{Describe(fact).Split("; value=", 2, StringSplitOptions.None)[0]}; " +
+        var dimensions = Describe(fact).Split("; value=", 2, StringSplitOptions.None)[0]
+            .Split("; ", StringSplitOptions.None)
+            .Where(static field => !field.EndsWith("=原文に明記なし", StringComparison.Ordinal));
+        return $"{string.Join("; ", dimensions)}; " +
             $"attribution={source}; customerMeaning={meaning}";
     }
 
@@ -281,6 +288,25 @@ internal static class ImportantFactContract
         var split = reply.IndexOf("現時点で断定できない事項", StringComparison.Ordinal);
         if (split < 0) return reply;
         var facts = Select(resolution);
+        // Normalize a record's attribution only when its complete recovery content
+        // already matches a CurrentCase fact. Missing/reversed content still rejects.
+        foreach (var fact in facts.Where(fact => fact.SourceType == "CurrentCase" &&
+                     fact.Key == "CaseObservation" && IsServiceRecovery(fact.Value) &&
+                     !string.IsNullOrWhiteSpace(fact.EvidenceId)))
+        {
+            var single = resolution! with { ResolvedFacts = [fact] };
+            var factBody = reply[..split];
+            factBody = Regex.Replace(factBody, @"[^。！？!?\r\n]+", match =>
+                !match.Value.Contains("案件履歴", StringComparison.Ordinal) &&
+                Regex.IsMatch(match.Value, @"(?:との|という|した).{0,8}記録") &&
+                !Regex.IsMatch(match.Value, @"公式|正式|保証|停止していない|完了していない|起動前") &&
+                Validate(single, "案件履歴では、" + match.Value) is null
+                    ? (match.Value.Contains("確認できる事実:", StringComparison.Ordinal)
+                        ? match.Value.Replace("確認できる事実:", "確認できる事実: 案件履歴では、", StringComparison.Ordinal)
+                        : "案件履歴では、" + match.Value) : match.Value);
+            reply = factBody + reply[split..];
+            split = reply.IndexOf("現時点で断定できない事項", StringComparison.Ordinal);
+        }
         var conditionalHistory = facts.Where(fact => fact.SourceType == "CurrentCase" &&
             fact.Key == "CaseObservation" && IsVersionedFix(fact.Value)).ToArray();
         if (conditionalHistory.Length > 0)

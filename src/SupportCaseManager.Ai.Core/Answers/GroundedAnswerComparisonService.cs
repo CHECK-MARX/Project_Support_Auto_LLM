@@ -385,7 +385,7 @@ public sealed class GroundedAnswerComparisonService(
         double? expectedCoverage = expectedAssessment?.Coverage;
         var caseSpecificAbstention = evidenceFreeAbstention &&
             GroundedAnswerPromptBuilder.AllSourcesNotApplicable(request.InquiryText, sources) &&
-            HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText) &&
+            HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText, request.FactResolution) &&
             SharesInquirySubject(request.InquiryText, candidate.CustomerReplyDraft);
         var attributedCaseResponse = evidenceFreeAbstention &&
             referenceReadiness == AnswerReadiness.NeedsManufacturerConfirmation &&
@@ -413,7 +413,7 @@ public sealed class GroundedAnswerComparisonService(
         }
         if (shadowReview is not null &&
             !string.Equals(referenceReadiness, AnswerReadiness.CustomerReady, StringComparison.Ordinal) &&
-            !HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText))
+            !HasConcreteCustomerAction(candidate.CustomerReplyDraft, request.InquiryText, request.FactResolution))
         {
             reasons.Add("顧客向け本文に具体的な追加確認がありません。");
         }
@@ -456,7 +456,7 @@ public sealed class GroundedAnswerComparisonService(
         feedback.AppendLine();
         feedback.AppendLine("一度目の回答は既存の検証で不合格です。今回が最後の生成です。" +
             "同じEvidence、一次Readiness、JSON SchemaでcustomerReplyDraftを全面的に書き直してください。");
-        foreach (var reason in rejected.Reasons.Take(3))
+        foreach (var reason in rejected.Reasons.Distinct(StringComparer.Ordinal).Take(3))
             feedback.AppendLine($"検証失敗: {reason}");
         if (IsHeadingOnlyReply(rejected.GeneratedReplyDraft ?? string.Empty))
             feedback.AppendLine("3見出しは各見出しの後に顧客に伝える具体的な文章を書き、" +
@@ -477,24 +477,30 @@ public sealed class GroundedAnswerComparisonService(
             .Select(static fact => fact.Value).ToArray();
         var needsManufacturerAttribution = missing.Any(fact => fact.SourceType == "CurrentCase" &&
             ImportantFactContract.DescribeForGeneration(fact).Contains("メーカー原文は未確認", StringComparison.Ordinal));
-        // Strengthen retries for lost verbatim technical identity only. Other failures
-        // retain their existing correction instructions and do not duplicate case history.
-        if (missingVersions.Length > 0 || exactValues.Count > 0)
+        // A history/intent/operation failure needs correction even when versions
+        // and verbatim technical values were already preserved.
+        if (missing.Length > 0 || exactValues.Count > 0)
         {
             if (missing.Length > 0)
             {
-                feedback.AppendLine("再生成で保持するFact: 以下を『確認できる事実』の本文に明示してください。" +
-                    "追加確認の依頼だけで代替せず、帰属・極性・版・操作・時点を保持してください。");
+                feedback.AppendLine("再生成で保持するFact: 以下を『確認できる事実』の本文に明示する。追加確認で代替しない。");
                 if (needsManufacturerAttribution)
                     feedback.AppendLine("帰属付きFactの内容と未確認条件は一体で本文に書き、公式仕様へ昇格させないでください。");
-                foreach (var fact in missing)
+                foreach (var fact in missing.Where(static fact => fact.Key != "ImportantInquiryVersion")
+                    .DistinctBy(ImportantFactContract.DescribeForGeneration))
                 {
                     var description = ImportantFactContract.DescribeForGeneration(fact);
                     feedback.AppendLine($"再生成必須Fact: sourceType={fact.SourceType}; " +
                         description[description.IndexOf("attribution=", StringComparison.Ordinal)..]);
                 }
             }
-            var verbatimValues = exactValues.Concat(missingVersions).Distinct(StringComparer.Ordinal).ToArray();
+            // Retain every inquiry version, including ones correct in the first answer:
+            // repairing history must not discard an already preserved version.
+            var inquiryVersions = ImportantFactContract.Select(request.FactResolution)
+                .Where(static fact => fact.Key == "ImportantInquiryVersion").Select(static fact => fact.Value);
+            var verbatimValues = exactValues.Concat(inquiryVersions).Distinct(StringComparer.Ordinal).ToArray();
+            if (missingVersions.Length > 0)
+                feedback.AppendLine("再生成必須Fact: sourceType=CurrentInquiry; attribution=顧客申告; 対象版は次の原文技術値。");
             feedback.AppendLine($"本文へそのままコピーする原文技術値: {JsonSerializer.Serialize(verbatimValues,
                 new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping })}。" +
                 "各文字列をcustomerReplyDraftに必ず含め、全角・半角・綴りを変えないでください。" +
@@ -504,8 +510,7 @@ public sealed class GroundedAnswerComparisonService(
                     "既にお客様から提示された認識を未提示情報として再質問せず、" +
                     "顧客申告の確認済み範囲と未確認の製品仕様を区別してください。");
         }
-        feedback.AppendLine("前回の不合格文を転記せず、出典の帰属、事実の極性、版・操作・時点、" +
-            "具体的な追加確認を保ってください。すべての検証に再び合格しなければ採用しません。");
+        feedback.AppendLine("生成契約の全Factを本文に保持し、すべての検証に再び合格しなければ採用しません。");
         return feedback.ToString();
     }
 
@@ -767,7 +772,8 @@ public sealed class GroundedAnswerComparisonService(
         };
     }
 
-    private static bool HasConcreteCustomerAction(string reply, string? inquiry = null)
+    private static bool HasConcreteCustomerAction(string reply, string? inquiry = null,
+        FactResolutionResult? facts = null)
     {
         if (Regex.IsMatch(reply,
             @"(?:教えてください|ご教示ください|確認してください|共有してください|お知らせください|お送りください|ご提供ください|明示してください|ご確認をお願いします|メーカー.{0,12}確認)"))
@@ -791,7 +797,11 @@ public sealed class GroundedAnswerComparisonService(
             Regex.Split(items, @"[。！？?\r\n]").Any(sentence =>
                 Regex.IsMatch(sentence,
                     @"(?:ご?確認(?:して)?|教えて|共有(?:して)?|ご?提示(?:して)?|明記(?:して)?)いただけ(?:ますか|ませんか|ますでしょうか|ないでしょうか)") &&
-                SharesInquirySubject(inquiry, sentence) &&
+                (SharesInquirySubject(inquiry, sentence) ||
+                 (facts?.ResolvedFacts.Any(fact => fact.SourceType == "CurrentCase" &&
+                     fact.Status == FactStatuses.Candidate &&
+                     fact.Key is "ObservedLogFailure" or "CaseObservation" or "PriorCaseOutcome" &&
+                     SharesInquirySubject(fact.Value, sentence)) ?? false)) &&
                 Regex.IsMatch(sentence,
                     @"ログ(?:内容|の|中|を)|(?:失敗|エラー)(?:内容|メッセージ)|設定(?:変更)?履歴|発生(?:時刻|時点|条件)|タイミング|構成(?:内容|差分)|(?:設定|計測|測定)値|対象バージョン"));
     }

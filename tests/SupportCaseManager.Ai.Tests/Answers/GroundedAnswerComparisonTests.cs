@@ -1,3 +1,4 @@
+using SupportCaseManager.Ai.Core.Facts;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Answers;
@@ -520,7 +521,8 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Contains("対象事象との直接対応: NO", prompt.UserPrompt);
         Assert.Contains("引用可能な直接対応資料: なし", prompt.UserPrompt);
         Assert.Contains("evidenceは空配列", prompt.UserPrompt);
-        Assert.Contains("needConfirmationsだけに確認項目を書き", prompt.SystemPrompt);
+        Assert.Contains("確認項目は顧客向け本文にも書き", prompt.SystemPrompt);
+        Assert.DoesNotContain("needConfirmationsだけに確認項目を書き", prompt.SystemPrompt);
     }
 
     [Fact]
@@ -567,7 +569,9 @@ public sealed class GroundedAnswerComparisonTests
 
         var prompt = GroundedAnswerPromptBuilder.Build(request, [source]);
 
-        Assert.Contains("Confirmed Fact: 選択資料の原文記述", prompt.UserPrompt);
+        Assert.Contains("Confirmed Fact: sourceId=official:checker", prompt.UserPrompt);
+        Assert.Contains("supportedFact=上記同一sourceIdの引用候補原文", prompt.UserPrompt);
+        Assert.Contains("excerpt=「" + source.Text + "」", prompt.UserPrompt);
         Assert.Contains("internalMemoだけに留めない", prompt.UserPrompt);
         Assert.Contains("未確認の版・既定値", prompt.UserPrompt);
         Assert.Contains("生成契約（customerReplyDraft）", prompt.UserPrompt);
@@ -1209,6 +1213,30 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Equal(reply, result.GeneratedReplyDraft);
     }
 
+    [Theory]
+    [InlineData("CxJobManagerとCxSystemManagerが停止し、両サービスの起動後にスキャンが完了したとの記録があります。", true)]
+    [InlineData("CxJobManagerとCxSystemManagerが停止したとの記録があります。", false)]
+    [InlineData("CxJobManagerとCxSystemManagerが起動し、スキャン完了後に停止したとの記録があります。", false)]
+    [InlineData("公式仕様ではCxJobManagerとCxSystemManagerが停止し、両サービスの起動後にスキャンが完了したとの記録があります。", false)]
+    public void SourceConditions_AttributesOnlyFullyMatchedCurrentCaseRecoveryRecords(string body, bool restored)
+    {
+        var resolution = new FactResolutionResult
+        {
+            AnswerReadiness = "NeedsReview",
+            ResolvedFacts = [new ResolvedFact
+            {
+                Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
+                EvidenceId = "case:history:1",
+                Value = "CxJobManager and CxSystemManager were stopped. After starting both services, the scan completed successfully.",
+            }],
+        };
+        var reply = "確認できる事実: " + body + "現時点で断定できない事項: 原因は未確認です。";
+        var actual = ImportantFactContract.PreserveSourceConditions(resolution, reply, new SafetyRedactionService());
+        Assert.Equal(restored, actual.Contains("案件履歴では、", StringComparison.Ordinal));
+        if (!restored) Assert.Equal(reply, actual);
+        else Assert.Null(ImportantFactContract.Validate(resolution, actual));
+    }
+
     [Fact]
     public async Task CompareAsync_RejectsOmittedRecoveryAndMqLogFacts()
     {
@@ -1735,10 +1763,11 @@ public sealed class GroundedAnswerComparisonTests
     }
 
     [Fact]
-    public async Task CompareAsync_RetryWithoutLostTechnicalIdentityDoesNotDuplicateHistory()
+    public async Task CompareAsync_RetryRestatesMissingHistoryEvenWhenTechnicalIdentityWasRetained()
     {
-        var request = NonReadyRequest("QACの設定変更後の再発について確認したいです。") with
+        var request = NonReadyRequest("CxSAST 9.7.4.1001 HF5の設定変更後の再発について確認したいです。") with
         {
+            InquiryFocus = new InquiryFocusExtractor().Extract("CxSAST 9.7.4.1001 HF5の設定変更後の再発について確認したいです。"),
             FactResolution = new FactResolutionResult
             {
                 AnswerReadiness = "NeedsReview",
@@ -1750,10 +1779,10 @@ public sealed class GroundedAnswerComparisonTests
             },
         };
         const string ending = "現時点で断定できない事項: 今回の原因は未確認です。" +
-            "追加で必要な確認: QACの設定変更履歴を教えていただけますか？";
+            "追加で必要な確認: CxSASTの設定変更履歴を教えていただけますか？";
         var client = new SequenceLlmClient(
-            NonReadyResponse("確認できる事実: QACの設定変更後に再発したとのご申告があります。" + ending),
-            NonReadyResponse("確認できる事実: 添付ログにMQ接続の失敗が記録されています。" + ending));
+            NonReadyResponse("確認できる事実: CxSAST 9.7.4.1001 HF5の設定変更後に再発したとのご申告があります。" + ending),
+            NonReadyResponse("確認できる事実: CxSAST 9.7.4.1001 HF5の添付ログにMQ接続の失敗が記録されています。" + ending));
 
         var result = await new GroundedAnswerComparisonService(client,
             new SafetyRedactionService(), new FixedChecker()).CompareAsync(request,
@@ -1762,7 +1791,8 @@ public sealed class GroundedAnswerComparisonTests
 
         Assert.Equal(2, client.CallCount);
         var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
-        Assert.DoesNotContain("再生成必須Fact:", retry);
+        Assert.Contains("再生成必須Fact:", retry);
+        Assert.Contains("本文へそのままコピーする原文技術値: [\"9.7.4.1001 HF5\"]", retry);
         Assert.Contains("検証失敗: 重要Factの欠落", retry);
         Assert.Contains("添付ログにMQ接続の失敗が記録されている。", client.Prompts[1].UserPrompt);
         Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
@@ -1840,6 +1870,36 @@ public sealed class GroundedAnswerComparisonTests
 
         Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
         Assert.Equal("NeedsReview", result.Candidate?.Readiness);
+    }
+
+    [Theory]
+    [InlineData("CurrentCase", "LicenseManager", true)]
+    [InlineData("PastCaseNote", "LicenseManager", false)]
+    [InlineData("CurrentCase", "OtherProcessor", false)]
+    public async Task CompareAsync_ConcreteActionCanUseOnlyTheCurrentCaseObservedSubject(
+        string sourceType, string requestedSubject, bool accepted)
+    {
+        var request = NonReadyRequest("QACの言語設定が戻ります。原因を調査してください。") with
+        {
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts = [new ResolvedFact
+                {
+                    Key = "ObservedLogFailure", Status = "Candidate", SourceType = sourceType,
+                    EvidenceId = "case:log:failure", Value = "添付ログにLicenseManagerの処理失敗が記録されている。",
+                }],
+            },
+        };
+        var reply = "確認できる事実: QACの言語設定が戻るとのご申告があります。添付ログにLicenseManagerの処理失敗が記録されています。" +
+            "現時点で断定できない事項: 原因は確認できません。" +
+            $"追加で必要な確認: {requestedSubject}の処理失敗内容を確認いただけますか？";
+        var result = await new GroundedAnswerComparisonService(
+            new RecordingLlmClient(NonReadyResponse(reply)), new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Evidence = [], Readiness = "NeedsReview" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "NeedsReview"));
+        Assert.Equal(accepted ? GroundedComparisonStatuses.ReadyForHumanReview : GroundedComparisonStatuses.Rejected, result.Status);
+        if (!accepted) Assert.Contains(result.Reasons, reason => reason.Contains("具体的", StringComparison.Ordinal));
     }
 
     [Theory]

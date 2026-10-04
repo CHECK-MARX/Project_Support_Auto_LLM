@@ -41,6 +41,66 @@ public sealed class SelectedOfficialCitationTests
     }
 
     [Fact]
+    public void Prompt_BoundsOutputQuotationsAndDeduplicatesOverlappingSourceSpans()
+    {
+        const string span = "Azure Managed Instance DBaaS is supported from Checkmarx SAST 9.2.";
+        const string inquiry = "Azure SQL Managed Instanceの可否を質問しています。";
+        var sources = new[]
+        {
+            new SearchSource { SourceId = "official:one", SourceType = "OfficialDoc", Url = "https://example.test/one", Text = span },
+            new SearchSource { SourceId = "official:overlap", SourceType = "OfficialDoc", Url = "https://example.test/overlap", Text = span },
+        };
+        var prompt = GroundedAnswerPromptBuilder.Build(new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "Synthetic" }, InquiryText = inquiry,
+            Sources = sources, Settings = new AiAssistantSettings { MaxPromptChars = 10000 },
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsReview",
+                ResolvedFacts = SelectedOfficialFactProjector.Project(inquiry, sources),
+            },
+        }, sources);
+        var evidence = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("evidence");
+        Assert.Equal(1, evidence.GetProperty("maxItems").GetInt32());
+        Assert.True(evidence.GetProperty("uniqueItems").GetBoolean());
+        var candidate = Assert.Single(evidence.GetProperty("items").GetProperty("oneOf").EnumerateArray());
+        var properties = candidate.GetProperty("properties");
+        Assert.Equal(sources[0].SourceId, properties.GetProperty("sourceId").GetProperty("const").GetString());
+        Assert.Equal(span, properties.GetProperty("excerpt").GetProperty("const").GetString());
+        Assert.All(sources, source => Assert.Equal(span, source.Text));
+    }
+
+    [Fact]
+    public void Prompt_DoesNotOfferUnrelatedReleaseSectionsJustBecauseTheyShareVersion()
+    {
+        const string factSpan = "Disabled checkers If you chose to migrate your projects_root directory, verify that you have the same checker configuration as the previous release before your first integration build analysis .";
+        const string otherSpan = "Licensing changes 2024 licenses are not compatible with Klocwork 2026.2 .";
+        const string inquiry = "Klocwork 2025.2から2026.2へ移行し、既定enabledとチェッカー構成の変更を確認します。";
+        var source = new SearchSource
+        {
+            SourceId = "official:release", SourceType = "OfficialDoc", Url = "https://example.test/release",
+            Text = "Klocwork 2026.2 Release notes. " + factSpan + "\n" + otherSpan,
+        };
+        var prompt = GroundedAnswerPromptBuilder.Build(new AnswerDraftRequest
+        {
+            Case = new CaseContext { ProductName = "Klocwork" }, InquiryText = inquiry,
+            Sources = [source], Settings = new AiAssistantSettings { MaxPromptChars = 10000 },
+            FactResolution = new FactResolutionResult
+            {
+                AnswerReadiness = "NeedsManufacturerConfirmation",
+                ResolvedFacts = SelectedOfficialFactProjector.Project(inquiry, [source]),
+            },
+        }, [source]);
+        var evidence = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("evidence");
+        var candidate = Assert.Single(evidence.GetProperty("items").GetProperty("oneOf").EnumerateArray());
+        Assert.Equal(factSpan, candidate.GetProperty("properties").GetProperty("excerpt").GetProperty("const").GetString());
+        Assert.Equal(1, evidence.GetProperty("maxItems").GetInt32());
+        Assert.Contains(otherSpan, source.Text);
+        Assert.Contains(source.Text, prompt.UserPrompt); // full frozen evidence remains unchanged
+        Assert.DoesNotContain("excerpt=「" + otherSpan, prompt.UserPrompt);
+    }
+
+    [Fact]
     public void Prompt_DoesNotPromoteCurrentCaseOrTrustAFactWhoseSpanIsAbsent()
     {
         var source = new SearchSource { SourceId = "s1", SourceType = "OfficialDoc", Text = "無関係な資料であり、正確な支持spanはありません。" };
