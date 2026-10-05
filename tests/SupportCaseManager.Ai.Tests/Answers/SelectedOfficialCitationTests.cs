@@ -28,7 +28,8 @@ public sealed class SelectedOfficialCitationTests
             Case = new CaseContext { ProductName = "Synthetic" }, InquiryText = inquiry,
             FactResolution = resolution, Sources = [source], Settings = new AiAssistantSettings { MaxPromptChars = 10000 },
         }, [source]);
-        Assert.Contains("excerpt=「" + span + "」", prompt.UserPrompt);
+        Assert.Contains(span, prompt.UserPrompt);
+        Assert.Contains("spanLength=" + span.Length, prompt.UserPrompt);
         Assert.DoesNotContain("原文に一致する引用候補なし", prompt.UserPrompt);
         var alternatives = prompt.OutputSchema!.Value.GetProperty("properties")
             .GetProperty("evidence").GetProperty("items").GetProperty("oneOf");

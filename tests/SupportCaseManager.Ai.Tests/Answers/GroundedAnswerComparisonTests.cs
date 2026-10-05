@@ -11,6 +11,90 @@ namespace SupportCaseManager.Ai.Tests.Answers;
 
 public sealed class GroundedAnswerComparisonTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompareAsync_ValidatesCausalRelationsAfterParserOnBothAttempts(bool inConfirmationReason)
+    {
+        const string assertion = "更新によりアクセス権限が変更されている可能性があります。";
+        var request = NonReadyRequest("Customerポータルにログインできません。更新を進めています。") with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "InsufficientEvidence" },
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: Customerポータルにログインできないとの申告があります。" +
+                "現時点で断定できない事項: 提示資料では原因を確認できません。" +
+                (inConfirmationReason ? "" : assertion) +
+                "追加で必要な確認: Customerポータルのエラーメッセージと発生日時を確認してください。",
+            internalMemo = "", evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+            needConfirmations = new[] { new { question = "エラーメッセージを確認してください。",
+                reason = inConfirmationReason ? assertion : "原因を確認するため。", priority = "High" } },
+        });
+        var client = new RecordingLlmClient(response);
+        var result = await new GroundedAnswerComparisonService(client, new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Readiness = "InsufficientEvidence", Evidence = [],
+                CustomerReplyDraft = "提示資料では原因を確認できません。" },
+                shadowReview: new ShadowReviewCriteria([], [], [], "InsufficientEvidence"));
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Equal(2, client.CallCount);
+        Assert.Contains(result.CandidateQuality!.UnsupportedTechnicalClaims, claim => claim.Kind == "EvidenceRelationship");
+    }
+
+    [Fact]
+    public async Task CompareAsync_DoesNotHideAbsenceAssertionInConfirmationReason()
+    {
+        var request = NonReadyRequest("FeatureAlphaの設定条件を確認したい。") with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+            Sources = [new SearchSource { SourceId = "s1", SourceType = "OfficialDoc", ProductName = "HelixQAC",
+                Text = "FeatureAlphaの設定画面を開いてください。", Score = 0.8 }],
+        };
+        var response = JsonSerializer.Serialize(new
+        {
+            customerReplyDraft = "確認できる事実: FeatureAlphaの設定条件を質問されています。" +
+                "現時点で断定できない事項: 今回確認した資料からは設定条件を確認できません。" +
+                "追加で必要な確認: 設定画面の現在値と対象製品版を確認してください。",
+            internalMemo = "", evidence = Array.Empty<object>(), confidence = 0.2, warnings = Array.Empty<string>(),
+            needConfirmations = new[] { new { question = "対象製品版を確認してください。",
+                reason = "公式資料にFeatureAlphaの条件が明記されていません。", priority = "High" } },
+        });
+        var client = new RecordingLlmClient(response);
+        var result = await new GroundedAnswerComparisonService(client, new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Readiness = "NeedsManufacturerConfirmation",
+                CustomerReplyDraft = "提示資料ではFeatureAlphaの設定条件を確認できません。",
+                Evidence = [new EvidenceItem { SourceId = "s1", SourceType = "OfficialDoc",
+                    Excerpt = "FeatureAlphaの設定画面を開いてください。" }] });
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Equal(2, client.CallCount);
+        Assert.Contains(result.CandidateQuality!.UnsupportedTechnicalClaims, claim => claim.Kind == "EvidenceAbsence");
+    }
+
+    [Theory]
+    [InlineData("公式資料にFeatureAlphaの手順は明記されていないこと。")]
+    [InlineData("公式仕様でFeatureAlphaは定義されていません。")]
+    [InlineData("FeatureAlphaはサポートされていません。")]
+    public async Task CompareAsync_BlocksUnsupportedAbsenceAfterBothAttempts(string assertion)
+    {
+        var request = NonReadyRequest("FeatureAlphaの設定条件を確認したい。") with
+        {
+            FactResolution = new FactResolutionResult { AnswerReadiness = "NeedsManufacturerConfirmation" },
+            Sources = [new SearchSource { SourceId = "s1", SourceType = "OfficialDoc", ProductName = "HelixQAC",
+                Text = "FeatureAlphaの設定画面を開いてください。", Score = 0.8 }],
+        };
+        var client = new RecordingLlmClient(NonReadyResponse("確認できる事実: FeatureAlphaの設定条件を質問されています。" +
+            "現時点で断定できない事項: " + assertion +
+            "追加で必要な確認: 設定画面の現在値と対象製品版を確認してください。"));
+        var result = await new GroundedAnswerComparisonService(client, new SafetyRedactionService(), new FixedChecker())
+            .CompareAsync(request, Baseline() with { Readiness = "NeedsManufacturerConfirmation",
+                Evidence = [new EvidenceItem { SourceId = "s1", SourceType = "OfficialDoc",
+                    Excerpt = "FeatureAlphaの設定画面を開いてください。" }],
+                CustomerReplyDraft = "提示資料ではFeatureAlphaの設定条件を確認できません。" });
+        Assert.Equal(GroundedComparisonStatuses.Rejected, result.Status);
+        Assert.Equal(2, client.CallCount);
+        Assert.True(result.CandidateQuality?.UnsupportedClaimCount > 0);
+    }
+
     private const string EvidenceText = "設定画面でポート番号1234を指定してください。";
 
     [Fact]
@@ -108,7 +192,8 @@ public sealed class GroundedAnswerComparisonTests
         var choices = prompt.UserPrompt.Split('\n')
             .Where(static line => line.StartsWith("引用候補", StringComparison.Ordinal)).ToArray();
         Assert.Single(choices);
-        Assert.Contains(EvidenceText, choices[0], StringComparison.Ordinal);
+        Assert.Contains("spanLength=" + EvidenceText.Length, choices[0], StringComparison.Ordinal);
+        Assert.Contains(EvidenceText, prompt.UserPrompt, StringComparison.Ordinal);
         Assert.DoesNotContain("顧客会社", choices[0], StringComparison.Ordinal);
     }
 
@@ -518,7 +603,7 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Contains("起動対象=Validateサーバー", prompt.UserPrompt);
         Assert.Contains("衝突対象=データベースサーバー", prompt.UserPrompt);
         Assert.Contains("生成契約Readiness: NeedsReview", prompt.UserPrompt);
-        Assert.Contains("対象事象との直接対応: NO", prompt.UserPrompt);
+        Assert.DoesNotContain(Request().Sources[0].Text, prompt.UserPrompt);
         Assert.Contains("引用可能な直接対応資料: なし", prompt.UserPrompt);
         Assert.Contains("evidenceは空配列", prompt.UserPrompt);
         Assert.Contains("確認項目は顧客向け本文にも書き", prompt.SystemPrompt);
@@ -571,7 +656,7 @@ public sealed class GroundedAnswerComparisonTests
 
         Assert.Contains("Confirmed Fact: sourceId=official:checker", prompt.UserPrompt);
         Assert.Contains("supportedFact=上記同一sourceIdの引用候補原文", prompt.UserPrompt);
-        Assert.Contains("excerpt=「" + source.Text + "」", prompt.UserPrompt);
+        Assert.Contains(source.Text, prompt.UserPrompt);
         Assert.Contains("internalMemoだけに留めない", prompt.UserPrompt);
         Assert.Contains("未確認の版・既定値", prompt.UserPrompt);
         Assert.Contains("生成契約（customerReplyDraft）", prompt.UserPrompt);
@@ -749,7 +834,7 @@ public sealed class GroundedAnswerComparisonTests
         };
         var response = JsonSerializer.Serialize(new
         {
-            customerReplyDraft = "確認できる事実: 顧客が報告したリリースノートの記載違いについて照会されています。" +
+            customerReplyDraft = "確認できる事実: 顧客が報告した2026.1と2026.2のリリースノートの記載違いについて照会されています。" +
                 "現時点で断定できない事項: enabled既定設定の変更有無は確認できません。" +
                 "追加で必要な確認: チェッカー構成ファイルの版間差分とメーカー見解を確認してください。",
             internalMemo = "根拠未確認",
@@ -1631,7 +1716,7 @@ public sealed class GroundedAnswerComparisonTests
         Assert.Contains("9.7.4.1001 HF5", client.Prompts[0].UserPrompt);
         Assert.Contains("問い合わせ対象版 9.7.4.1001 HF5", client.Prompts[1].UserPrompt);
         Assert.Equal(1, client.Prompts[1].UserPrompt.Split("Must Preserve Fact:").Length - 1);
-        Assert.Contains("再生成必須Fact:", client.Prompts[1].UserPrompt);
+        Assert.Contains("再生成必須Fact: sourceType=CurrentInquiry", client.Prompts[1].UserPrompt);
         Assert.Contains("customerMeaning=問い合わせで明示された対象版は9.7.4.1001 HF5",
             client.Prompts[1].UserPrompt);
         Assert.Equal(GroundedComparisonStatuses.ReadyForHumanReview, result.Status);
@@ -1680,9 +1765,10 @@ public sealed class GroundedAnswerComparisonTests
 
         Assert.Equal(2, client.CallCount);
         var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
-        Assert.Contains("再生成必須Fact:", retry);
-        Assert.Contains("添付ログにResultsReceiverのMQ接続失敗が記録されている。", retry);
-        Assert.Contains("attribution=CurrentCase案件履歴・添付の観測", retry);
+        Assert.Contains("未保持Fact:", retry);
+        Assert.Contains("key=ObservedLogFailure", retry);
+        Assert.Contains("添付ログにResultsReceiverのMQ接続失敗が記録されている。", client.Prompts[1].UserPrompt);
+        Assert.Contains("生成契約の帰属・内容を本文へ保持する", retry);
         Assert.Contains("9.7.4.1001 HF5", retry);
         Assert.Contains("本文へそのままコピーする原文技術値: [\"9.7.4.1001 HF5\"]", retry);
         Assert.Contains("attribution=顧客申告", retry);
@@ -1791,7 +1877,7 @@ public sealed class GroundedAnswerComparisonTests
 
         Assert.Equal(2, client.CallCount);
         var retry = client.Prompts[1].UserPrompt.Split("一度目の回答は既存の検証で不合格です。", 2)[1];
-        Assert.Contains("再生成必須Fact:", retry);
+        Assert.Contains("未保持Fact:", retry);
         Assert.Contains("本文へそのままコピーする原文技術値: [\"9.7.4.1001 HF5\"]", retry);
         Assert.Contains("検証失敗: 重要Factの欠落", retry);
         Assert.Contains("添付ログにMQ接続の失敗が記録されている。", client.Prompts[1].UserPrompt);

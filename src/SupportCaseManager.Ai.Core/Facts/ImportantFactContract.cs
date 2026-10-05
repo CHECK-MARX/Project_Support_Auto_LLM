@@ -41,7 +41,8 @@ internal static class ImportantFactContract
             if (absence.Success)
                 additions.Add(InquiryFact("ImportantInquiryAbsence", absence.Value, "未付与・不使用", redactor));
         }
-        foreach (var version in focus?.TargetVersions ?? [])
+        foreach (var version in (focus?.TargetVersions ?? [])
+            .Concat(Version.Matches(inquiry).Select(match => match.Value)).Distinct(StringComparer.Ordinal))
         {
             if (!inquiry.Contains(version, StringComparison.Ordinal)) continue;
             var qualified = QualifyInquiryVersion(inquiry, version);
@@ -51,6 +52,12 @@ internal static class ImportantFactContract
             foreach (Match option in Regex.Matches(inquiry, @"(?m)^\s*[0-9０-９]+[．.、)）]\s*(?<value>[^\r\n]{3,120})"))
                 additions.Add(InquiryFact("ImportantInquiryOption", option.Groups["value"].Value.Trim(),
                     "問い合わせの選択肢", redactor));
+        foreach (var option in Regex.Matches(inquiry, @"個人アカウント|専用の?[A-Za-z0-9/]+用アカウント|専用アカウント")
+            .Select(match => match.Value).Distinct(StringComparer.Ordinal))
+            additions.Add(InquiryFact("ImportantInquiryOption", option, "問い合わせの選択肢", redactor));
+        foreach (var clause in Regex.Split(inquiry, @"[。！？\r\n]+").Select(value => value.Trim()))
+            if (Regex.IsMatch(clause, @"(?:Windows|Linux|macOS).{0,50}(?:版|提供|配布|入手)|(?:提供|配布|入手).{0,50}(?:Windows|Linux|macOS)", RegexOptions.IgnoreCase))
+                additions.Add(InquiryFact("ImportantInquiryIntent", clause, "提供依頼", redactor));
         foreach (Match transition in Regex.Matches(inquiry,
             @"v?(?<from>\d+(?:\.\d+){1,3})から\s*v?(?<to>\d+(?:\.\d+){1,3})へ[^。\r\n]{0,50}(?:更新|移行|バージョンアップ)",
             RegexOptions.IgnoreCase))
@@ -157,7 +164,10 @@ internal static class ImportantFactContract
         {
             if (fact.Key == "ImportantInquiryOption")
             {
-                if (!NormalizeAxis(reply).Contains(NormalizeAxis(fact.Value), StringComparison.Ordinal))
+                if (!NormalizeAxis(reply).Contains(NormalizeAxis(fact.Value), StringComparison.Ordinal) &&
+                    !(fact.Value.Contains("アカウント", StringComparison.Ordinal) &&
+                      NormalizeAxis(reply).Replace("の", "").Replace("用", "").Contains(
+                          NormalizeAxis(fact.Value).Replace("の", "").Replace("用", ""), StringComparison.Ordinal)))
                     return "重要Factの欠落: 問い合わせの選択肢が回答本文にありません。";
             }
             else if (fact.Key == "ImportantInquiryIntent")
@@ -169,6 +179,10 @@ internal static class ImportantFactContract
                     Regex.IsMatch(fact.Value, @"変更がある|変更の有無") &&
                     !Regex.IsMatch(reply, @"変更|change", RegexOptions.IgnoreCase))
                     return "重要Factの欠落: 顧客の質問軸・Intentが回答本文にありません。";
+                if (fact.Operation == "提供依頼" && (!Regex.IsMatch(reply, @"提供|配布|入手|依頼") ||
+                    Regex.Matches(fact.Value, @"Windows|Linux|macOS", RegexOptions.IgnoreCase)
+                        .Any(os => !reply.Contains(os.Value, StringComparison.OrdinalIgnoreCase))))
+                    return "重要Factの欠落: 原質問のOS・提供依頼軸が回答本文にありません。";
             }
             else if (fact.Key == "ImportantInquiryTransition")
             {
@@ -272,7 +286,8 @@ internal static class ImportantFactContract
                     fact.Value.Contains("MQ", StringComparison.OrdinalIgnoreCase) &&
                     !factSection.Contains("MQ", StringComparison.OrdinalIgnoreCase) ||
                     !Regex.IsMatch(factSection, @"失敗|failure|failed", RegexOptions.IgnoreCase) ||
-                    !factSection.Contains("添付ログ", StringComparison.Ordinal))
+                    !Regex.IsMatch(factSection, @"添付ログ|(?:お客様|顧客).{0,100}ログ|ログ(?:には|に|で).{0,140}(?:記録|報告)") ||
+                    Regex.IsMatch(factSection, @"(?:過去|別|他)(?:の)?案件.{0,30}ログ"))
                     return "重要Factの欠落: 添付ログに記録された失敗が回答本文にありません。";
                 if (Regex.IsMatch(factSection, @"(?:MQ|接続).{0,20}(?:失敗していない|失敗なし|成功した|正常に接続)",
                     RegexOptions.IgnoreCase))

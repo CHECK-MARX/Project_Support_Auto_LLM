@@ -94,8 +94,10 @@ public sealed class GroundedAnswerComparisonService(
         PromptMessages prompt;
         try
         {
-            prompt = GroundedAnswerPromptBuilder.Build(request, sources);
-            if (retryFeedback is not null)
+            var relational = GroundedAnswerPromptBuilder.NeedsRelationalContract(request.FactResolution);
+            prompt = GroundedAnswerPromptBuilder.Build(request, sources,
+                relational ? retryFeedback : null);
+            if (retryFeedback is not null && !relational)
             {
                 var nextLength = prompt.Diagnostics.FinalPromptChars + retryFeedback.Length;
                 if (nextLength > request.Settings.MaxPromptChars)
@@ -329,7 +331,8 @@ public sealed class GroundedAnswerComparisonService(
             }
             : AnswerPostProcessor.Process(
                 comparisonRequest,
-                draft with { Warnings = draft.Warnings.Concat(generation.Diagnostics).ToList() },
+                draft with { AnswerGenerationMode = AnswerGenerationModes.GroundedCandidate,
+                    Warnings = draft.Warnings.Concat(generation.Diagnostics).ToList() },
                 draft.Evidence,
                 draft.Confidence > 0 ? Math.Clamp(draft.Confidence, 0, 1) : baseline.Confidence,
                 draft.Warnings) with
@@ -357,8 +360,8 @@ public sealed class GroundedAnswerComparisonService(
         if (ImportantFactContract.Validate(request.FactResolution, candidate.CustomerReplyDraft) is { } finalFactIssue)
             return Reject(baseline, finalFactIssue, candidate.CustomerReplyDraft);
 
-        var baselineQuality = EvaluateQuality(request, baseline.CustomerReplyDraft, sources);
-        var quality = EvaluateQuality(request, candidate.CustomerReplyDraft, sources);
+        var baselineQuality = EvaluateQuality(request, baseline, sources);
+        var quality = EvaluateQuality(request, candidate, sources);
         var reasons = new List<string>();
         var rawGeneratedReadiness = candidate.Readiness;
         if ((!evidenceFreeAbstention && quality.Grounding < baselineQuality.Grounding) ||
@@ -455,7 +458,7 @@ public sealed class GroundedAnswerComparisonService(
         var feedback = new StringBuilder();
         feedback.AppendLine();
         feedback.AppendLine("一度目の回答は既存の検証で不合格です。今回が最後の生成です。" +
-            "同じEvidence、一次Readiness、JSON SchemaでcustomerReplyDraftを全面的に書き直してください。");
+            "同じEvidence、一次Readiness、JSON Schemaで失敗箇所だけを修正し、正しかったFactと具体的確認を残してください。");
         foreach (var reason in rejected.Reasons.Distinct(StringComparer.Ordinal).Take(3))
             feedback.AppendLine($"検証失敗: {reason}");
         if (IsHeadingOnlyReply(rejected.GeneratedReplyDraft ?? string.Empty))
@@ -488,11 +491,7 @@ public sealed class GroundedAnswerComparisonService(
                     feedback.AppendLine("帰属付きFactの内容と未確認条件は一体で本文に書き、公式仕様へ昇格させないでください。");
                 foreach (var fact in missing.Where(static fact => fact.Key != "ImportantInquiryVersion")
                     .DistinctBy(ImportantFactContract.DescribeForGeneration))
-                {
-                    var description = ImportantFactContract.DescribeForGeneration(fact);
-                    feedback.AppendLine($"再生成必須Fact: sourceType={fact.SourceType}; " +
-                        description[description.IndexOf("attribution=", StringComparison.Ordinal)..]);
-                }
+                    feedback.AppendLine($"未保持Fact: key={fact.Key}; sourceId={fact.EvidenceId}。生成契約の帰属・内容を本文へ保持する。");
             }
             // Retain every inquiry version, including ones correct in the first answer:
             // repairing history must not discard an already preserved version.
@@ -857,11 +856,14 @@ public sealed class GroundedAnswerComparisonService(
 
     private static AnswerQualityEvaluationResult EvaluateQuality(
         AnswerDraftRequest request,
-        string answer,
+        AnswerDraftResult answer,
         IReadOnlyList<SearchSource> sources) => AnswerQualityEvaluator.Evaluate(new AnswerQualityEvaluationInput
         {
             Question = request.InquiryText,
-            Answer = answer,
+            // Confirmation reasons are visible with the answer. Moving an assertion
+            // out of customerReplyDraft must not let it escape the same quality gate.
+            Answer = string.Join(Environment.NewLine, new[] { answer.CustomerReplyDraft }
+                .Concat(answer.NeedConfirmations.SelectMany(item => new[] { item.Question, item.Reason }))),
             ProductName = request.Case.ProductName,
             RequestedVersion = request.InquiryFocus?.TargetVersions.FirstOrDefault(),
             Evidence = sources.Select(static source => new AnswerQualityEvidence
@@ -870,7 +872,7 @@ public sealed class GroundedAnswerComparisonService(
                 SourceType = source.SourceType,
                 Text = source.Text,
                 ProductName = source.ProductName,
-            }).Concat(ImportantFactContract.Select(request.FactResolution)
+            }).Concat((request.FactResolution?.ResolvedFacts ?? [])
                 .Where(static fact => fact.SourceType == "CurrentCase")
                 .Select(fact => new AnswerQualityEvidence
                 {
