@@ -78,13 +78,14 @@ public static class OllamaModelResolver
             }
         }
 
-        return Success(
-            available[0],
-            ModelResolutionSources.Fallback,
-            available,
-            requestedModel,
-            available[0],
-            ModelFallbackReasons.QualityPresetUnavailable);
+        return new ModelResolutionResult
+        {
+            RequestedModel = requestedModel,
+            Source = ModelResolutionSources.Unresolved,
+            AvailableModels = available,
+            FallbackReason = ModelFallbackReasons.NoSuitableModel,
+            Message = "回答に使用できる既定モデルがありません。文章生成モデルを選択してください。",
+        };
     }
 
     private static ModelResolutionResult Success(
@@ -174,4 +175,6 @@ public static class ModelFallbackReasons
     public const string NoAvailableModels = "NoAvailableModels";
     public const string RequestedModelUnavailable = "RequestedModelUnavailable";
     public const string QualityPresetUnavailable = "QualityPresetUnavailable";
+
+    public const string NoSuitableModel = "NoSuitableModel";
 }

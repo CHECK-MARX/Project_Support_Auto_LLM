@@ -8,6 +8,15 @@ namespace SupportCaseManager.Ai.Tests.Llm;
 public sealed class ModelResolutionTests
 {
     [Fact]
+    public void Resolve_DoesNotChooseArbitraryModelWhenPresetIsMissing()
+    {
+        var result = OllamaModelResolver.Resolve(null, AnswerQualityModes.Quality, ["unrecognized:cloud"]);
+
+        Assert.False(result.IsResolved);
+        Assert.Equal(ModelFallbackReasons.NoSuitableModel, result.FallbackReason);
+    }
+
+    [Fact]
     public void Resolve_RestoresAvailableSavedModel()
     {
         var result = OllamaModelResolver.Resolve(

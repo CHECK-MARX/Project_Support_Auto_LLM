@@ -98,7 +98,8 @@ public static partial class AnswerPostProcessor
                 mergedWarnings.Add("社内メモが不足していたため補完しました。");
             }
 
-            if (ShouldBuildEvidenceBackedFallback(request, customerReply, finalEvidence))
+            if (result.AnswerGenerationMode != AnswerGenerationModes.GroundedCandidate &&
+                ShouldBuildEvidenceBackedFallback(request, customerReply, finalEvidence))
             {
                 var evidenceLimit = request.Settings.UseCoverageAwareEvidenceSelection
                     ? request.Sources.Count

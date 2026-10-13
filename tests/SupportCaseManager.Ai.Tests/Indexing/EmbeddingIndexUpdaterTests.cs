@@ -71,6 +71,87 @@ public sealed class EmbeddingIndexUpdaterTests
     }
 
     [Fact]
+    public async Task UpdateAsync_DigestChangeRebuildsUnchangedSources()
+    {
+        using var temp = new TempDirectory();
+        var client = new RecordingEmbeddingClient();
+        var updater = new EmbeddingIndexUpdater(client);
+        await WriteManualIndexAsync(temp.Path, [CreateManual("manual-a", "alpha")]);
+
+        var first = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:first");
+        var same = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:first");
+        var blocked = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:second");
+        var changed = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            forceRebuild: true, embeddingModelDigest: "sha256:second");
+        var index = await EmbeddingIndexUpdater.LoadAsync(Path.Combine(temp.Path, EmbeddingIndexDocument.FileName));
+
+        Assert.True(first.IsSuccess);
+        Assert.Equal(1, same.UnchangedCount);
+        Assert.False(blocked.IsSuccess);
+        Assert.Equal("NeedsRebuild", blocked.Status);
+        Assert.True(changed.IsSuccess);
+        Assert.Equal(0, changed.UnchangedCount);
+        Assert.Equal(2, client.EmbeddedInputCount);
+        Assert.Equal("sha256:second", index?.EmbeddingModelDigest);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_DigestChangeFailurePreservesPreviousIndex()
+    {
+        using var temp = new TempDirectory();
+        var client = new RecordingEmbeddingClient();
+        var updater = new EmbeddingIndexUpdater(client);
+        await WriteManualIndexAsync(temp.Path, [CreateManual("manual-a", "alpha")]);
+        var first = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:first");
+        var indexPath = Path.Combine(temp.Path, EmbeddingIndexDocument.FileName);
+        var previousBytes = await File.ReadAllBytesAsync(indexPath);
+
+        client.ThrowOnEmbed = true;
+        var blocked = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:second");
+        var failed = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            forceRebuild: true, embeddingModelDigest: "sha256:second");
+
+        Assert.True(first.IsSuccess);
+        Assert.Equal("NeedsRebuild", blocked.Status);
+        Assert.False(failed.IsSuccess);
+        Assert.Equal(previousBytes, await File.ReadAllBytesAsync(indexPath));
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SanitizationChangeDoesNotReuseOldVector()
+    {
+        using var temp = new TempDirectory();
+        var client = new RecordingEmbeddingClient();
+        var updater = new EmbeddingIndexUpdater(client);
+        await WriteManualIndexAsync(temp.Path, [CreateManual("manual-a", "contact@example.test QAC analysis")]);
+
+        var first = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text");
+        var sanitized = await updater.UpdateAsync(
+            "HelixQAC", temp.Path, "http://localhost:11434", "nomic-embed-text",
+            sanitizeEmbeddingInput: true);
+        var index = await EmbeddingIndexUpdater.LoadAsync(Path.Combine(temp.Path, EmbeddingIndexDocument.FileName));
+
+        Assert.True(first.IsSuccess);
+        Assert.True(sanitized.IsSuccess);
+        Assert.Equal(0, sanitized.UnchangedCount);
+        Assert.Equal(2, client.EmbeddedInputCount);
+        Assert.True(index?.Entries.Single().EmbeddingInputSanitized);
+    }
+
+    [Fact]
     public async Task StagingBuild_WritesOnlyStagingIndex_AndSanitizesEmbeddingInput()
     {
         using var source = new TempDirectory();
@@ -106,6 +187,85 @@ public sealed class EmbeddingIndexUpdaterTests
         Assert.Equal("cosine", index.DistanceMetric);
         Assert.True(index.Entries.Single().EmbeddingInputSanitized);
         Assert.DoesNotContain("mail@example.test", client.Inputs.Single(), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task StagingBuild_UnknownDigestDoesNotCreateIndex()
+    {
+        using var source = new TempDirectory();
+        using var staging = new TempDirectory();
+        await WriteManualIndexAsync(source.Path, [CreateManual("manual-a", "QAC analysis")]);
+        var client = new RecordingEmbeddingClient();
+        using var httpClient = new HttpClient(new TagsHandler());
+        var builder = new EmbeddingIndexStagingBuilder(new EmbeddingIndexUpdater(client), httpClient);
+
+        var result = await builder.BuildAsync(
+            "HelixQAC", source.Path, staging.Path, "http://localhost:11434", "different-model");
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains("digest", result.Warning);
+        Assert.Equal(0, client.EmbeddedInputCount);
+        Assert.False(File.Exists(result.IndexFilePath));
+    }
+
+    [Fact]
+    public async Task DigestResolver_AcceptsLatestAlias()
+    {
+        using var httpClient = new HttpClient(new TagsHandler());
+        var resolver = new OllamaEmbeddingModelDigestResolver(httpClient);
+
+        var digest = await resolver.ResolveAsync("http://localhost:11434", "nomic-embed-text:latest");
+
+        Assert.Equal("sha256:test", digest);
+    }
+
+    [Fact]
+    public async Task GenerationPublisher_PublishesValidatedIndexAndRollsBack()
+    {
+        using var active = new TempDirectory();
+        using var staging = new TempDirectory();
+        var updater = new EmbeddingIndexUpdater(new RecordingEmbeddingClient());
+        await WriteManualIndexAsync(active.Path, [CreateManual("manual-a", "QAC analysis")]);
+        var first = await updater.UpdateAsync(
+            "HelixQAC", active.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:first");
+        var second = await updater.UpdateAsync(
+            "HelixQAC", staging.Path, "http://localhost:11434", "bge-m3",
+            forceRebuild: true, sourceProductIndexFolder: active.Path,
+            embeddingModelDigest: "sha256:second");
+        var publisher = new EmbeddingIndexGenerationPublisher();
+
+        await publisher.PublishAsync(second.IndexFilePath, active.Path, "HelixQAC", "bge-m3");
+        var published = await EmbeddingIndexUpdater.LoadAsync(first.IndexFilePath);
+        Assert.Equal("sha256:second", published?.EmbeddingModelDigest);
+
+        await publisher.RollbackAsync(active.Path, "HelixQAC");
+        var restored = await EmbeddingIndexUpdater.LoadAsync(first.IndexFilePath);
+        Assert.Equal("sha256:first", restored?.EmbeddingModelDigest);
+    }
+
+    [Fact]
+    public async Task GenerationPublisher_RejectsStaleSourceAndPreservesActiveIndex()
+    {
+        using var active = new TempDirectory();
+        using var staging = new TempDirectory();
+        var updater = new EmbeddingIndexUpdater(new RecordingEmbeddingClient());
+        await WriteManualIndexAsync(active.Path, [CreateManual("manual-a", "original")]);
+        var first = await updater.UpdateAsync(
+            "HelixQAC", active.Path, "http://localhost:11434", "nomic-embed-text",
+            embeddingModelDigest: "sha256:first");
+        var second = await updater.UpdateAsync(
+            "HelixQAC", staging.Path, "http://localhost:11434", "bge-m3",
+            forceRebuild: true, sourceProductIndexFolder: active.Path,
+            embeddingModelDigest: "sha256:second");
+        var originalBytes = await File.ReadAllBytesAsync(first.IndexFilePath);
+        await WriteManualIndexAsync(active.Path, [CreateManual("manual-a", "revised")]);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new EmbeddingIndexGenerationPublisher().PublishAsync(
+                second.IndexFilePath, active.Path, "HelixQAC", "bge-m3"));
+
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(first.IndexFilePath));
     }
 
     private static AiIndexedManual CreateManual(string id, string text)

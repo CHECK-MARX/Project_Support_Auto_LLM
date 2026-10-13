@@ -67,6 +67,7 @@ public sealed class AiCaseKeywordSearcher : IAiCaseKeywordSearcher
             SectionTitle = note.NoteKind,
             DocumentTitle = note.Title,
             ChunkId = note.Id,
+            ContentHash = note.ChunkContentHash,
         };
     }
 

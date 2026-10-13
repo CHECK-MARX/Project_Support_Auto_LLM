@@ -138,6 +138,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                         noteKindExtractedCount += 1;
                     }
 
+                    var sourceTextHash = HashText(note.Text);
                     var chunkIndex = 0;
                     foreach (var chunk in SplitIntoChunks(note.Text))
                     {
@@ -153,7 +154,11 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                             NoteKind = note.NoteKind,
                             NoteFilePath = note.FilePath,
                             Title = BuildTitle(context.SupportNumber, context.CompanyName, note.NoteKind, chunkIndex),
-                            Text = chunk,
+                            Text = chunk.Text,
+                            SourceTextHash = sourceTextHash,
+                            ChunkContentHash = HashText(chunk.Text),
+                            ChunkStartOffset = chunk.StartOffset,
+                            ChunkOrdinal = chunkIndex,
                             LastModifiedAt = note.LastModifiedAt,
                         });
                         chunkIndex += 1;
@@ -283,6 +288,9 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
             scannedNoteFiles += currentNoteFiles.Count;
 
             var isUnchanged = !forceRebuild && answerPairIndexExists && oldNotes is { Count: > 0 } &&
+                oldNotes.All(static note =>
+                    !string.IsNullOrWhiteSpace(note.SourceTextHash) &&
+                    !string.IsNullOrWhiteSpace(note.ChunkContentHash)) &&
                 HasSameNoteFilesAndTimestamps(oldNotes, currentNoteFiles);
             if (isUnchanged)
             {
@@ -304,6 +312,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                 var caseFolderName = Path.GetFileName(caseFolderPath);
                 foreach (var note in context.Notes.Where(static note => !string.IsNullOrWhiteSpace(note.Text) && !IsGptHandoffNote(note.FilePath)))
                 {
+                    var sourceTextHash = HashText(note.Text);
                     var chunkIndex = 0;
                     foreach (var chunk in SplitIntoChunks(note.Text))
                     {
@@ -319,7 +328,11 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
                             NoteKind = note.NoteKind,
                             NoteFilePath = note.FilePath,
                             Title = BuildTitle(context.SupportNumber, context.CompanyName, note.NoteKind, chunkIndex),
-                            Text = chunk,
+                            Text = chunk.Text,
+                            SourceTextHash = sourceTextHash,
+                            ChunkContentHash = HashText(chunk.Text),
+                            ChunkStartOffset = chunk.StartOffset,
+                            ChunkOrdinal = chunkIndex,
                             LastModifiedAt = note.LastModifiedAt,
                         });
                         chunkIndex += 1;
@@ -538,11 +551,11 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
         }
     }
 
-    private static IEnumerable<string> SplitIntoChunks(string text)
+    private static IEnumerable<CaseChunkSlice> SplitIntoChunks(string text)
     {
         if (string.IsNullOrEmpty(text))
         {
-            yield return string.Empty;
+            yield return new CaseChunkSlice(string.Empty, 0);
             yield break;
         }
 
@@ -550,7 +563,7 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
         while (start < text.Length)
         {
             var length = Math.Min(ChunkMaxLength, text.Length - start);
-            yield return text.Substring(start, length);
+            yield return new CaseChunkSlice(text.Substring(start, length), start);
             if (start + length >= text.Length)
             {
                 break;
@@ -559,6 +572,11 @@ public sealed class AiCaseIndexBuilder : IAiCaseIndexBuilder
             start += Math.Max(1, ChunkMaxLength - ChunkOverlapLength);
         }
     }
+
+    private static string HashText(string text) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
+
+    private sealed record CaseChunkSlice(string Text, int StartOffset);
 
     private static string BuildTitle(
         string? supportNumber,

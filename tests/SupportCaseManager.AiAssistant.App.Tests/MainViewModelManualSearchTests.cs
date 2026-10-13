@@ -266,6 +266,38 @@ public sealed class MainViewModelManualSearchTests
         Assert.Equal("gemma4:31b", services.ViewModel.ChatModel);
     }
 
+    [Fact]
+    public async Task GenerateDraftAsync_EmbeddingOnlyModelIsRejectedBeforeAnswerService()
+    {
+        var answerService = new CapturingAnswerService();
+        var services = CreateViewModel([CreateManualSource()], answerService: answerService);
+        services.ViewModel.LlmProvider = "Ollama";
+        services.ViewModel.ChatModel = "nomic-embed-text:latest";
+        ConfigureProduct(services.ViewModel, "Checkmarx");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "SearchManualsAsync");
+        await InvokePrivateTaskAsync(services.ViewModel, "GenerateDraftAsync");
+
+        Assert.Null(answerService.LastRequest);
+        Assert.Equal("ModelCannotGenerate", services.ViewModel.GenerationSkippedReason);
+        Assert.Contains("文章生成に対応していません", services.ViewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task RefreshOllamaModelsCoreAsync_NoCompletionModelsClearsStaleListWithoutChangingSavedModel()
+    {
+        var services = CreateViewModel([CreateManualSource()]);
+        services.ViewModel.ChatModel = "nomic-embed-text:latest";
+        services.ViewModel.AvailableModels.Add("stale-model");
+
+        await InvokePrivateTaskAsync(services.ViewModel, "RefreshOllamaModelsCoreAsync");
+
+        Assert.Empty(services.ViewModel.AvailableModels);
+        Assert.Equal("nomic-embed-text:latest", services.ViewModel.ChatModel);
+        Assert.Equal("NeedsConfiguration", services.ViewModel.GenerationState);
+        Assert.Contains("文章生成に対応するOllamaモデルが見つかりません", services.ViewModel.OllamaConnectionResultText);
+    }
+
     [Theory]
     [InlineData("qwen3.8:27b")]
     [InlineData("gemma4:31b")]
@@ -983,6 +1015,18 @@ public sealed class MainViewModelManualSearchTests
 
     private sealed class FakeOllamaConnectionChecker : IOllamaConnectionChecker
     {
+        public Task<OllamaModelCapabilityResult> CheckChatModelCapabilityAsync(
+            LlmProviderSettings settings,
+            CancellationToken cancellationToken = default)
+        {
+            var canGenerate = !settings.ChatModel.Contains("embed", StringComparison.OrdinalIgnoreCase);
+            return Task.FromResult(new OllamaModelCapabilityResult
+            {
+                CanGenerate = canGenerate,
+                Message = canGenerate ? string.Empty : $"{settings.ChatModel} は文章生成に対応していません。",
+            });
+        }
+
         public Task<OllamaConnectionCheckResult> CheckAsync(
             LlmProviderSettings settings,
             bool disableThinking = true,

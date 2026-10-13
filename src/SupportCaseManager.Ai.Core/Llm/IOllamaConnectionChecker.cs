@@ -15,4 +15,18 @@ public interface IOllamaConnectionChecker
     {
         return (await CheckAsync(settings, cancellationToken: cancellationToken)).AvailableModels;
     }
+
+    Task<IReadOnlyList<string>> ListChatModelsAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        return ListModelsAsync(settings, cancellationToken);
+    }
+
+    Task<OllamaModelCapabilityResult> CheckChatModelCapabilityAsync(
+        LlmProviderSettings settings,
+        CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new OllamaModelCapabilityResult { CanGenerate = true });
+    }
 }

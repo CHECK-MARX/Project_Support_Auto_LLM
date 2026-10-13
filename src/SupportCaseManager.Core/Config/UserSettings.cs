@@ -16,6 +16,11 @@ public sealed class UserSettings
     public Guid? ActiveProductId { get; set; }
     public string CommonPromptFilePath { get; set; } = ProductDefinitionDefaults.CommonPromptFilePath;
     public List<string> ExcludedCases { get; set; } = new();
+    public string AcceptanceDetectionEnabledAtUtc { get; set; } = string.Empty;
+    public string AcceptanceLastSuccessfulScanUtc { get; set; } = string.Empty;
+    public List<string> AcceptanceProcessedMailKeys { get; set; } = new();
+    public List<string> AcceptanceRejectedMailKeys { get; set; } = new();
+    public List<string> AcceptanceProcessedBodyHashes { get; set; } = new();
 
     public UserSettings Update(string? basePath = null, bool? darkMode = null)
     {

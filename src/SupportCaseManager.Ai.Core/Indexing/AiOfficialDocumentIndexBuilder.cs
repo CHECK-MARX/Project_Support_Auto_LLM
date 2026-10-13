@@ -12,7 +12,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
 {
     public const string IndexFileName = "official-docs-index.json";
 
-    private const int ChunkMaxLength = 2600;
+    private const int DefaultChunkMaxLength = 2600;
     private const int ChunkOverlapLength = 150;
     private const int MinimumUsefulTextLength = 80;
     private const int DefaultRequestDelayMs = 300;
@@ -80,12 +80,22 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
 
     private readonly Func<HttpClient> httpClientFactory;
     private readonly Func<DateTimeOffset> nowProvider;
+    private readonly bool includeKnownSeeds;
+    private readonly int chunkMaxLength;
 
     public AiOfficialDocumentIndexBuilder(
         HttpMessageHandler? httpMessageHandler = null,
-        Func<DateTimeOffset>? nowProvider = null)
+        Func<DateTimeOffset>? nowProvider = null,
+        bool includeKnownSeeds = true,
+        int chunkMaxLength = DefaultChunkMaxLength)
     {
+        if (chunkMaxLength <= ChunkOverlapLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(chunkMaxLength));
+        }
         this.nowProvider = nowProvider ?? (() => DateTimeOffset.Now);
+        this.includeKnownSeeds = includeKnownSeeds;
+        this.chunkMaxLength = chunkMaxLength;
         httpClientFactory = httpMessageHandler is null
             ? static () => new HttpClient()
             : () => new HttpClient(httpMessageHandler, disposeHandler: false);
@@ -107,7 +117,10 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
             .Select(static url => url.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        AddKnownOfficialSeeds(product.ProductName, sourceUrls);
+        if (includeKnownSeeds)
+        {
+            AddKnownOfficialSeeds(product.ProductName, sourceUrls);
+        }
 
         var productIndexFolder = ProductIndexPathResolver.GetProductIndexFolder(indexFolder, product.ProductName);
         Directory.CreateDirectory(productIndexFolder);
@@ -745,7 +758,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         return string.IsNullOrWhiteSpace(value) ? string.Empty : WebUtility.HtmlDecode(HtmlTagRegex().Replace(value, " ")).Trim();
     }
 
-    private static IEnumerable<ChunkSlice> SplitIntoChunks(string text)
+    private IEnumerable<ChunkSlice> SplitIntoChunks(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -755,7 +768,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
         var start = 0;
         while (start < text.Length)
         {
-            var length = Math.Min(ChunkMaxLength, text.Length - start);
+            var length = Math.Min(chunkMaxLength, text.Length - start);
             var rawChunk = text.Substring(start, length);
             var leadingWhitespace = rawChunk.Length - rawChunk.TrimStart().Length;
             var chunk = rawChunk.Trim();
@@ -769,7 +782,7 @@ public sealed partial class AiOfficialDocumentIndexBuilder : IAiOfficialDocument
                 break;
             }
 
-            start += Math.Max(1, ChunkMaxLength - ChunkOverlapLength);
+            start += chunkMaxLength - ChunkOverlapLength;
         }
     }
 

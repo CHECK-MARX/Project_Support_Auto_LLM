@@ -7,6 +7,39 @@ namespace SupportCaseManager.Ai.Tests.Llm;
 public class OllamaConnectionCheckerTests
 {
     [Fact]
+    public async Task ListChatModelsAsync_ExcludesEmbeddingOnlyModel()
+    {
+        var checker = new OllamaConnectionChecker(new StubHttpMessageHandler(async (request, _) =>
+        {
+            if (request.Method == HttpMethod.Get)
+            {
+                return JsonResponse("""{"models":[{"name":"nomic-embed-text:latest"},{"name":"qwen3:8b"}]}""");
+            }
+
+            var body = await request.Content!.ReadAsStringAsync();
+            return JsonResponse(body.Contains("nomic-embed-text", StringComparison.Ordinal)
+                ? """{"capabilities":["embedding"]}"""
+                : """{"capabilities":["completion"]}""");
+        }));
+
+        var models = await checker.ListChatModelsAsync(CreateSettings());
+
+        Assert.Equal(["qwen3:8b"], models);
+    }
+
+    [Fact]
+    public async Task CheckChatModelCapabilityAsync_FailsClosedWhenCapabilityCannotBeVerified()
+    {
+        var checker = new OllamaConnectionChecker(new StubHttpMessageHandler((request, _) =>
+            Task.FromResult(JsonResponse("""{"capabilities":["embedding"]}"""))));
+
+        var result = await checker.CheckChatModelCapabilityAsync(CreateSettings(chatModel: "nomic-embed-text:latest"));
+
+        Assert.False(result.CanGenerate);
+        Assert.Contains("文章生成に対応していません", result.Message);
+    }
+
+    [Fact]
     public async Task CheckAsync_ReadsModelsFromTagsJson()
     {
         var handler = new StubHttpMessageHandler((request, _) => Task.FromResult(CreateDefaultResponse(request, """

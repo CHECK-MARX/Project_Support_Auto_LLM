@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
@@ -10,7 +12,6 @@ namespace SupportCaseManager.Ai.Core.Search;
 /// </summary>
 internal static class EmbeddingCandidateSourceLoader
 {
-    private const int ExcerptLength = 1200;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -36,7 +37,7 @@ internal static class EmbeddingCandidateSourceLoader
                 SourceType = "PastCaseNote",
                 ProductName = productName,
                 Title = note.Title,
-                Text = Excerpt(note.Text),
+                Text = note.Text,
                 FilePath = note.NoteFilePath,
                 SupportNumber = note.SupportNumber,
                 RetrievedAt = note.LastModifiedAt,
@@ -44,6 +45,8 @@ internal static class EmbeddingCandidateSourceLoader
                 DocumentTitle = note.Title,
                 SectionTitle = note.NoteKind,
                 ChunkId = note.Id,
+                ContentHash = note.ChunkContentHash,
+                EmbeddingSourceHash = HashEmbeddingSource(note.Title, note.Text),
             }) ?? [])
             .Concat(manuals?.Manuals.Select(manual => new SearchSource
             {
@@ -51,7 +54,7 @@ internal static class EmbeddingCandidateSourceLoader
                 SourceType = "Manual",
                 ProductName = string.IsNullOrWhiteSpace(manual.Product) ? productName : manual.Product,
                 Title = manual.Title,
-                Text = Excerpt(manual.Text),
+                Text = manual.Text,
                 FilePath = manual.FilePath,
                 Url = manual.Url,
                 RetrievedAt = manual.LastModifiedAt,
@@ -63,6 +66,7 @@ internal static class EmbeddingCandidateSourceLoader
                 ContentHash = manual.ContentHash ?? manual.Sha256,
                 ArchivePath = manual.ArchivePath,
                 EntryPath = manual.EntryPath,
+                EmbeddingSourceHash = HashEmbeddingSource(manual.Title, manual.Text),
             }) ?? [])
             .Concat(official?.Documents.Select(document => new SearchSource
             {
@@ -72,7 +76,7 @@ internal static class EmbeddingCandidateSourceLoader
                 Title = string.IsNullOrWhiteSpace(document.SectionTitle)
                     ? document.Title
                     : $"{document.Title} - {document.SectionTitle}",
-                Text = Excerpt(document.Text),
+                Text = document.Text,
                 Url = document.Url,
                 RetrievedAt = document.RetrievedAt,
                 DocumentId = document.Url,
@@ -80,6 +84,7 @@ internal static class EmbeddingCandidateSourceLoader
                 SectionTitle = document.SectionTitle,
                 ChunkId = document.Id,
                 ContentHash = document.ContentHash,
+                EmbeddingSourceHash = HashEmbeddingSource(document.Title, document.Text),
             }) ?? [])
             .Concat(answers?.Pairs.Select(pair => new SearchSource
             {
@@ -87,7 +92,7 @@ internal static class EmbeddingCandidateSourceLoader
                 SourceType = "ExactPastAnswer",
                 ProductName = string.IsNullOrWhiteSpace(pair.ProductName) ? productName : pair.ProductName,
                 Title = pair.QuestionText,
-                Text = Excerpt(pair.CustomerReplyText),
+                Text = pair.CustomerReplyText,
                 FilePath = pair.SourceFile,
                 SupportNumber = pair.SupportNumber,
                 RetrievedAt = pair.UpdatedAt,
@@ -97,6 +102,7 @@ internal static class EmbeddingCandidateSourceLoader
                 ChunkId = pair.Id,
                 QuestionText = pair.QuestionText,
                 InternalMemo = pair.InternalMemo,
+                EmbeddingSourceHash = HashEmbeddingSource(pair.QuestionText, pair.CustomerReplyText),
             }) ?? [])
             .Where(source => string.IsNullOrWhiteSpace(source.ProductName) ||
                 string.Equals(source.ProductName, productName, StringComparison.OrdinalIgnoreCase))
@@ -116,7 +122,7 @@ internal static class EmbeddingCandidateSourceLoader
         return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken);
     }
 
-    private static string Excerpt(string text) => text.Length <= ExcerptLength
-        ? text
-        : $"{text[..ExcerptLength]}...";
+    private static string HashEmbeddingSource(string title, string text) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{title}\n{text}"))).ToLowerInvariant();
+
 }

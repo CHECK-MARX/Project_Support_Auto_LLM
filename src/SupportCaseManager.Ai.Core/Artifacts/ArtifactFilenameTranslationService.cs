@@ -20,6 +20,8 @@ public sealed class ArtifactFilenameTranslationService
         ("追加問い合わせ内容", "Additional Inquiry Details"),
         ("問い合わせ内容", "Inquiry Details"),
         ("プロジェクト設定手順", "Project Settings Guide"),
+        ("利用権限", "Access Permissions"),
+        ("確認手順", "Verification Procedure"),
         ("スキャン結果", "Scan Results"),
         ("調査メモ", "Investigation Notes"),
     ];
@@ -46,6 +48,9 @@ public sealed class ArtifactFilenameTranslationService
         ("画面", "Screen"),
         ("手順", "Procedure"),
         ("確認", "Check"),
+        ("ライセンス", "License"),
+        ("利用", "Usage"),
+        ("権限", "Permissions"),
     ];
 
     public ArtifactFilenamePreview CreatePreview(string sourceFilePath)
@@ -90,12 +95,12 @@ public sealed class ArtifactFilenameTranslationService
         var translated = sourceBaseName;
         foreach (var (source, translation) in KnownPhrases)
         {
-            translated = translated.Replace(source, translation, StringComparison.Ordinal);
+            translated = translated.Replace(source, $" {translation} ", StringComparison.Ordinal);
         }
 
         foreach (var (source, translation) in KnownTokens)
         {
-            translated = translated.Replace(source, translation, StringComparison.Ordinal);
+            translated = translated.Replace(source, $" {translation} ", StringComparison.Ordinal);
         }
 
         return translated;
@@ -157,9 +162,10 @@ public sealed class ArtifactFilenameTranslationService
     private static bool ContainsJapanese(string value)
     {
         return value.Any(static character =>
-            character is >= '\u3040' and <= '\u30ff'
+            char.IsLetter(character)
+            && (character is >= '\u3040' and <= '\u30ff'
                 or >= '\u3400' and <= '\u9fff'
-                or >= '\uf900' and <= '\ufaff');
+                or >= '\uf900' and <= '\ufaff'));
     }
 
     private static string TrimToMaximumLength(string value, int maximumLength)

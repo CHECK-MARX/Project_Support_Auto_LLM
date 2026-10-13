@@ -84,7 +84,8 @@ public sealed class OllamaClient : ILlmClient
         var systemPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.SystemPrompt, settings, disableThinking);
         var userPrompt = OllamaThinkingHelper.ApplyNoThinkPrefix(messages.UserPrompt, settings, disableThinking);
 
-        var requestBody = OllamaRequestBuilder.BuildChatRequestBody(settings, systemPrompt, userPrompt, thinkDisabled);
+        var requestBody = OllamaRequestBuilder.BuildChatRequestBody(
+            settings, systemPrompt, userPrompt, thinkDisabled, messages.OutputSchema);
 
         try
         {
@@ -120,7 +121,8 @@ public sealed class OllamaClient : ILlmClient
                     retrySettings,
                     BuildThinkingRetrySystemPrompt(systemPrompt),
                     BuildThinkingRetryUserPrompt(userPrompt),
-                    thinkDisabled);
+                    thinkDisabled,
+                    messages.OutputSchema);
 
                 var retryResult = await SendChatRequestAsync(uri, retryRequestBody, thinkDisabled, timeoutCts.Token);
                 return retryResult with

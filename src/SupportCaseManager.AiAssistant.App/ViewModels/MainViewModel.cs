@@ -2249,7 +2249,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         await RunBusyAsync(async () =>
         {
-            var models = await ollamaConnectionChecker.ListModelsAsync(BuildSettings().LlmProvider);
+            var models = await ollamaConnectionChecker.ListChatModelsAsync(BuildSettings().LlmProvider);
             if (!await ResolveAndApplyAvailableModelAsync(models, persist: true))
             {
                 StatusMessage = "Ollama接続確認を中止しました。回答モデルを解決できません。";
@@ -2338,7 +2338,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task RefreshOllamaModelsCoreAsync()
     {
-        var models = await ollamaConnectionChecker.ListModelsAsync(BuildSettings().LlmProvider);
+        var models = await ollamaConnectionChecker.ListChatModelsAsync(BuildSettings().LlmProvider);
         ReplaceAvailableModels(models);
         _ = await ResolveAndApplyAvailableModelAsync(models, persist: true);
     }
@@ -2432,11 +2432,6 @@ public sealed partial class MainViewModel : ObservableObject
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(static model => model, StringComparer.OrdinalIgnoreCase)
             .ToList();
-        if (normalizedModels.Count == 0)
-        {
-            return;
-        }
-
         var previousRefreshState = isRefreshingOllamaModels;
         var previousRuntimeState = isApplyingRuntimeModel;
         isRefreshingOllamaModels = true;
@@ -2494,7 +2489,16 @@ public sealed partial class MainViewModel : ObservableObject
         bool persist)
     {
         var previousModel = ChatModel;
-        var resolution = OllamaModelResolver.Resolve(previousModel, AnswerQualityMode, models);
+        var resolution = models.Count == 0
+            ? new ModelResolutionResult
+            {
+                RequestedModel = previousModel,
+                Source = ModelResolutionSources.Unresolved,
+                AvailableModels = models,
+                FallbackReason = ModelFallbackReasons.NoAvailableModels,
+                Message = "文章生成に対応するOllamaモデルが見つかりません。回答用モデルを確認してください。",
+            }
+            : OllamaModelResolver.Resolve(previousModel, AnswerQualityMode, models);
         if (!resolution.IsResolved)
         {
             ApplyModelResolutionDiagnostics(resolution);
@@ -2984,6 +2988,17 @@ public sealed partial class MainViewModel : ObservableObject
                 else
                 {
                     SkipGeneration("NeedsConfiguration", "ModelUnresolved", BuildUnresolvedModelMessage());
+                    return;
+                }
+            }
+
+            if (provider == "Ollama")
+            {
+                var capability = await ollamaConnectionChecker.CheckChatModelCapabilityAsync(
+                    BuildSettings().LlmProvider);
+                if (!capability.CanGenerate)
+                {
+                    SkipGeneration("NeedsConfiguration", "ModelCannotGenerate", capability.Message);
                     return;
                 }
             }
@@ -4284,7 +4299,7 @@ public sealed partial class MainViewModel : ObservableObject
         {
             try
             {
-                models = (await ollamaConnectionChecker.ListModelsAsync(BuildSettings().LlmProvider))
+                models = (await ollamaConnectionChecker.ListChatModelsAsync(BuildSettings().LlmProvider))
                     .Where(static item => !string.IsNullOrWhiteSpace(item))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();

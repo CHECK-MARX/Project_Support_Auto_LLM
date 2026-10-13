@@ -15,17 +15,22 @@ public sealed class AiAnswerService : IAiAnswerService
     private readonly IEvidenceBuilder evidenceBuilder;
     private readonly ISafetyRedactionService safetyRedactionService;
     private readonly ILlmClient llmClient;
+    private readonly int? polishingTimeoutOverrideSeconds;
 
     public AiAnswerService(
         IPromptBuilder promptBuilder,
         IEvidenceBuilder evidenceBuilder,
         ISafetyRedactionService safetyRedactionService,
-        ILlmClient llmClient)
+        ILlmClient llmClient,
+        int? polishingTimeoutOverrideSeconds = null)
     {
         this.promptBuilder = promptBuilder ?? throw new ArgumentNullException(nameof(promptBuilder));
         this.evidenceBuilder = evidenceBuilder ?? throw new ArgumentNullException(nameof(evidenceBuilder));
         this.safetyRedactionService = safetyRedactionService ?? throw new ArgumentNullException(nameof(safetyRedactionService));
         this.llmClient = llmClient ?? throw new ArgumentNullException(nameof(llmClient));
+        this.polishingTimeoutOverrideSeconds = polishingTimeoutOverrideSeconds is > 0
+            ? Math.Clamp(polishingTimeoutOverrideSeconds.Value, 1, 300)
+            : null;
     }
 
     public async Task<AnswerDraftResult> GenerateDraftAsync(
@@ -51,10 +56,23 @@ public sealed class AiAnswerService : IAiAnswerService
             return deterministic with { AnswerGenerationMode = AnswerGenerationModes.DeterministicOnly };
         }
 
-        PromptMessages promptMessages = PolisherPromptBuilder.Build(
-            deterministic.CustomerReplyDraft,
-            request.SupplementalContext,
-            request.Settings.MaxPromptChars);
+        PromptMessages promptMessages;
+        try
+        {
+            promptMessages = PolisherPromptBuilder.Build(
+                deterministic.CustomerReplyDraft,
+                request.SupplementalContext,
+                request.Settings.MaxPromptChars);
+        }
+        catch (PolisherPromptTooLongException)
+        {
+            return deterministic with
+            {
+                AnswerGenerationMode = AnswerGenerationModes.DeterministicOnly,
+                Warnings = deterministic.Warnings.Concat(["校正入力が上限を超えるため、内容を切り捨てず決定論的回答を表示しました。"])
+                    .Distinct(StringComparer.Ordinal).ToList(),
+            };
+        }
         LlmGenerationResult generation;
         using var polishingCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var polishingTimeoutSeconds = EffectivePolishingTimeoutSeconds(request.Settings);
@@ -134,9 +152,12 @@ public sealed class AiAnswerService : IAiAnswerService
             string.Join(Environment.NewLine, request.Sources.Select(static source => source.Text)) +
             Environment.NewLine +
             request.SupplementalContext;
-        if (!PolishedAnswerValidator.PreservesProtectedValues(
+        if (!parsed.Warnings.Any(static warning => warning.Contains("JSON解析に失敗", StringComparison.Ordinal)) &&
+            !PolishedAnswerValidator.PreservesProtectedValues(
                 protectedContext,
-                processed.CustomerReplyDraft))
+                deterministic.CustomerReplyDraft,
+                processed.CustomerReplyDraft,
+                request.InquiryFocus))
         {
             return deterministic with
             {
@@ -189,8 +210,13 @@ public sealed class AiAnswerService : IAiAnswerService
         };
     }
 
-    private static int EffectivePolishingTimeoutSeconds(AiAssistantSettings settings)
+    private int EffectivePolishingTimeoutSeconds(AiAssistantSettings settings)
     {
+        if (polishingTimeoutOverrideSeconds is { } overrideSeconds)
+        {
+            return overrideSeconds;
+        }
+
         var configured = settings.LlmProvider.TimeoutSeconds > 0
             ? settings.LlmProvider.TimeoutSeconds
             : StandardPolishingTimeoutSeconds;

@@ -7,4 +7,5 @@ public static class AnswerGenerationModes
     public const string PolishingFailed = "PolishingFailed";
     public const string PolishingTimedOut = "PolishingTimedOut";
     public const string PolishingCancelled = "PolishingCancelled";
+    public const string GroundedCandidate = "GroundedCandidate";
 }

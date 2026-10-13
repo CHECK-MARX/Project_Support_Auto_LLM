@@ -24,6 +24,10 @@ public static partial class AnswerQualityEvaluator
         AnswerQualityThresholds? thresholds = null)
     {
         ArgumentNullException.ThrowIfNull(input);
+        var caseEvidence = input.Evidence.Where(static item => item.SourceType == "CurrentCase").ToArray();
+        // Case observations support attributed statements only. They do not increase
+        // independent product evidence coverage, grounding or customer readiness.
+        input = input with { Evidence = input.Evidence.Where(static item => item.SourceType != "CurrentCase").ToArray() };
         var rules = thresholds ?? AnswerQualityThresholds.Default;
         var catalog = EnsureCatalog(input.Catalog, input.ProductName);
         var queryProfile = TopicEntityAnalyzer.Extract(input.Question, catalog);
@@ -39,7 +43,10 @@ public static partial class AnswerQualityEvaluator
             .Select(static claim => $"{claim.Kind}|{claim.NormalizedValue}")
             .ToHashSet(StringComparer.Ordinal);
         var unsupported = answerClaims
-            .Where(claim => !supportedKeys.Contains($"{claim.Kind}|{claim.NormalizedValue}"))
+            .Where(claim => !supportedKeys.Contains($"{claim.Kind}|{claim.NormalizedValue}") &&
+                !SupportsAttributedCaseClaim(claim, input.Answer, caseEvidence, catalog) &&
+                !(claim.Kind == "Version" && Regex.IsMatch(input.Question,
+                    $@"(?<![0-9.]){Regex.Escape(claim.NormalizedValue)}(?![0-9.])")))
             .Select(static claim => new UnsupportedTechnicalClaim
             {
                 Kind = claim.Kind,
@@ -48,6 +55,9 @@ public static partial class AnswerQualityEvaluator
             })
             .ToList();
 
+        unsupported.AddRange(FindUnsupportedPropositions(input, caseEvidence, catalog, unsupported));
+        unsupported.AddRange(FindUnsupportedRelationships(input, caseEvidence, catalog));
+        unsupported = unsupported.DistinctBy(claim => (claim.Kind, claim.Value)).ToList();
         var grounding = CalculateGrounding(input, answerClaims.Count, unsupported.Count, topicAlignment);
         var technicalFidelity = answerClaims.Count == 0
             ? 1.0
@@ -157,6 +167,195 @@ public static partial class AnswerQualityEvaluator
 
     public static TopicEntityCatalog CreateSupportCatalog(string? productName = null) =>
         SupportTopicCatalog.Create(productName);
+
+    // A shared binding check for generation, citation selection and claim validation.
+    // Product names and mail/attachment boilerplate alone never bind another case.
+    public static bool SourceMatchesInquiry(string question, string text, string sourceType,
+        TopicEntityCatalog? catalog = null)
+    {
+        catalog ??= new TopicEntityCatalog();
+        var query = TopicEntityAnalyzer.Extract(question, catalog);
+        var source = TopicEntityAnalyzer.Extract(text, catalog);
+        var comparison = TopicEntityAnalyzer.Compare(query, source);
+        if (comparison.TopicConflict || comparison.NoTopicMatch) return false;
+        var anchors = BindingAnchors(question);
+        if (sourceType is "PastCaseNote" or "PastAnswer")
+            return anchors.Any(anchor => HasAnchor(text, anchor)) &&
+                anchors.Where(anchor => IsSpecificIdentifier(anchor) ||
+                    Regex.IsMatch(anchor, @"^[A-Z][a-z]+$|[ァ-ヴー]{4,}")).All(anchor => HasAnchor(text, anchor));
+        return anchors.Length == 0 || anchors.Any(anchor => HasAnchor(text, anchor));
+    }
+
+    private static string[] BindingAnchors(string text) => Regex.Matches(text,
+            @"\[[A-Z_]*RESOURCE[A-Z_]*\]|(?<!\d)\d+(?:\.\d+){1,3}(?!\d)|[A-Za-z][A-Za-z0-9_.-]{3,}|[ァ-ヴー]{4,}|[「『](?<name>[^」』]{4,100})[」』]")
+        .Select(match => match.Groups["name"].Success ? match.Groups["name"].Value : match.Value)
+        .Where(anchor => !Regex.IsMatch(anchor,
+            @"^(?:QAC|HelixQAC|Perforce|Checkmarx|CxSAST|Klocwork|Box|Attachment|Attachments|files?|account|requires?|view|following|stored|CONFIDENTIAL|CUSTOMER_ORG|PERSON|SUPPORT_ID|ORGANIZATION|http|https|サポート|バージョン|ファイル|ライセンス|インストール|アップロード|ダウンロード|ユーザー|アカウント)$",
+            RegexOptions.IgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static bool IsSpecificIdentifier(string value) =>
+        Regex.IsMatch(value, @"^\d+(?:\.\d+)+$|[-_.]|[a-z][A-Z]|^[A-Z]{3,}$") &&
+        !value.StartsWith("[", StringComparison.Ordinal);
+
+    private static bool HasAnchor(string text, string anchor) =>
+        Regex.IsMatch(anchor, @"^\d+(?:\.\d+)+$")
+            ? Regex.IsMatch(text, @"(?<![\d.])" + Regex.Escape(anchor) + @"(?![\d.])")
+            : text.Contains(anchor, StringComparison.OrdinalIgnoreCase);
+
+    private static IEnumerable<UnsupportedTechnicalClaim> FindUnsupportedPropositions(
+        AnswerQualityEvaluationInput input, IReadOnlyList<AnswerQualityEvidence> caseEvidence,
+        TopicEntityCatalog catalog, IReadOnlyList<UnsupportedTechnicalClaim> tokenFailures)
+    {
+        var current = input.Question + "\n" + string.Join("\n", caseEvidence.Select(item => item.Text));
+        var independent = input.Evidence.Where(item => item.SourceType is "Manual" or "OfficialDoc" or "Manufacturer").ToArray();
+        foreach (var sentence in Regex.Split(input.Answer, @"[。！？!?\r\n]+"))
+        {
+            if (string.IsNullOrWhiteSpace(sentence)) continue;
+            // Absence is a proposition, not the failure to find a matching token.
+            // Even an Unknown section can assert an unproved absence of documentation.
+            var absences = AbsenceAssertions(sentence).ToArray();
+            foreach (var absence in absences)
+            {
+                var absenceSupported = independent.Any(item =>
+                    SourceMatchesInquiry(input.Question, item.Text, item.SourceType, catalog) &&
+                    Regex.Split(item.Text, @"[。！？!?\r\n]+|(?<=\.)(?!\d)\s+").Any(span =>
+                        AbsenceAssertions(span).Any(proof => proof.Kind == absence.Kind &&
+                            AbsenceSubjectAndConditionsMatch(sentence, AbsenceProofClause(span, proof.Predicate), span))));
+                if (!absenceSupported)
+                    yield return new UnsupportedTechnicalClaim
+                    {
+                        Kind = "EvidenceAbsence", Value = sentence.Trim(), IsMajor = true,
+                    };
+            }
+            var attributedPast = Regex.IsMatch(sentence, @"過去(?:の)?(?:案件|ケース)|類似案件");
+            if (!attributedPast)
+            {
+                var introduced = input.Evidence.Where(item => item.SourceType is "PastCaseNote" or "PastAnswer")
+                    .SelectMany(item => BindingAnchors(item.Text))
+                    .Where(anchor => HasAnchor(sentence, anchor) && !HasAnchor(current, anchor) &&
+                        !independent.Any(item => HasAnchor(item.Text, anchor)))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                if (introduced.Length > 0)
+                    yield return new UnsupportedTechnicalClaim { Kind = "CaseAttribution",
+                        Value = sentence.Trim(), IsMajor = true };
+            }
+            // Supported negative support statements must not be reinterpreted as
+            // affirmative support. Mixed affirmative assertions still get checked.
+            if (absences.Length > 0 && !Regex.IsMatch(sentence,
+                    @"サポートされています|サポート対象です|可能性(?:が)?あります|可能です|示されています|更新が行われます"))
+                continue;
+            if (!Regex.IsMatch(sentence,
+                @"仕様上|(?:公式|製品)(?:仕様|資料).{0,40}(?:示され|によ|では|確認)|サポート(?:され|対象|可能)|(?:利用|運用|更新|対応)(?:が)?可能(?:性|です|である)",
+                RegexOptions.IgnoreCase) ||
+                (Regex.IsMatch(sentence, @"確認でき(?:ません|ない)|断定でき(?:ません|ない)|不明|未確認|未確定|可否.{0,20}(?:確認|質問)|かどうか.{0,25}確認") &&
+                 !Regex.IsMatch(sentence, @"サポートされています|サポート対象です|可能性(?:が)?あります|更新が行われます|可能です|示されています")))
+                continue;
+            var supported = independent.Any(item => SourceMatchesInquiry(input.Question, item.Text, item.SourceType, catalog) &&
+                Regex.Split(item.Text, @"[。！？!?\r\n]+|(?<=\.)(?!\d)\s+").Any(span =>
+                    PropositionMatches(sentence, span)));
+            if (!supported && !tokenFailures.Any(claim => sentence.Contains(claim.Value, StringComparison.OrdinalIgnoreCase)))
+                yield return new UnsupportedTechnicalClaim { Kind = "EvidenceAttribution",
+                    Value = sentence.Trim(), IsMajor = true };
+        }
+    }
+
+    private static IEnumerable<(string Kind, Match Predicate)> AbsenceAssertions(string sentence)
+    {
+        var documentContext = Regex.IsMatch(sentence,
+            @"資料|仕様|マニュアル|ドキュメント|リリースノート|\b(?:documents?|documentation|manual|specification)\b",
+            RegexOptions.IgnoreCase);
+        var predicates = new (string Kind, string Pattern)[]
+        {
+            ("Documentation", @"(?:記載|明記|説明)(?:は|が|も)?(?:され(?:て)?(?:いない|いません|ない|おらず)|されず|(?:が|は)?(?:ない|なく|ありません|なし))|\b(?:not documented|undocumented)\b"),
+            ("Definition", @"定義(?:は|が|も)?(?:され(?:て)?(?:いない|いません|ない|おらず)|されず|(?:が|は)?(?:ない|なく|ありません|なし))|\b(?:not defined|undefined)\b"),
+            ("Existence", @"存在し(?:ない|ません)|存在(?:が|は)?(?:ない|ありません)|含まれて(?:いない|いません)|\bdoes not exist\b"),
+            ("Support", @"サポート(?:は|が)?(?:され(?:て)?(?:いない|いません|ない|おらず)|されず|対象外|外です)|\b(?:not supported|unsupported)\b"),
+        };
+        foreach (var (kind, pattern) in predicates)
+        {
+            if (kind == "Existence" && !documentContext) continue;
+            foreach (Match predicate in Regex.Matches(sentence, pattern, RegexOptions.IgnoreCase))
+            {
+                var tail = sentence[(predicate.Index + predicate.Length)..];
+                // This negates knowledge of absence, or asks whether absence holds.
+                // A scope qualifier alone never excuses an affirmative absence claim.
+                if (Regex.IsMatch(tail,
+                    @"^(?:かどうか|か否か|かを|かについて)|^(?:と|とは)(?:は)?(?:断定|確認|判断)でき(?:ない|ません)|^(?:こと)?(?:は|かは)確認でき(?:ない|ません)",
+                    RegexOptions.IgnoreCase)) continue;
+                yield return (kind, predicate);
+            }
+        }
+    }
+
+    private static string AbsenceProofClause(string span, Match predicate)
+    {
+        var boundaries = Regex.Matches(span[..predicate.Index],
+            @"[、,；;]|\b(?:whereas|while|but|however)\b|一方|ただし", RegexOptions.IgnoreCase);
+        var start = boundaries.Count == 0 ? 0 : boundaries[^1].Index + boundaries[^1].Length;
+        var after = predicate.Index + predicate.Length;
+        var next = Regex.Match(span[after..],
+            @"[、,；;]|\b(?:whereas|while|but|however)\b|一方|ただし", RegexOptions.IgnoreCase);
+        var end = next.Success ? after + next.Index : span.Length;
+        return span[start..end];
+    }
+
+    private static bool AbsenceSubjectAndConditionsMatch(string claim, string proofClause, string span)
+    {
+        var subjects = BindingAnchors(claim)
+            .Concat(Regex.Matches(claim, @"[「『](?<name>[^」』]{2,100})[」』]")
+                .Select(match => match.Groups["name"].Value))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (subjects.Length == 0)
+        {
+            // Fail closed when there is no identifiable subject, except for an
+            // explicit equivalent statement in the primary source itself.
+            var body = Regex.Replace(claim.Trim(), @"^.*?(?:事実|事項)[:：]\s*", "");
+            if (!proofClause.Contains(body, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        else if (subjects.Any(subject => !HasAnchor(proofClause, subject))) return false;
+        return Regex.Matches(span, @"(?<!\d)\d+(?:\.\d+){1,3}(?!\d)")
+                .All(version => HasAnchor(claim, version.Value)) &&
+            (!Regex.IsMatch(span, @"\bif\b|場合|条件|限定|限り", RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(claim, @"\bif\b|場合|条件|限定|限り", RegexOptions.IgnoreCase)) &&
+            (!Regex.IsMatch(span, @"\bbefore\b|前に|以前", RegexOptions.IgnoreCase) ||
+                Regex.IsMatch(claim, @"\bbefore\b|前に|以前", RegexOptions.IgnoreCase));
+    }
+
+    private static bool PropositionMatches(string claim, string span)
+    {
+        string[][] predicates = [
+            ["サポート", "supported", "supports"],
+            ["更新", "アップグレード", "バージョンアップ", "upgrade", "update"],
+            ["利用", "使用", "運用", "use", "operate"],
+        ];
+        var required = predicates.Where(group => group.Any(term => claim.Contains(term, StringComparison.OrdinalIgnoreCase))).ToArray();
+        if (required.Length == 0 || required.Any(group => !group.Any(term => span.Contains(term, StringComparison.OrdinalIgnoreCase)))) return false;
+        if (claim.Contains("サポート", StringComparison.Ordinal) &&
+            Regex.IsMatch(span, @"not supported|known to work|unsupported|サポートされない", RegexOptions.IgnoreCase)) return false;
+        // Preserve explicit version, component and operation conditions within the SAME span.
+        var anchors = BindingAnchors(claim).Where(IsSpecificIdentifier).ToArray();
+        return anchors.All(anchor => HasAnchor(span, anchor)) &&
+            Regex.Matches(span, @"(?<!\d)\d+(?:\.\d+){1,3}(?!\d)").All(version => HasAnchor(claim, version.Value)) &&
+            (!Regex.IsMatch(span, @"\bif\b|場合|条件", RegexOptions.IgnoreCase) || Regex.IsMatch(claim, @"場合|条件|とき")) &&
+            (!Regex.IsMatch(span, @"\bbefore\b", RegexOptions.IgnoreCase) || Regex.IsMatch(claim, @"前|before", RegexOptions.IgnoreCase));
+    }
+
+    private static bool SupportsAttributedCaseClaim(AnswerTechnicalClaim claim, string answer,
+        IReadOnlyList<AnswerQualityEvidence> cases, TopicEntityCatalog catalog)
+    {
+        var supporting = cases.Where(item => TechnicalClaimExtractor.Extract(item.Text, catalog)
+            .Any(value => value.Kind == claim.Kind && value.NormalizedValue == claim.NormalizedValue)).ToArray();
+        if (supporting.Length == 0) return false;
+        var sentences = Regex.Split(answer, @"[。！？!?\r\n]").Where(sentence =>
+            TechnicalClaimExtractor.Extract(sentence, catalog).Any(value =>
+                value.Kind == claim.Kind && value.NormalizedValue == claim.NormalizedValue)).ToArray();
+        return sentences.Length > 0 && sentences.All(sentence =>
+            Regex.IsMatch(sentence, @"案件履歴|案件記録|添付ログ") &&
+            !Regex.IsMatch(sentence, @"正式保証|公式仕様|公式資料|正式サポート|必ず|確実に") &&
+            supporting.Any(item => !item.Text.Contains("メーカー原文未確認", StringComparison.Ordinal) ||
+                Regex.IsMatch(sentence, @"メーカー.{0,12}原文.{0,12}(?:未確認|確認できません|確認されていない)")));
+    }
 
     private static string Decide(
         AnswerQualityEvaluationInput input,

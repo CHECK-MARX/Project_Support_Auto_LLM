@@ -27,11 +27,19 @@ public static partial class TechnicalClaimExtractor
         AddMatches(claims, "Version", VersionRegex().Matches(source), major: true);
         AddMatches(claims, "Port", PortRegex().Matches(source), major: true);
 
-        var profile = TopicEntityAnalyzer.Extract(source, catalog ?? new TopicEntityCatalog());
+        catalog ??= new TopicEntityCatalog();
+        var profile = TopicEntityAnalyzer.Extract(source, catalog);
         foreach (var entity in profile.Entities)
         {
             if (entity.Kind is TopicEntityKind.Product or TopicEntityKind.Feature)
             {
+                var definition = catalog.Products.Concat(catalog.Features).FirstOrDefault(item =>
+                    string.Equals(item.CanonicalName, entity.Value, StringComparison.OrdinalIgnoreCase));
+                if (definition?.ClaimAliases is { } aliases &&
+                    !aliases.Append(definition.CanonicalName).Any(alias =>
+                        TopicEntityAnalyzer.NormalizeText(source).Contains(
+                            TopicEntityAnalyzer.NormalizeText(alias), StringComparison.Ordinal)))
+                    continue;
                 Add(claims, "ProductFeature", entity.Value, major: false);
             }
             else if (entity.Kind is TopicEntityKind.OperatingSystem or TopicEntityKind.ServerType)

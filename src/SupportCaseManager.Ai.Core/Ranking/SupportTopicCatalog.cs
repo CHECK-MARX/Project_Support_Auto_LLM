@@ -47,6 +47,7 @@ public static class SupportTopicCatalog
                 new TopicAliasDefinition
                 {
                     CanonicalName = "Release Notes",
+                    ClaimAliases = ["release notes", "release note", "リリースノート", "engine pack"],
                     Aliases = [
                         "リリースノート", "リリース内容", "変更内容", "変更点", "追加機能", "新機能", "修正内容", "対応内容", "バージョン情報",
                         "release notes", "release note", "released", "enhancement", "resolved issues", "what's new", "engine pack",

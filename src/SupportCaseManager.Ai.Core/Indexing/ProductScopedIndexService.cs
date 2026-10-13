@@ -12,18 +12,22 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
     private readonly IAiManualIndexBuilder manualIndexBuilder;
     private readonly IAiOfficialDocumentIndexBuilder officialDocumentIndexBuilder;
     private readonly EmbeddingIndexUpdater embeddingIndexUpdater;
+    private readonly EmbeddingIndexGenerationPublisher embeddingIndexGenerationPublisher = new();
+    private readonly IEmbeddingModelDigestResolver embeddingModelDigestResolver;
     private readonly SemaphoreSlim updateLock = new(1, 1);
 
     public ProductScopedIndexService(
         IAiCaseIndexBuilder caseIndexBuilder,
         IAiManualIndexBuilder manualIndexBuilder,
         IAiOfficialDocumentIndexBuilder? officialDocumentIndexBuilder = null,
-        IOllamaEmbeddingClient? embeddingClient = null)
+        IOllamaEmbeddingClient? embeddingClient = null,
+        IEmbeddingModelDigestResolver? embeddingModelDigestResolver = null)
     {
         this.caseIndexBuilder = caseIndexBuilder ?? throw new ArgumentNullException(nameof(caseIndexBuilder));
         this.manualIndexBuilder = manualIndexBuilder ?? throw new ArgumentNullException(nameof(manualIndexBuilder));
         this.officialDocumentIndexBuilder = officialDocumentIndexBuilder ?? new AiOfficialDocumentIndexBuilder();
         embeddingIndexUpdater = new EmbeddingIndexUpdater(embeddingClient);
+        this.embeddingModelDigestResolver = embeddingModelDigestResolver ?? new OllamaEmbeddingModelDigestResolver();
     }
 
     public string GetProductIndexFolder(string aiIndexFolder, string productName)
@@ -93,12 +97,18 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
                 (!string.IsNullOrWhiteSpace(product.CloseFolder) && !File.Exists(casePath)) ||
                 (product.ManualFolders.Count > 0 && !File.Exists(manualPath)) ||
                 (product.DocumentUrls.Count > 0 && !File.Exists(officialPath));
-            var manifestStatus = missingExpectedIndex ? KnowledgeStatuses.Warning : KnowledgeStatuses.Ready;
+            var previousUpdateFailed = string.Equals(manifest.LastUpdateResult, "Warning", StringComparison.OrdinalIgnoreCase);
+            var manifestStatus = missingExpectedIndex || previousUpdateFailed
+                ? KnowledgeStatuses.Warning
+                : KnowledgeStatuses.Ready;
             var manifestMessage = missingExpectedIndex
                 ? "manifestに対応するインデックスファイルが不足しています。ナレッジを更新してください。"
+                : previousUpdateFailed
+                ? "前回のナレッジ更新で一部失敗しました。利用可能なインデックスを維持しています。"
                 : "既存インデックスをmanifestから確認しました。";
             var manifestOfficialUpdatedAt = GetOfficialDocsLastUpdatedAt(manifest, null);
-            if (manifestOfficialUpdatedAt is { } manifestUpdatedAt &&
+            if (manifestStatus == KnowledgeStatuses.Ready &&
+                manifestOfficialUpdatedAt is { } manifestUpdatedAt &&
                 product.DocumentUrls.Count > 0 &&
                 DateTimeOffset.Now - manifestUpdatedAt > OfficialDocsRefreshAge)
             {
@@ -244,18 +254,34 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
             if (!string.IsNullOrWhiteSpace(embeddingModel) &&
                 !string.IsNullOrWhiteSpace(embeddingEndpoint))
             {
-                embeddingResult = await embeddingIndexUpdater.UpdateAsync(
-                    product.ProductName,
-                    productIndexFolder,
-                    embeddingEndpoint,
-                    embeddingModel,
-                    forceRebuild,
-                    cancellationToken);
+                var digest = await embeddingModelDigestResolver.ResolveAsync(
+                    embeddingEndpoint, embeddingModel, cancellationToken);
+                embeddingResult = string.IsNullOrWhiteSpace(digest)
+                    ? new EmbeddingIndexUpdateResult
+                    {
+                        EmbeddingModel = embeddingModel,
+                        IndexFilePath = Path.Combine(productIndexFolder, EmbeddingIndexDocument.FileName),
+                        Status = "Failed",
+                        Warning = "Ollamaの埋め込みモデルdigestを確認できません。既存indexを維持しました。",
+                    }
+                    : forceRebuild
+                        ? await BuildAndPublishEmbeddingGenerationAsync(
+                            product.ProductName, productIndexFolder, embeddingEndpoint,
+                            embeddingModel, digest, cancellationToken)
+                        : await embeddingIndexUpdater.UpdateAsync(
+                            product.ProductName,
+                            productIndexFolder,
+                            embeddingEndpoint,
+                            embeddingModel,
+                            forceRebuild: false,
+                            cancellationToken,
+                            embeddingModelDigest: digest);
             }
 
             var hasErrors = (caseResult?.ErrorCount ?? 0) > 0
                 || (manualResult?.ErrorCount ?? 0) > 0
-                || (officialResult?.FetchFailureCount ?? 0) > 0;
+                || (officialResult?.FetchFailureCount ?? 0) > 0
+                || embeddingResult is { IsSuccess: false };
             var status = await InspectKnowledgeAsync(product, aiIndexFolder, cancellationToken);
             var now = DateTimeOffset.Now;
             var manifestEmbeddingModel = embeddingResult switch
@@ -278,7 +304,9 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
                 Status = hasErrors ? KnowledgeStatuses.Warning : KnowledgeStatuses.Ready,
                 LastUpdatedAt = hasErrors ? status.LastUpdatedAt : now,
                 Message = hasErrors
-                    ? "一部の更新に失敗しました。利用可能な前回インデックスを維持しています。"
+                    ? string.IsNullOrWhiteSpace(embeddingResult?.Warning)
+                        ? "一部の更新に失敗しました。利用可能な前回インデックスを維持しています。"
+                        : embeddingResult.Warning
                     : BuildUpdateMessage(caseResult, manualResult, officialResult, embeddingResult),
             };
 
@@ -294,6 +322,56 @@ public sealed class ProductScopedIndexService : IProductScopedIndexService
         finally
         {
             updateLock.Release();
+        }
+    }
+
+    private async Task<EmbeddingIndexUpdateResult> BuildAndPublishEmbeddingGenerationAsync(
+        string productName,
+        string productIndexFolder,
+        string endpoint,
+        string embeddingModel,
+        string digest,
+        CancellationToken cancellationToken)
+    {
+        var stagingFolder = Path.Combine(productIndexFolder, $".embedding-staging-{Guid.NewGuid():N}");
+        var activePath = Path.Combine(productIndexFolder, EmbeddingIndexDocument.FileName);
+        try
+        {
+            Directory.CreateDirectory(stagingFolder);
+            var staged = await embeddingIndexUpdater.UpdateAsync(
+                productName, stagingFolder, endpoint, embeddingModel,
+                forceRebuild: true, cancellationToken,
+                sourceProductIndexFolder: productIndexFolder,
+                embeddingModelDigest: digest);
+            if (!staged.IsSuccess)
+            {
+                return staged with { IndexFilePath = activePath };
+            }
+
+            await embeddingIndexGenerationPublisher.PublishAsync(
+                staged.IndexFilePath, productIndexFolder, productName, embeddingModel, cancellationToken);
+            return staged with { IndexFilePath = activePath };
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return new EmbeddingIndexUpdateResult
+            {
+                EmbeddingModel = embeddingModel,
+                IndexFilePath = activePath,
+                Status = "Failed",
+                Warning = $"埋め込み索引の世代切替に失敗しました。前世代を維持しています ({ex.GetType().Name})。",
+            };
+        }
+        finally
+        {
+            if (Directory.Exists(stagingFolder))
+            {
+                Directory.Delete(stagingFolder, recursive: true);
+            }
         }
     }
 

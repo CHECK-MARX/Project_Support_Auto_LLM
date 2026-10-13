@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Indexing;
+using SupportCaseManager.Ai.Core.Llm;
 using SupportCaseManager.Ai.Tests.Helpers;
 
 namespace SupportCaseManager.Ai.Tests.Indexing;
@@ -214,9 +215,215 @@ public sealed class ProductScopedIndexTests
         Assert.Equal(0, officialBuilder.BuildCount);
     }
 
+    [Fact]
+    public async Task UpdateKnowledgeWithEmbeddingsAsync_EmbeddingFailureReportsWarningAndKeepsManualIndex()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        Directory.CreateDirectory(manualFolder);
+        await File.WriteAllTextAsync(Path.Combine(manualFolder, "guide.md"), "# QAC analysis\nRun the analysis.", Encoding.UTF8);
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "HelixQAC",
+            ManualFolders = [manualFolder],
+        };
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var service = new ProductScopedIndexService(
+            new WritingCaseIndexBuilder(), new AiManualIndexBuilder(),
+            embeddingClient: new FailingEmbeddingClient(),
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:test"));
+
+        var result = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+        var productFolder = service.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        await using var manifestStream = File.OpenRead(Path.Combine(productFolder, KnowledgeManifest.FileName));
+        var manifest = await JsonSerializer.DeserializeAsync<KnowledgeManifest>(manifestStream);
+        var reopenedStatus = await service.InspectKnowledgeAsync(product, aiIndexFolder);
+
+        Assert.Equal(KnowledgeStatuses.Warning, result.Status.Status);
+        Assert.False(result.Embeddings?.IsSuccess);
+        Assert.Equal("Warning", manifest?.LastUpdateResult);
+        Assert.Equal(KnowledgeStatuses.Warning, reopenedStatus.Status);
+        Assert.True(File.Exists(Path.Combine(productFolder, AiManualIndexBuilder.IndexFileName)));
+        Assert.False(File.Exists(Path.Combine(productFolder, EmbeddingIndexDocument.FileName)));
+    }
+
+    [Fact]
+    public async Task UpdateKnowledgeWithEmbeddingsAsync_UnknownDigestDoesNotCallEmbeddingClient()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        Directory.CreateDirectory(manualFolder);
+        await File.WriteAllTextAsync(Path.Combine(manualFolder, "guide.md"), "# QAC analysis", Encoding.UTF8);
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "HelixQAC",
+            ManualFolders = [manualFolder],
+        };
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var client = new FailingEmbeddingClient();
+        var service = new ProductScopedIndexService(
+            new WritingCaseIndexBuilder(), new AiManualIndexBuilder(),
+            embeddingClient: client,
+            embeddingModelDigestResolver: new FixedDigestResolver(null));
+
+        var result = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+
+        Assert.Equal(KnowledgeStatuses.Warning, result.Status.Status);
+        Assert.False(result.Embeddings?.IsSuccess);
+        Assert.Contains("digest", result.Embeddings?.Warning);
+        Assert.Equal(0, client.CallCount);
+        Assert.False(File.Exists(result.Embeddings?.IndexFilePath));
+    }
+
+    [Fact]
+    public async Task UpdateKnowledgeWithEmbeddingsAsync_DigestControlsReuseAndUnknownDigestPreservesIndex()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        Directory.CreateDirectory(manualFolder);
+        await File.WriteAllTextAsync(Path.Combine(manualFolder, "guide.md"), "# QAC analysis", Encoding.UTF8);
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "HelixQAC",
+            ManualFolders = [manualFolder],
+        };
+        var client = new RecordingEmbeddingClient();
+        var resolver = new MutableDigestResolver { Digest = "sha256:first" };
+        var service = new ProductScopedIndexService(
+            new WritingCaseIndexBuilder(), new AiManualIndexBuilder(),
+            embeddingClient: client,
+            embeddingModelDigestResolver: resolver);
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+
+        var first = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+        var same = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+        resolver.Digest = "sha256:second";
+        var blocked = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+        var changed = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, true,
+            "nomic-embed-text", "http://localhost:11434");
+        var indexPath = changed.Embeddings?.IndexFilePath ?? throw new InvalidOperationException();
+        var index = await EmbeddingIndexUpdater.LoadAsync(indexPath);
+        var previousBytes = await File.ReadAllBytesAsync(indexPath);
+        resolver.Digest = null;
+        var unknown = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+
+        Assert.True(first.Embeddings?.IsSuccess);
+        Assert.Equal(1, same.Embeddings?.UnchangedCount);
+        Assert.Equal(KnowledgeStatuses.Warning, blocked.Status.Status);
+        Assert.Equal("NeedsRebuild", blocked.Embeddings?.Status);
+        Assert.True(changed.Embeddings?.IsSuccess, changed.Embeddings?.Warning);
+        Assert.Equal(0, changed.Embeddings?.UnchangedCount);
+        Assert.Equal(2, client.CallCount);
+        Assert.Equal("sha256:second", index?.EmbeddingModelDigest);
+        Assert.Equal(KnowledgeStatuses.Warning, unknown.Status.Status);
+        Assert.Equal(previousBytes, await File.ReadAllBytesAsync(indexPath));
+    }
+
+    [Fact]
+    public async Task UpdateKnowledgeWithEmbeddingsAsync_LegacyIndexDoesNotAutoRebuild()
+    {
+        using var temp = new TempDirectory();
+        var manualFolder = Path.Combine(temp.Path, "manuals");
+        Directory.CreateDirectory(manualFolder);
+        await File.WriteAllTextAsync(Path.Combine(manualFolder, "guide.md"), "# QAC analysis", Encoding.UTF8);
+        var product = new ProductKnowledgeSettings
+        {
+            ProductName = "HelixQAC",
+            ManualFolders = [manualFolder],
+        };
+        var aiIndexFolder = Path.Combine(temp.Path, "ai-index");
+        var client = new RecordingEmbeddingClient();
+        var service = new ProductScopedIndexService(
+            new WritingCaseIndexBuilder(), new AiManualIndexBuilder(),
+            embeddingClient: client,
+            embeddingModelDigestResolver: new FixedDigestResolver("sha256:current"));
+        _ = await service.BuildManualIndexAsync(product, aiIndexFolder);
+        var productFolder = service.GetProductIndexFolder(aiIndexFolder, product.ProductName);
+        var updater = new EmbeddingIndexUpdater(client);
+        var legacy = await updater.UpdateAsync(
+            product.ProductName, productFolder, "http://localhost:11434", "nomic-embed-text");
+        var indexPath = legacy.IndexFilePath;
+        var previousBytes = await File.ReadAllBytesAsync(indexPath);
+
+        var result = await service.UpdateKnowledgeWithEmbeddingsAsync(
+            product, aiIndexFolder, KnowledgeUpdateScope.Manuals, false,
+            "nomic-embed-text", "http://localhost:11434");
+
+        Assert.True(legacy.IsSuccess);
+        Assert.Equal(1, client.CallCount);
+        Assert.Equal("NeedsRebuild", result.Embeddings?.Status);
+        Assert.Equal(KnowledgeStatuses.Warning, result.Status.Status);
+        Assert.Contains("明示的な再構築", result.Status.Message);
+        Assert.Equal(previousBytes, await File.ReadAllBytesAsync(indexPath));
+    }
+
     private static ProductScopedIndexService CreateService()
     {
         return new ProductScopedIndexService(new WritingCaseIndexBuilder(), new AiManualIndexBuilder());
+    }
+
+    private sealed class FailingEmbeddingClient : IOllamaEmbeddingClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<IReadOnlyList<IReadOnlyList<float>>> EmbedAsync(
+            string endpoint,
+            string model,
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            throw new HttpRequestException("embedding unavailable");
+        }
+    }
+
+    private sealed class FixedDigestResolver(string? digest) : IEmbeddingModelDigestResolver
+    {
+        public Task<string?> ResolveAsync(
+            string endpoint,
+            string model,
+            CancellationToken cancellationToken = default) => Task.FromResult(digest);
+    }
+
+    private sealed class MutableDigestResolver : IEmbeddingModelDigestResolver
+    {
+        public string? Digest { get; set; }
+
+        public Task<string?> ResolveAsync(
+            string endpoint,
+            string model,
+            CancellationToken cancellationToken = default) => Task.FromResult(Digest);
+    }
+
+    private sealed class RecordingEmbeddingClient : IOllamaEmbeddingClient
+    {
+        public int CallCount { get; private set; }
+
+        public Task<IReadOnlyList<IReadOnlyList<float>>> EmbedAsync(
+            string endpoint,
+            string model,
+            IReadOnlyList<string> inputs,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            IReadOnlyList<IReadOnlyList<float>> vectors = inputs
+                .Select(static _ => (IReadOnlyList<float>)new float[] { 1, 0 })
+                .ToList();
+            return Task.FromResult(vectors);
+        }
     }
 
     private static async Task<AiManualIndexDocument> ReadManualIndexAsync(string indexFilePath)

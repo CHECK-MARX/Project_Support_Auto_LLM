@@ -43,10 +43,27 @@ public sealed class EmbeddingIndexUpdater
         try
         {
             existing = await LoadAsync(indexPath, cancellationToken);
+            if (!forceRebuild && existing is { Entries.Count: > 0 } &&
+                (!string.Equals(existing.EmbeddingModel, embeddingModel, StringComparison.OrdinalIgnoreCase) ||
+                 (!string.IsNullOrWhiteSpace(embeddingModelDigest) &&
+                  !string.Equals(existing.EmbeddingModelDigest, embeddingModelDigest, StringComparison.OrdinalIgnoreCase))))
+            {
+                return new EmbeddingIndexUpdateResult
+                {
+                    EmbeddingModel = existing.EmbeddingModel,
+                    IndexFilePath = indexPath,
+                    VectorCount = existing.Entries.Count,
+                    Status = "NeedsRebuild",
+                    Warning = "埋め込みモデルの実体を既存indexと照合できません。自動再構築は行わず、明示的な再構築を待ちます。",
+                };
+            }
+
             var canReuse = !forceRebuild &&
                 existing is { SchemaVersion: EmbeddingIndexDocument.CurrentSchemaVersion } &&
                 string.Equals(existing.EmbeddingProvider, "Ollama", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(existing.EmbeddingModel, embeddingModel, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(embeddingModelDigest) ||
+                    string.Equals(existing.EmbeddingModelDigest, embeddingModelDigest, StringComparison.OrdinalIgnoreCase)) &&
                 existing.EmbeddingNormalized;
             var existingByKey = canReuse
                 ? existing!.Entries
@@ -70,6 +87,7 @@ public sealed class EmbeddingIndexUpdater
                 var key = SourceKey(source);
                 if (existingByKey.TryGetValue(key, out var oldEntry) &&
                     string.Equals(oldEntry.ContentHash, source.ContentHash, StringComparison.Ordinal) &&
+                    oldEntry.EmbeddingInputSanitized == sanitizeEmbeddingInput &&
                     oldEntry.Vector.Count > 0)
                 {
                     output.Add(oldEntry);

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 
 namespace SupportCaseManager.Ai.Core.Llm;
@@ -15,7 +16,8 @@ public static class OllamaRequestBuilder
         LlmProviderSettings settings,
         string systemPrompt,
         string userPrompt,
-        bool thinkDisabled)
+        bool thinkDisabled,
+        JsonElement? outputSchema = null)
     {
         var request = new Dictionary<string, object?>
         {
@@ -38,7 +40,7 @@ public static class OllamaRequestBuilder
         if (string.IsNullOrWhiteSpace(structuredOutputMode) ||
             string.Equals(structuredOutputMode, StructuredOutputModes.Json, StringComparison.OrdinalIgnoreCase))
         {
-            request["format"] = "json";
+            request["format"] = outputSchema.HasValue ? outputSchema.Value : "json";
         }
 
         if (thinkDisabled)
