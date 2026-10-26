@@ -1,4 +1,6 @@
+﻿using System.Text.Json;
 using System.Text;
+using System.IO.Compression;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using SupportCaseManager.Ai.Contracts;
@@ -11,6 +13,47 @@ namespace SupportCaseManager.AiAssistant.App.Tests;
 
 public sealed class CodexChatViewModelTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Send_OfficeDirectoryEntriesDoNotBlockAndMalformedTextIsExplicitlyUnconfirmed(bool corrupt)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "presentation.pptx");
+        using (var archive = ZipFile.Open(source, ZipArchiveMode.Create))
+        {
+            archive.CreateEntry("ppt/slides/");
+            archive.CreateEntry("ppt/slides/_rels/");
+            using var writer = new StreamWriter(archive.CreateEntry("ppt/slides/slide1.xml").Open());
+            if (!corrupt) writer.Write("<root><p><t>添付の提案本文</t></p></root>");
+        }
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "inquiry.txt"), "現在の問い合わせ");
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.Files.Single(file => file.FileName == "presentation.pptx").IsSelected = true;
+        viewModel.PromptInput = "入力したメール案を確認してください";
+        viewModel.SendCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 1, TimeSpan.FromSeconds(5));
+        Assert.Contains("入力したメール案を確認してください", client.LastTurnText);
+        Assert.Contains("現在の問い合わせ", client.LastTurnText);
+        Assert.Empty(viewModel.ErrorText);
+        var file = viewModel.Files.Single(file => file.FileName == "presentation.pptx");
+        if (corrupt)
+        {
+            Assert.Contains("presentation.pptx", viewModel.WarningText);
+            Assert.Contains("未読部分を確認済みとして扱わず", client.LastTurnText);
+            Assert.DoesNotContain("添付の提案本文", client.LastTurnText);
+            Assert.DoesNotContain("本文読取済み", file.ConfirmationStatus);
+        }
+        else
+        {
+            Assert.Contains("添付の提案本文", client.LastTurnText);
+            Assert.DoesNotContain("Root element", viewModel.WarningText);
+            Assert.Contains("本文読取済み", file.ConfirmationStatus);
+        }
+    }
+
     [Fact]
     public async Task BaselineChatFollowUp_ReintroducesCurrentCaseContextAndNewFiles()
     {
@@ -548,8 +591,8 @@ public sealed class CodexChatViewModelTests
         var delta = Path.Combine(temp.Path, "追加問い合わせ内容.xlsx");
         await File.WriteAllTextAsync(inquiry, "当初の問い合わせです。");
         await File.WriteAllBytesAsync(delta, [1, 2, 3]);
-        await File.WriteAllTextAsync(Path.Combine(temp.Path, "メーカー連携内容_00018742.txt"), "過去のメーカー連絡です。");
-        await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様への返信案_00018742.txt"), "過去のお客様返信です。");
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "メーカー連携内容_00018742.txt"), "メーカーから受信: 過去のメーカー回答です。");
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様への返信案_00018742.txt"), "顧客へ送信: 過去の回答です。");
         var client = new FakeClient();
         var logger = new FakeLogger(temp.Path);
         var viewModel = new CodexChatViewModel(
@@ -2105,7 +2148,7 @@ public sealed class CodexChatViewModelTests
 
         Assert.True(viewModel.CreateExcelArtifactCommand.CanExecute(null));
 
-        fakeClient.EnqueueResponse(
+        fakeClient.EnqueueTranslationResponse(
             """[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"}]""");
         fakeClient.EnqueueResponse(
             """
@@ -2179,7 +2222,7 @@ public sealed class CodexChatViewModelTests
         // A pending selection remains the exact created artifact even if a later plan name changes.
         viewModel.ArtifactOutputFileName = "Additional_Inquiry_Details_EN.xlsx";
         viewModel.TechnicalAnswer = "We would like to close this case. Inquiry_Details_EN.xlsx";
-        fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 追加確認（Support ID: 00018290）\nメーカーサポートご担当者様\nお世話になっております。\n東陽テクニカの伊藤です。\nSupport ID 00018290について、Inquiry_Details_EN_2.xlsxを添付します。\nどうぞよろしくお願いいたします。\n株式会社東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx follow-up (Support ID: 00018290)\nHello Support Team,\nThis is Ken Ito from Toyo Corporation.\nFor Support ID 00018290, the current attachment is Inquiry_Details_EN_2.xlsx.\nBest regards,\nKen Ito\nToyo Corporation"}""");
+        fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 追加確認（Support ID: 00018290）\nメーカーサポートご担当者様\nお世話になっております。\n東陽テクニカの伊藤です。\nSupport ID 00018290について、Inquiry_Details_EN_2.xlsxを添付します。\nどうぞよろしくお願いいたします。\n株式会社東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx review (Support ID: 00018290)\nHello Support Team,\nThis is Ken Ito from Toyo Corporation.\nFor Support ID 00018290, the current attachment is Inquiry_Details_EN_2.xlsx.\nBest regards,\nKen Ito\nToyo Corporation"}""");
         viewModel.GenerateManufacturerMailCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
         Assert.Contains("Inquiry_Details_EN_2.xlsx", fakeClient.LastTurnText);
@@ -2239,7 +2282,7 @@ public sealed class CodexChatViewModelTests
         viewModel.PrepareArtifactPlanCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
 
-        fakeClient.EnqueueResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"elementToProof 9.7.4.0 1239753","translatedText":"English"}]""");
+        fakeClient.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"elementToProof 9.7.4.0 1239753","translatedText":"English"}]""");
         fakeClient.EnqueueResponse("""{"japaneseDraft":"件名: Checkmarx 確認（Support ID: 00018303）\nメーカーサポートご担当者様\nお世話になっております。\nProject_Settings_Guide_EN.xlsxを添付します。質問1: 翻訳内容をご確認ください。\nよろしくお願いいたします。\n東陽テクニカ\n伊藤 健","englishDraft":"Subject: Checkmarx review (Support ID: 00018303)\nHello Support Team,\nPlease review Project_Settings_Guide_EN.xlsx. Question 1: Please review the translation.\nBest regards,\nKen Ito\nToyo Corporation"}""");
         viewModel.CreateExcelArtifactCommand.Execute(null);
         await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
@@ -2294,6 +2337,54 @@ public sealed class CodexChatViewModelTests
     }
 
     [Fact]
+    public async Task ArtifactTranslation_PowerPointFlowsThroughPreviewBatchAndSafeSave()
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "Klocwork_AI_Remediation_PoC_Proposal.pptx");
+        using (var document = PresentationDocument.Create(source, DocumentFormat.OpenXml.PresentationDocumentType.Presentation))
+        {
+            var presentation = document.AddPresentationPart();
+            var slide = presentation.AddNewPart<SlidePart>();
+            presentation.Presentation = new DocumentFormat.OpenXml.Presentation.Presentation(
+                new DocumentFormat.OpenXml.Presentation.SlideIdList(new DocumentFormat.OpenXml.Presentation.SlideId
+                { Id = 256, RelationshipId = presentation.GetIdOfPart(slide) }));
+            slide.Slide = new DocumentFormat.OpenXml.Presentation.Slide(
+                new DocumentFormat.OpenXml.Presentation.CommonSlideData(
+                    new DocumentFormat.OpenXml.Presentation.ShapeTree(
+                        new DocumentFormat.OpenXml.Presentation.Shape(
+                            new DocumentFormat.OpenXml.Presentation.TextBody(
+                                new DocumentFormat.OpenXml.Drawing.BodyProperties(),
+                                new DocumentFormat.OpenXml.Drawing.ListStyle(),
+                                new DocumentFormat.OpenXml.Drawing.Paragraph(
+                                    new DocumentFormat.OpenXml.Drawing.Run(
+                                        new DocumentFormat.OpenXml.Drawing.Text("改善案を確認してください。"))))))));
+        }
+        var original = await File.ReadAllBytesAsync(source);
+        var plan = await new ArtifactTranslationService().CreatePlanAsync(new ArtifactCreationRequest
+        { CaseFolder = temp.Path, SourceFilePath = source, DestinationFolder = temp.Path,
+            OutputFileName = "Klocwork_AI_Remediation_PoC_Proposal_EN.pptx" });
+        var client = new FakeClient();
+        client.EnqueueTranslationResponse(JsonSerializer.Serialize(plan.Text.Entries.Where(entry => entry.ShouldTranslate)
+            .Select(entry => new { key = entry.Key, sourceText = entry.SourceText, translatedText = "Please review the proposed improvement." })));
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "Klocwork_AI_Remediation_PoC_Proposal.pptxを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        Assert.Equal("PowerPoint Presentation (.pptx)", viewModel.ArtifactFormatText);
+        Assert.Contains("スライド", viewModel.ArtifactProcessDescription);
+        Assert.Single(viewModel.ArtifactPreviewItems);
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        Assert.Equal(1, client.TurnCount);
+        Assert.Contains("PowerPoint Presentation (.pptx)", client.LastTurnText);
+        Assert.Equal("Klocwork_AI_Remediation_PoC_Proposal_EN.pptx", Path.GetFileName(viewModel.CreatedArtifactPath));
+        using var output = PresentationDocument.Open(viewModel.CreatedArtifactPath, false);
+        Assert.Contains("Please review the proposed improvement.", output.PresentationPart!.SlideParts.Single().Slide!.InnerText);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source));
+    }
+
+    [Fact]
     public async Task ArtifactPlan_UsesTranslatedLicenseFileNameAndPreservesManualOverride()
     {
         using var temp = new TempDirectory();
@@ -2327,6 +2418,397 @@ public sealed class CodexChatViewModelTests
         Assert.Equal(originalBytes, await File.ReadAllBytesAsync(source));
         Assert.False(File.Exists(Path.Combine(temp.Path, translatedName)));
         Assert.Equal(0, fakeClient.TurnCount);
+    }
+
+    [Theory]
+    [InlineData("0754_R~1問い合わせ内容_20261005追記.xlsx", false)]
+    [InlineData("0754_R~1問い合わせ内容_20261005未収録語.xlsx", true)]
+    public async Task ArtifactPlan_RevisionFilenameAndPartialFallbackReachOutputAndDefaultName(
+        string sourceName, bool expectFallback)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, sourceName);
+        byte[] originalBytes = [1, 2, 3];
+        await File.WriteAllBytesAsync(source, originalBytes);
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client, excelTranslationService: new FakeExcelTranslationService());
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = $"{sourceName}を英訳して別名で保存してください";
+
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+
+        var expectedName = new ArtifactFilenameTranslationService().CreatePreview(sourceName).OutputFileName;
+        Assert.Equal(source, viewModel.ArtifactSourceFile);
+        Assert.Equal(expectedName, viewModel.ArtifactOutputFileName);
+        Assert.Contains("0754_R~1_Inquiry_Details_20261005", viewModel.ArtifactOutputFileName);
+        if (expectFallback)
+            Assert.Contains("未翻訳", viewModel.ArtifactWarnings);
+        else
+            Assert.DoesNotContain("未翻訳", viewModel.ArtifactWarnings);
+
+        viewModel.ArtifactOutputFileName = "Custom_Name_EN.xlsx";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        Assert.Equal("Custom_Name_EN.xlsx", viewModel.ArtifactOutputFileName);
+        viewModel.ResetArtifactOutputNameCommand.Execute(null);
+        Assert.Equal(expectedName, viewModel.ArtifactOutputFileName);
+        Assert.Equal(originalBytes, await File.ReadAllBytesAsync(source));
+        Assert.False(File.Exists(Path.Combine(temp.Path, expectedName)));
+        Assert.Equal(0, client.TurnCount);
+    }
+
+    [Fact]
+    public async Task ArtifactTranslation_RepairsExtraSheetRenameOnceBeforeSaving()
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        byte[] original = [1, 2, 3];
+        await File.WriteAllBytesAsync(source, original);
+        var client = new FakeClient();
+        var service = new FakeExcelTranslationService();
+        client.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"},{"sheet":"Other","cell":"@sheet-name","sourceText":"別シート","translatedText":"Other"}]""");
+        client.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"}]""");
+        var viewModel = CreateViewModel(temp, client, excelTranslationService: service);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "問い合わせ内容.xlsxを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, client.TurnCount);
+        Assert.Equal(1, service.CreateCount);
+        Assert.Contains("翻訳結果の修正（1回限定）", client.LastTurnText);
+        Assert.Contains(ArtifactTranslationBatchContract.Id(new ExcelTranslationEntry { Sheet = "Other", Cell = "@sheet-name", SourceText = "別シート" }), client.LastTurnText);
+        Assert.Equal(1, client.LastTurnText.Split("### 入力JSON", StringSplitOptions.None).Length - 1);
+        Assert.Equal("English", Assert.Single(viewModel.ArtifactTranslationPreview).TranslatedText);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source));
+        Assert.True(File.Exists(viewModel.CreatedArtifactPath));
+    }
+
+    [Theory]
+    [InlineData("[null]")]
+    [InlineData("[]")]
+    [InlineData("[{\"sheet\":\"Other\",\"cell\":\"@sheet-name\",\"sourceText\":\"日本語\",\"translatedText\":\"Other\"}]")]
+    [InlineData("[{\"sheet\":\"Sheet1\",\"cell\":\"A1\",\"sourceText\":\"改変\",\"translatedText\":\"English\"}]")]
+    [InlineData("[{\"sheet\":\"Sheet1\",\"cell\":\"A1\",\"sourceText\":\"日本語\",\"translatedText\":\"\"}]")]
+    [InlineData("[{\"sheet\":\"Sheet1\",\"cell\":\"A1\",\"sourceText\":\"日本語\",\"translatedText\":\"English\"},{\"sheet\":\"Sheet1\",\"cell\":\"A1\",\"sourceText\":\"日本語\",\"translatedText\":\"English\"}]")]
+    public async Task ArtifactTranslation_StillInvalidAfterRepairStopsWithoutCreatingFile(string repairedResponse)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        byte[] original = [1, 2, 3];
+        await File.WriteAllBytesAsync(source, original);
+        var client = new FakeClient();
+        var service = new FakeExcelTranslationService();
+        client.EnqueueTranslationResponse("[]");
+        client.EnqueueTranslationResponse(repairedResponse);
+        var viewModel = CreateViewModel(temp, client, excelTranslationService: service);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "問い合わせ内容.xlsxを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => !string.IsNullOrEmpty(viewModel.ErrorText), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, client.TurnCount);
+        Assert.Equal(0, service.CreateCount);
+        Assert.Equal("警告あり", viewModel.ArtifactStateText);
+        Assert.NotEmpty(viewModel.ArtifactWarnings);
+        Assert.Contains("修正後も翻訳結果が入力と一致しない", viewModel.ErrorText);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source));
+        Assert.False(File.Exists(Path.Combine(temp.Path, viewModel.ArtifactOutputFileName)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArtifactTranslation_TextRepairUsesSameStrictValidation(bool validRepair)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.txt");
+        await File.WriteAllTextAsync(source, "確認事項", new UTF8Encoding(false));
+        var original = await File.ReadAllBytesAsync(source);
+        var plan = await new ArtifactTranslationService().CreatePlanAsync(new ArtifactCreationRequest
+        {
+            CaseFolder = temp.Path, SourceFilePath = source, DestinationFolder = temp.Path,
+            OutputFileName = "Inquiry_Details_EN.txt",
+        });
+        var entry = Assert.Single(plan.Text.Entries, item => item.ShouldTranslate);
+        var client = new FakeClient();
+        client.EnqueueTranslationResponse("[]");
+        client.EnqueueTranslationResponse(System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new ArtifactTextTranslationValue
+            {
+                Key = entry.Key, SourceText = validRepair ? entry.SourceText : "改変",
+                TranslatedText = "Items to review",
+            },
+        }));
+        var viewModel = CreateViewModel(temp, client);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "問い合わせ内容.txtを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => validRepair ? viewModel.ArtifactStateText == "完了" : !string.IsNullOrEmpty(viewModel.ErrorText), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, client.TurnCount);
+        Assert.Contains("翻訳結果の修正（1回限定）", client.LastTurnText);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source));
+        if (validRepair)
+        {
+            Assert.True(File.Exists(viewModel.CreatedArtifactPath));
+            Assert.Equal("Items to review", await File.ReadAllTextAsync(viewModel.CreatedArtifactPath));
+        }
+        else
+        {
+            Assert.Empty(Directory.GetFiles(temp.Path, "*_EN.txt", SearchOption.AllDirectories));
+            Assert.Contains("計画外の翻訳ID", viewModel.ArtifactWarnings);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArtifactTranslation_LaterBatchFailureCannotSaveEarlierValidBatch(bool validRepair)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        await File.WriteAllBytesAsync(source, [1, 2, 3]);
+        var entries = Enumerable.Range(1, 81).Select(i => new ExcelTranslationEntry
+        {
+            Sheet = "Sheet1", Cell = $"A{i}", SourceText = $"確認{i}", ShouldTranslate = true,
+        }).ToArray();
+        var values = entries.Select(item => new ExcelTranslationValue
+        {
+            Sheet = item.Sheet, Cell = item.Cell, SourceText = item.SourceText, TranslatedText = "Review",
+        }).ToArray();
+        var client = new FakeClient();
+        client.EnqueueTranslationResponse(System.Text.Json.JsonSerializer.Serialize(values.Take(80)));
+        // A valid previous-batch item is still forbidden in the final batch.
+        client.EnqueueTranslationResponse(System.Text.Json.JsonSerializer.Serialize(new[] { values[80], values[0] }));
+        client.EnqueueTranslationResponse(validRepair ? System.Text.Json.JsonSerializer.Serialize(new[] { values[80] }) : "[]");
+        var service = new FakeExcelTranslationService { PlannedEntries = entries };
+        var viewModel = CreateViewModel(temp, client, excelTranslationService: service);
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "問い合わせ内容.xlsxを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => validRepair ? viewModel.ArtifactStateText == "完了" : !string.IsNullOrEmpty(viewModel.ErrorText), TimeSpan.FromSeconds(5));
+
+        Assert.Equal(3, client.TurnCount);
+        Assert.Equal(validRepair ? 1 : 0, service.CreateCount);
+        Assert.Contains(ArtifactTranslationBatchContract.Id(entries[0]), client.LastTurnText);
+        Assert.Contains("Return exactly 1 objects", client.LastTurnText);
+        Assert.Equal(new byte[] { 1, 2, 3 }, await File.ReadAllBytesAsync(source));
+        if (validRepair)
+            Assert.All(viewModel.ArtifactTranslationPreview, entry => Assert.Equal("Review", entry.TranslatedText));
+        else
+            Assert.Empty(Directory.GetFiles(temp.Path, "*_EN.xlsx", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("missing")]
+    [InlineData("close")]
+    [InlineData("wrong-attachment")]
+    public async Task ManufacturerMail_RepairsMissingIdentityOnceAndReportsValidatedOutcome(string repair)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        await File.WriteAllBytesAsync(source, [1, 2, 3]);
+        var client = new FakeClient();
+        var viewModel = CreateViewModel(temp, client, inquiryFile: source, excelTranslationService: new FakeExcelTranslationService());
+        await viewModel.InitializeAsync();
+        viewModel.PromptInput = "問い合わせ内容.xlsxを英訳して別名で保存してください";
+        viewModel.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        client.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"}]""");
+        viewModel.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        viewModel.UseCreatedArtifactForManufacturerMailCommand.Execute(null);
+        var attachment = Path.GetFileName(viewModel.CreatedArtifactPath);
+        var missing = new ManufacturerDraftPair
+        {
+            JapaneseDraft = $"件名: 確認\n{attachment}をご確認ください。",
+            EnglishDraft = $"Subject: (Keep the existing thread subject)\nPlease review {attachment}.",
+        };
+        var repaired = repair == "missing" ? missing : new ManufacturerDraftPair
+        {
+            JapaneseDraft = $"件名: HelixQAC 確認 Support ID: 0001\n{attachment}をご確認ください。",
+            EnglishDraft = $"Subject: HelixQAC review Support ID: 0001\nPlease review {(repair == "wrong-attachment" ? "Other.xlsx" : attachment)}."
+                + (repair == "close" ? " Please close this case." : ""),
+        };
+        client.EnqueueResponse(JsonSerializer.Serialize(missing));
+        client.EnqueueResponse(JsonSerializer.Serialize(repaired));
+        viewModel.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => (client.TurnCount >= 3 || !string.IsNullOrEmpty(viewModel.ErrorText)) && viewModel.GenerateManufacturerMailCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        Assert.True(client.TurnCount == 3, $"Turns={client.TurnCount}; {viewModel.ErrorText}; {viewModel.ArtifactWarnings}");
+        Assert.Contains("検証失敗の修正（1回限定）", client.LastTurnText);
+        Assert.Contains("最終出力契約", client.LastTurnText);
+        var last = viewModel.Messages.Last(message => message.Role == "assistant").Text;
+        if (repair == "valid")
+        {
+            Assert.Equal("完了", viewModel.ArtifactStateText);
+            Assert.Contains("整合性を確認しました", last);
+            Assert.Contains("0001", viewModel.JapaneseManufacturerDraft);
+            Assert.Contains("HelixQAC", viewModel.EnglishManufacturerDraft);
+            Assert.Empty(viewModel.ErrorText);
+        }
+        else
+        {
+            Assert.Equal("警告あり", viewModel.ArtifactStateText);
+            Assert.Contains("未確定", last);
+            Assert.DoesNotContain("生成しました", last);
+            Assert.False(viewModel.SendEnglishManufacturerDraftToWpfNoteCommand.CanExecute(null));
+            Assert.NotEmpty(viewModel.ErrorText);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("未送信の返信案です。内容を確認予定です。")]
+    public async Task ManufacturerAsk_EmptyTemplatesAreInitialAndCorrectionsUpdateBothDrafts(string template)
+    {
+        using var temp = new TempDirectory();
+        var source = Path.Combine(temp.Path, "問い合わせ内容.xlsx");
+        await File.WriteAllBytesAsync(source, [1, 2, 3]);
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "メーカー連携内容_0001.txt"), template);
+        await File.WriteAllTextAsync(Path.Combine(temp.Path, "お客様への返信案_0001.txt"), template);
+        var client = new FakeClient();
+        var vm = CreateViewModel(temp, client, inquiryFile: source, excelTranslationService: new FakeExcelTranslationService());
+        await vm.InitializeAsync();
+        vm.PromptInput = "問い合わせ内容.xlsxを英訳して別名で保存してください";
+        vm.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => vm.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        client.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"日本語","translatedText":"English"}]""");
+        vm.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => vm.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        vm.UseCreatedArtifactForManufacturerMailCommand.Execute(null);
+        var name = Path.GetFileName(vm.CreatedArtifactPath);
+        var pair = new ManufacturerDraftPair { JapaneseDraft = $"件名: HelixQAC 確認 (0001)\n{name}をご確認ください。",
+            EnglishDraft = $"Subject: HelixQAC review (0001)\nPlease review {name}." };
+        client.EnqueueResponse(JsonSerializer.Serialize(pair));
+        vm.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 2 && vm.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        Assert.Contains("Manufacturer Draft Mode: INITIAL", vm.ManufacturerFollowUpScopeText);
+        Assert.DoesNotContain("挨拶、Follow-upの経緯", client.LastTurnText);
+        Assert.Contains("初回の確認依頼", client.LastTurnText);
+        var technical = vm.TechnicalAnswer;
+        client.EnqueueResponse(JsonSerializer.Serialize(pair with { JapaneseDraft = pair.JapaneseDraft + "\n再現方法もご確認ください。",
+            EnglishDraft = pair.EnglishDraft + "\nPlease also check the reproduction steps." }));
+        vm.PromptInput = "再現方法も確認するよう追記してください";
+        vm.SendFromUiCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 3 && vm.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        Assert.Contains("再現方法も確認するよう追記", client.LastTurnText);
+        Assert.Contains("再現方法もご確認", vm.JapaneseManufacturerDraft);
+        Assert.Contains("reproduction steps", vm.EnglishManufacturerDraft);
+        Assert.Equal(technical, vm.TechnicalAnswer);
+        Assert.Contains("GUI Send Route: MANUFACTURER", vm.ManufacturerFollowUpScopeText);
+    }
+
+    [Fact]
+    public async Task ManufacturerAsk_CurrentInquiryBundleIncludesAttachmentsAndWorkbookQuestions()
+    {
+        using var temp = new TempDirectory();
+        var directory = Directory.CreateDirectory(Path.Combine(temp.Path, "お客様ご相談内容_20261006_0001", "資料")).FullName;
+        var source = Path.Combine(directory, "質問.xlsx");
+        await File.WriteAllBytesAsync(source, [1, 2, 3]);
+        await File.WriteAllBytesAsync(Path.Combine(directory, "scan.pdf"), [1]);
+        await File.WriteAllBytesAsync(Path.Combine(directory, "source.zip"), [1]);
+        await File.WriteAllTextAsync(Path.Combine(directory, "query.xml"), "<query />");
+        var inquiry = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiry, "添付の内容をご確認ください。");
+        var client = new FakeClient();
+        var vm = CreateViewModel(temp, client, inquiryFile: inquiry,
+            excelTranslationService: new FakeExcelTranslationService { SourceText = "検出されるものと検出されないものがあります。理由を確認したいです。" });
+        await vm.InitializeAsync();
+        vm.PromptInput = "質問.xlsxを英訳して別名で保存してください";
+        vm.PrepareArtifactPlanCommand.Execute(null);
+        await WaitUntilAsync(() => vm.ArtifactStateText == "ユーザー確認待ち", TimeSpan.FromSeconds(5));
+        client.EnqueueTranslationResponse("""[{"sheet":"Sheet1","cell":"A1","sourceText":"検出されるものと検出されないものがあります。理由を確認したいです。","translatedText":"Please explain the different results."}]""");
+        vm.CreateExcelArtifactCommand.Execute(null);
+        await WaitUntilAsync(() => vm.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        vm.UseCreatedArtifactForManufacturerMailCommand.Execute(null);
+        client.EnqueueResponse(JsonSerializer.Serialize(new ManufacturerDraftPair {
+            JapaneseDraft = $"件名: HelixQAC (0001)\n{Path.GetFileName(vm.CreatedArtifactPath)}, scan.pdf, source.zip, query.xmlをご確認ください。",
+            EnglishDraft = $"Subject: HelixQAC (0001)\nPlease review {Path.GetFileName(vm.CreatedArtifactPath)}, scan.pdf, source.zip, query.xml." }));
+        vm.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => client.TurnCount == 2 && vm.GenerateManufacturerMailCommand.CanExecute(null), TimeSpan.FromSeconds(5));
+        Assert.Equal("完了", vm.ArtifactStateText);
+        Assert.Equal(4, vm.ManufacturerAttachments.Count);
+        Assert.Contains("検出されるものと検出されないもの", client.LastTurnText);
+        Assert.Contains("source.zip", vm.JapaneseManufacturerDraft);
+        Assert.Contains("query.xml", vm.EnglishManufacturerDraft);
+        Assert.DoesNotContain(vm.ManufacturerAttachments, file => file.FileName == "質問.xlsx");
+        vm.ManufacturerAttachments.Single(file => file.FileName == "source.zip").IsManufacturerAttachmentSelected = false;
+        Assert.False(vm.SendEnglishManufacturerDraftToWpfNoteCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task ManufacturerAsk_UsesFullLatestInboundWhenScreenInquiryIsShortened()
+    {
+        using var temp = new TempDirectory();
+        var bundle = Directory.CreateDirectory(Path.Combine(temp.Path, "お客様ご相談内容_20261006_0001", "資料")).FullName;
+        foreach (var name in new[] { "report.pdf", "source1.zip", "source2.zip", "query.xml", "質問.xlsx" })
+            await File.WriteAllBytesAsync(Path.Combine(bundle, name), [1]);
+        await File.WriteAllBytesAsync(Path.Combine(temp.Path, "obsolete.pdf"), [1]);
+        var inquiry = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiry,
+            "*****追記部_2026/10/05 14:00:00(顧客から受信)******\nobsolete.pdfを確認してください。\n"
+            + "*****追記部_2026/10/06 14:00:00(顧客から受信)******\n検出の違いを確認してください。\n添付: report.pdf、source1.zip、source2.zip、query.xml、質問.xlsx");
+        var client = new FakeClient();
+        var vm = CreateViewModel(temp, client, "解析結果をご確認ください。", inquiry,
+            excelTranslationService: new FakeExcelTranslationService { SourceText = "二重化の有効条件と検出差を確認したいです。" });
+        await vm.InitializeAsync();
+        Assert.Equal(5, vm.ManufacturerAttachments.Count);
+        Assert.DoesNotContain(vm.ManufacturerAttachments, file => file.FileName == "obsolete.pdf");
+        client.EnqueueResponse(JsonSerializer.Serialize(new ManufacturerDraftPair {
+            JapaneseDraft = "件名: HelixQAC (0001)\nreport.pdf source1.zip source2.zip query.xml 質問.xlsxについて検出の違いをご確認ください。",
+            EnglishDraft = "Subject: HelixQAC (0001)\nPlease check the different findings in report.pdf source1.zip source2.zip query.xml 質問.xlsx." }));
+        vm.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => vm.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        Assert.Contains("検出の違い", client.LastTurnText);
+        Assert.Contains("二重化の有効条件と検出差", client.LastTurnText);
+        Assert.Contains("source2.zip", vm.EnglishManufacturerDraft);
+    }
+
+    [Fact]
+    public async Task ManufacturerTranslation_RestoresExplicitMappingAfterRestartAndBlocksChangedSource()
+    {
+        using var temp = new TempDirectory();
+        var bundle = Directory.CreateDirectory(Path.Combine(temp.Path, "お客様ご相談内容_20261006_0001", "資料")).FullName;
+        var source = Path.Combine(bundle, "質問.xlsx");
+        var output = Path.Combine(bundle, "Questions_EN.xlsx");
+        await File.WriteAllBytesAsync(source, [1]);
+        await File.WriteAllBytesAsync(output, [2]);
+        await File.WriteAllBytesAsync(Path.Combine(bundle, "source.zip"), [3]);
+        var inquiry = Path.Combine(temp.Path, "お客様ご相談内容_0001.txt");
+        await File.WriteAllTextAsync(inquiry, "質問.xlsxとsource.zipをご確認ください。");
+        var vm = CreateViewModel(temp, new FakeClient(), inquiryFile: inquiry);
+        await vm.InitializeAsync();
+        await vm.SelectManufacturerTranslationAsync(source, output);
+        var client = new FakeClient();
+        var restarted = CreateViewModel(temp, client, inquiryFile: inquiry,
+            excelTranslationService: new FakeExcelTranslationService { SourceText = "観測結果をご確認ください。" });
+        await restarted.InitializeAsync();
+        Assert.Contains("Questions_EN.xlsx", restarted.PendingManufacturerAttachmentText);
+        Assert.Contains(restarted.ManufacturerAttachments, file => file.FileName == "Questions_EN.xlsx");
+        Assert.DoesNotContain(restarted.ManufacturerAttachments, file => file.FileName == "質問.xlsx");
+        client.EnqueueResponse(JsonSerializer.Serialize(new ManufacturerDraftPair {
+            JapaneseDraft = "件名: HelixQAC (0001)\nQuestions_EN.xlsxとsource.zipをご確認ください。",
+            EnglishDraft = "Subject: HelixQAC (0001)\nPlease review Questions_EN.xlsx and source.zip." }));
+        restarted.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => restarted.ArtifactStateText == "完了", TimeSpan.FromSeconds(5));
+        Assert.Contains("Questions_EN.xlsx", restarted.EnglishManufacturerDraft);
+        Assert.DoesNotContain("質問.xlsx", restarted.EnglishManufacturerDraft);
+        await File.WriteAllBytesAsync(source, [4]);
+        restarted.GenerateManufacturerMailCommand.Execute(null);
+        await WaitUntilAsync(() => restarted.ArtifactWarnings.Contains("ATTACHMENT_CHANGED"), TimeSpan.FromSeconds(5));
+        Assert.Equal(1, client.TurnCount);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
@@ -2498,6 +2980,33 @@ public sealed class CodexChatViewModelTests
         public IReadOnlyList<CodexModelInfo> Models { get; set; } =
             [new CodexModelInfo("fake", "Fake", true, false, "medium")];
 
+        // Encode readable fixtures into the production ID contract. Altered source/keys produce
+        // different IDs, so corrupted fixtures remain invalid rather than being silently repaired.
+        public void EnqueueTranslationResponse(string json)
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(json);
+            var options = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            var items = document.RootElement.EnumerateArray().Select(item =>
+            {
+                if (item.ValueKind == System.Text.Json.JsonValueKind.Null)
+                    return null;
+                if (item.EnumerateObject().Any(p => p.Name.Equals("sheet", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var value = item.Deserialize<ExcelTranslationValue>(options)!;
+                    return new { id = ArtifactTranslationBatchContract.Id(new ExcelTranslationEntry
+                    {
+                        Sheet = value.Sheet, Cell = value.Cell, SourceText = value.SourceText,
+                    }), translatedText = value.TranslatedText };
+                }
+                var text = item.Deserialize<ArtifactTextTranslationValue>(options)!;
+                return new { id = ArtifactTranslationBatchContract.Id(new ArtifactTextTranslationEntry
+                {
+                    Key = text.Key, SourceText = text.SourceText,
+                }), translatedText = text.TranslatedText };
+            }).ToArray();
+            EnqueueResponse(System.Text.Json.JsonSerializer.Serialize(items));
+        }
+
         public void EnqueueResponse(string response)
         {
             responses.Enqueue(response);
@@ -2653,6 +3162,7 @@ public sealed class CodexChatViewModelTests
     {
         public int CreateCount { get; private set; }
         public string SourceText { get; init; } = "日本語";
+        public IReadOnlyList<ExcelTranslationEntry>? PlannedEntries { get; init; }
 
         public Task<ArtifactCreationPlan> CreatePlanAsync(
             ArtifactCreationRequest request,
@@ -2678,7 +3188,7 @@ public sealed class CodexChatViewModelTests
                 OutputFullPath = Path.Combine(destination, request.OutputFileName),
                 SourceSha256 = "fake",
                 DestinationFolderWillBeCreated = !Directory.Exists(destination),
-                Excel = new ExcelTranslationPlan { Entries = [entry] },
+                Excel = new ExcelTranslationPlan { Entries = PlannedEntries ?? [entry] },
             });
         }
 

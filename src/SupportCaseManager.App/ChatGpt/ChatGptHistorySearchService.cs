@@ -151,9 +151,10 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                 cancellationToken,
                 target.DisplayName,
                 target.LaunchUrl,
-                requireSearchButton: false)
+                requireSearchButton: false,
+                allowGptContinuation: true)
             .ConfigureAwait(false)
-            ?? throw new InvalidOperationException("対象のCustom GPT画面を特定できませんでした。");
+            ?? throw new InvalidOperationException("対象GPTの入力画面を確認できませんでした。プラグイン移行案内が表示されている場合は「GPTを使い続ける」を選択して再試行してください。入力・送信はしていません。");
         BringToForeground(automationTarget.BrowserWindow);
 
         var promptInput = FindPromptInput(automationTarget.WebContentRoot)
@@ -230,7 +231,8 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                 expectedTitle: expectedTargetName,
                 expectedConversationUrl: normalizedUrl,
                 requireSearchButton: false,
-                timeout: ConversationTimeout)
+                timeout: ConversationTimeout,
+                allowGptContinuation: true)
             .ConfigureAwait(false)
             ?? throw new InvalidOperationException("登録済みGPT案件チャットを特定できませんでした。送信していません。");
         BringToForeground(automationTarget.BrowserWindow);
@@ -261,9 +263,11 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         string? expectedTargetUrl = null,
         bool requireSearchButton = true,
         string? expectedConversationUrl = null,
-        TimeSpan? timeout = null)
+        TimeSpan? timeout = null,
+        bool allowGptContinuation = false)
     {
         var deadline = DateTime.UtcNow + (timeout ?? SearchTimeout);
+        var continuationInvoked = false;
         while (DateTime.UtcNow < deadline)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -277,6 +281,15 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                     continue;
                 }
 
+                var continuationUrl = expectedConversationUrl ?? expectedTargetUrl;
+                if (allowGptContinuation && !continuationInvoked && !string.IsNullOrWhiteSpace(continuationUrl)
+                    && TryContinueUsingTargetGpt(window, continuationUrl))
+                {
+                    // The interstitial may leave a disabled composer in the accessibility tree.
+                    // Continue once on the exact selected page, then re-run every destination/input check.
+                    continuationInvoked = true;
+                    continue;
+                }
                 var webContentRoot = FindChatGptWebContentRoot(window);
                 if (webContentRoot is not null &&
                     (!requireSearchButton || FindSearchButton(webContentRoot) is not null) &&
@@ -323,6 +336,18 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
                 return false;
             }
 
+            return SelectedTabMatchesActiveDocument(browserWindow, webContentRoot);
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool SelectedTabMatchesActiveDocument(AutomationElement browserWindow, AutomationElement webContentRoot)
+    {
+        try
+        {
             var tabs = browserWindow.FindAll(
                 TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.TabItem));
@@ -346,6 +371,56 @@ public sealed class ChatGptBrowserGateway : IChatGptBrowserGateway, IGptConversa
         {
             return false;
         }
+    }
+
+    internal static bool IsGptContinuationButton(string? name) => name is
+        "GPT を使い続ける" or "GPTを使い続ける" or "Keep using GPT" or "Continue using GPT";
+
+    internal static bool GptContinuationPageMatches(string targetUrl, string? documentUrl, bool selectedTabMatches) =>
+        selectedTabMatches && (DocumentConversationMatches(targetUrl, documentUrl)
+            || (GptConversationUrl.TryValidateTarget(targetUrl, out var expected)
+                && GptConversationUrl.TryValidateTarget(documentUrl, out var actual)
+                && string.Equals(expected, actual, StringComparison.OrdinalIgnoreCase)));
+
+    private static bool TryContinueUsingTargetGpt(AutomationElement browserWindow, string expectedTargetUrl)
+    {
+        try
+        {
+            foreach (AutomationElement document in browserWindow.FindAll(TreeScope.Descendants,
+                         new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document)))
+            {
+                if (document.Current.IsOffscreen || !TryReadValuePattern(document, out var documentUrl)
+                    || !GptContinuationPageMatches(expectedTargetUrl, documentUrl,
+                        SelectedTabMatchesActiveDocument(browserWindow, document))
+                    || !BrowserWindowHasContinuationUrl(browserWindow, expectedTargetUrl))
+                    continue;
+                foreach (AutomationElement button in document.FindAll(TreeScope.Descendants,
+                             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+                {
+                    if (!button.Current.IsOffscreen && button.Current.IsEnabled && IsGptContinuationButton(button.Current.Name))
+                    {
+                        BringToForeground(browserWindow);
+                        // Revalidate immediately before invoking; page navigation cannot authorize a different GPT.
+                        return TryReadValuePattern(document, out var currentUrl)
+                            && GptContinuationPageMatches(expectedTargetUrl, currentUrl,
+                                SelectedTabMatchesActiveDocument(browserWindow, document))
+                            && BrowserWindowHasContinuationUrl(browserWindow, expectedTargetUrl) && TryInvoke(button);
+                    }
+                }
+            }
+        }
+        catch (Exception ex) when (ex is ElementNotAvailableException or InvalidOperationException) { }
+        return false;
+    }
+
+    private static bool BrowserWindowHasContinuationUrl(AutomationElement browserWindow, string expectedUrl)
+    {
+        foreach (AutomationElement edit in browserWindow.FindAll(TreeScope.Descendants,
+                     new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit)))
+            if (IsBrowserChromeEdit(edit) && TryReadValue(edit, out var actualUrl)
+                && GptContinuationPageMatches(expectedUrl, actualUrl, selectedTabMatches: true))
+                return true;
+        return false;
     }
 
     private static bool HasVisibleGptHeader(AutomationElement webContentRoot, string expectedTargetName)

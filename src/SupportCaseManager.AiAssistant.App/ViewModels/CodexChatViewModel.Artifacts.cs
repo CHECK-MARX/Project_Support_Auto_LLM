@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
@@ -8,7 +8,9 @@ using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Artifacts;
 using SupportCaseManager.Ai.Core.Codex;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Compatibility;
 using SupportCaseManager.Core.Quality;
+using SupportCaseManager.Core.Notes;
 using FormsDialogResult = System.Windows.Forms.DialogResult;
 using FormsFolderBrowserDialog = System.Windows.Forms.FolderBrowserDialog;
 using WpfOpenFileDialog = Microsoft.Win32.OpenFileDialog;
@@ -53,7 +55,22 @@ public sealed partial class CodexChatViewModel
     public AsyncRelayCommand CreateExcelArtifactCommand { get; private set; } = null!;
     public AsyncRelayCommand GenerateManufacturerMailCommand { get; private set; } = null!;
     public AsyncRelayCommand GenerateManufacturerReplyCommand { get; private set; } = null!;
-    public RelayCommand UseCreatedArtifactForManufacturerMailCommand { get; private set; } = null!;
+    public AsyncRelayCommand ReviseManufacturerMailCommand { get; private set; } = null!;
+    public IReadOnlyList<CodexCaseFileViewModel> ManufacturerAttachments => ResolveManufacturerAttachments(caseProvider()).Files
+        .Select(file => Files.FirstOrDefault(item => string.Equals(item.FullPath, file.FullPath, StringComparison.OrdinalIgnoreCase)))
+        .Where(item => item is not null).Cast<CodexCaseFileViewModel>().ToArray();
+    public string ManufacturerAttachmentNotice
+    {
+        get
+        {
+            var snapshot = caseProvider();
+            if (IsPendingManufacturerAttachmentForCase(snapshot)
+                && !TryGetPendingManufacturerAttachment(snapshot, out _, out _, out var error)) return error;
+            return string.Join(Environment.NewLine, ResolveManufacturerAttachments(snapshot).Warnings);
+        }
+    }
+    public AsyncRelayCommand UseCreatedArtifactForManufacturerMailCommand { get; private set; } = null!;
+    public AsyncRelayCommand ChooseExistingManufacturerTranslationCommand { get; private set; } = null!;
     public AsyncRelayCommand CancelArtifactCommand { get; private set; } = null!;
     public RelayCommand ChooseArtifactDestinationCommand { get; private set; } = null!;
     public RelayCommand ChooseArtifactSourceCommand { get; private set; } = null!;
@@ -207,6 +224,8 @@ public sealed partial class CodexChatViewModel
         ? "-"
         : artifactPlan.Format == ArtifactFormat.ExcelWorkbook
             ? "選択ファイル内の翻訳可能文字列を英訳し、元Excelを変更せず同形式で保存します。数式、数値、日付、URL、画像は変更しません。"
+            : artifactPlan.Format == ArtifactFormat.PowerPointPresentation
+                ? "スライド・表・ノート等の編集可能な文字を英訳し、元PPTXを変更せず同形式で保存します。配置、画像、リンク、アニメーションは保持します。画像内の文字・埋込ファイル・自動更新フィールドは変更しません。"
             : "選択ファイル内の翻訳可能文字列だけを英訳し、元ファイルを変更せず同じ形式で保存します。構造、区切り、改行、技術用語は維持します。";
     public string ArtifactOverwriteText => "上書きしない";
     public string ArtifactSourceProtectionText => "元ファイルは変更しない";
@@ -228,14 +247,21 @@ public sealed partial class CodexChatViewModel
             () => ExecuteGuardedAsync(CreateExcelArtifactAsync),
             () => artifactPlan is not null && artifactPlanReadyForExecution && !turnActive);
         GenerateManufacturerMailCommand = new AsyncRelayCommand(
-            () => ExecuteGuardedAsync(() => GenerateManufacturerMailAsync()),
+            () => ExecuteGuardedAsync(() => BeginManufacturerMailAsync(ManufacturerCommunicationIntent.AskManufacturer)),
             () => caseFolderReady && !turnActive);
         GenerateManufacturerReplyCommand = new AsyncRelayCommand(
-            () => ExecuteGuardedAsync(() => GenerateManufacturerMailAsync(CodexPromptPreset.ManufacturerReplyPrompt)),
+            () => ExecuteGuardedAsync(() => BeginManufacturerMailAsync(ManufacturerCommunicationIntent.ReplyToManufacturer)),
             () => caseFolderReady && !turnActive);
-        UseCreatedArtifactForManufacturerMailCommand = new RelayCommand(
+        ReviseManufacturerMailCommand = new AsyncRelayCommand(
+            () => ExecuteGuardedAsync(() => GenerateManufacturerMailAsync(PromptInput,
+                lastManufacturerIntent == "REPLY_TO_MANUFACTURER" ? ManufacturerCommunicationIntent.ReplyToManufacturer : ManufacturerCommunicationIntent.AskManufacturer)),
+            () => !turnActive && caseFolderReady && !string.IsNullOrWhiteSpace(PromptInput)
+                && (!string.IsNullOrWhiteSpace(JapaneseManufacturerDraft) || !string.IsNullOrWhiteSpace(EnglishManufacturerDraft)));
+        UseCreatedArtifactForManufacturerMailCommand = new AsyncRelayCommand(
             UseCreatedArtifactForManufacturerMail,
             CanUseCreatedArtifactForManufacturerMail);
+        ChooseExistingManufacturerTranslationCommand = new AsyncRelayCommand(
+            () => ExecuteGuardedAsync(ChooseExistingManufacturerTranslationAsync), () => !turnActive && caseFolderReady);
         CancelArtifactCommand = new AsyncRelayCommand(
             CancelArtifactAsync,
             () => artifactPlan is not null || artifactTurnCompletion is not null);
@@ -457,22 +483,15 @@ public sealed partial class CodexChatViewModel
             RunOnUi(() =>
                 ArtifactResultText = $"Codexで翻訳中: {Math.Min(translations.Count + batch.Length, expected.Length)} / {expected.Length}セル");
             var prompt = artifactPromptComposer.ComposeTranslationPrompt(plan, batch, context);
-            var response = await SendArtifactTurnAsync(
+            var values = await TranslateArtifactBatchAsync<ExcelTranslationValue>(
                 prompt,
                 $"成果物: Excel翻訳 {batchNumber}/{Math.Max(1, (int)Math.Ceiling((double)expected.Length / ArtifactPromptComposer.TranslationBatchSize))}",
-                showResponseInChat: false).ConfigureAwait(false);
-            var parsed = translationJsonParser.Parse(response, batch);
-            if (!parsed.Succeeded)
-            {
-                RunOnUi(() =>
+                response =>
                 {
-                    ArtifactStateText = "警告あり";
-                    ArtifactWarnings = string.Join(Environment.NewLine, parsed.Errors);
-                });
-                throw new InvalidDataException("Codexの翻訳JSONを安全に確認できないため、ファイルは作成していません。");
-            }
-
-            translations.AddRange(parsed.Values);
+                    var parsed = translationJsonParser.ParseIdentified(response, batch);
+                    return (parsed.Succeeded, parsed.Values, parsed.Errors);
+                }).ConfigureAwait(false);
+            translations.AddRange(values);
         }
 
         RunOnUi(() =>
@@ -517,22 +536,15 @@ public sealed partial class CodexChatViewModel
             RunOnUi(() =>
                 ArtifactResultText = $"Codexで翻訳中: {Math.Min(translations.Count + batch.Length, expected.Length)} / {expected.Length}要素");
             var prompt = artifactPromptComposer.ComposeTextTranslationPrompt(plan, batch, context);
-            var response = await SendArtifactTurnAsync(
+            var values = await TranslateArtifactBatchAsync<ArtifactTextTranslationValue>(
                 prompt,
                 $"成果物: {FormatName(plan.Format)}翻訳 {batchNumber}/{Math.Max(1, (int)Math.Ceiling((double)expected.Length / ArtifactPromptComposer.TranslationBatchSize))}",
-                showResponseInChat: false).ConfigureAwait(false);
-            var parsed = artifactTextTranslationJsonParser.Parse(response, batch);
-            if (!parsed.Succeeded)
-            {
-                RunOnUi(() =>
+                response =>
                 {
-                    ArtifactStateText = "警告あり";
-                    ArtifactWarnings = string.Join(Environment.NewLine, parsed.Errors);
-                });
-                throw new InvalidDataException("Codexの翻訳JSONを安全に確認できないため、ファイルは作成していません。");
-            }
-
-            translations.AddRange(parsed.Values);
+                    var parsed = artifactTextTranslationJsonParser.ParseIdentified(response, batch);
+                    return (parsed.Succeeded, parsed.Values, parsed.Errors);
+                }).ConfigureAwait(false);
+            translations.AddRange(values);
         }
 
         RunOnUi(() =>
@@ -565,12 +577,66 @@ public sealed partial class CodexChatViewModel
         RaiseArtifactCommandStates();
     }
 
+    private async Task<IReadOnlyList<T>> TranslateArtifactBatchAsync<T>(
+        string prompt,
+        string displayInstruction,
+        Func<string, (bool Succeeded, IReadOnlyList<T> Values, IReadOnlyList<string> Errors)> validate)
+    {
+        // Both attempts use the complete, unchanged batch validation before any file is written.
+        var currentPrompt = prompt;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var response = await SendArtifactTurnAsync(
+                currentPrompt, displayInstruction, showResponseInChat: false).ConfigureAwait(false);
+            var parsed = validate(response);
+            if (parsed.Succeeded)
+            {
+                RunOnUi(() => ArtifactStateText = "翻訳中");
+                return parsed.Values;
+            }
+
+            // Do not log source text, translated text, or customer identifiers.
+            await logger.WriteAsync("artifact-validation",
+                $"Translation batch rejected; attempt={attempt + 1}; errorCount={parsed.Errors.Count}").ConfigureAwait(false);
+            if (attempt == 0)
+            {
+                RunOnUi(() =>
+                {
+                    ArtifactStateText = "翻訳結果再確認中";
+                    ArtifactResultText = "翻訳結果に不一致があったため、1回だけ修正を依頼しています。";
+                });
+                currentPrompt = ArtifactPromptComposer.ComposeTranslationRepairPrompt(prompt, parsed.Errors);
+                continue;
+            }
+
+            RunOnUi(() =>
+            {
+                ArtifactStateText = "警告あり";
+                ArtifactWarnings = string.Join(Environment.NewLine, parsed.Errors);
+            });
+            throw new InvalidDataException(
+                "修正後も翻訳結果が入力と一致しないため、ファイルは作成していません。" + Environment.NewLine
+                + string.Join(Environment.NewLine, parsed.Errors.Take(3)));
+        }
+
+        throw new InvalidOperationException("翻訳結果の検証が完了していません。");
+    }
+
+    private Task BeginManufacturerMailAsync(ManufacturerCommunicationIntent intent)
+    {
+        SelectedPreset = PromptPresets.Single(preset => preset.CanonicalKey ==
+            (intent == ManufacturerCommunicationIntent.AskManufacturer ? CodexPromptPreset.AskManufacturerKey : CodexPromptPreset.ReplyToManufacturerKey));
+        RecordGuiSendRoute("MANUFACTURER", intent == ManufacturerCommunicationIntent.AskManufacturer ? "ASK_MANUFACTURER" : "REPLY_TO_MANUFACTURER");
+        return GenerateManufacturerMailAsync(SelectedPreset.Prompt, intent);
+    }
+
     private async Task GenerateManufacturerMailAsync(
         string? instructionOverride = null,
         ManufacturerCommunicationIntent? intentOverride = null)
     {
         var snapshot = caseProvider();
         currentSnapshot = snapshot;
+        await RefreshFilesAsync(preserveSelection: true).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(instructionOverride))
         {
@@ -611,7 +677,9 @@ public sealed partial class CodexChatViewModel
             ClearStaleManufacturerTechnicalAnswer();
         }
 
-        var context = BuildManufacturerMailCaseContext(snapshot, intent);
+        var workbookText = intent == ManufacturerCommunicationIntent.AskManufacturer
+            ? await ReadManufacturerInquiryWorkbookTextAsync(snapshot).ConfigureAwait(false) : [];
+        var context = BuildManufacturerMailCaseContext(snapshot, intent, workbookText);
         if (intent == ManufacturerCommunicationIntent.ReplyToManufacturer
             && !string.IsNullOrWhiteSpace(context.ImmediateManufacturerRecipientName))
         {
@@ -626,6 +694,17 @@ public sealed partial class CodexChatViewModel
             artifactPromptComposer.ComposeSimpleBilingualManufacturerMailPrompt(context), snapshot,
             QualityAudience.Manufacturer,
             intent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "MANUFACTURER_REPLY" : "MANUFACTURER_ASK");
+        if (!string.IsNullOrWhiteSpace(instructionOverride)
+            && instructionOverride != CodexPromptPreset.ManufacturerConfirmationPrompt
+            && instructionOverride != CodexPromptPreset.ManufacturerReplyPrompt)
+        {
+            prompt += $"\n### 今回のメール修正依頼\n{instructionOverride}\n"
+                + "修正先は日英メーカー向けメール案。技術回答案は変更しない。今回の確定Contextを優先し、"
+                + "旧案に根拠のない経緯・添付・技術事実があれば引き継がない。\n"
+                + System.Text.Json.JsonSerializer.Serialize(new ManufacturerDraftPair
+                { JapaneseDraft = JapaneseManufacturerDraft, EnglishDraft = EnglishManufacturerDraft });
+        }
+        prompt = ArtifactPromptComposer.AppendManufacturerOutputContract(prompt, context);
         var promptParity = context.ProtectedValues.EvaluatePromptInjection(prompt);
         var runtimeDiagnostic = BuildManufacturerRuntimeDiagnostic(context, promptParity);
         RunOnUi(() =>
@@ -666,124 +745,166 @@ public sealed partial class CodexChatViewModel
             return;
         }
 
-        var technicalAnswerBeforeManufacturerTurn = TechnicalAnswer;
-        var response = await SendArtifactTurnAsync(
-            prompt,
-            intent == ManufacturerCommunicationIntent.ReplyToManufacturer
-                ? "成果物: メーカー回答への返信案（日英）"
-                : "成果物: メーカーへの確認・追加質問メール案（日英）").ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(technicalAnswerBeforeManufacturerTurn)
-            && string.IsNullOrWhiteSpace(TechnicalAnswer))
+        var generationPrompt = prompt;
+        try
         {
-            RunOnUi(() => TechnicalAnswer = technicalAnswerBeforeManufacturerTurn);
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var technicalAnswerBeforeManufacturerTurn = TechnicalAnswer;
+                var response = await SendArtifactTurnAsync(
+                    generationPrompt,
+                    intent == ManufacturerCommunicationIntent.ReplyToManufacturer
+                        ? "成果物: メーカー回答への返信案（日英）"
+                        : "成果物: メーカーへの確認・追加質問メール案（日英）").ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(technicalAnswerBeforeManufacturerTurn)
+                    && string.IsNullOrWhiteSpace(TechnicalAnswer))
+                {
+                    RunOnUi(() => TechnicalAnswer = technicalAnswerBeforeManufacturerTurn);
+                }
+                var parsed = manufacturerDraftPairParser.Parse(response);
+                if (!parsed.Succeeded || parsed.Pair is null)
+                {
+                    RunOnUi(() =>
+                    {
+                        ArtifactStateText = "警告あり";
+                        ArtifactWarnings = string.Join(Environment.NewLine, parsed.Errors);
+                    });
+                    throw new InvalidDataException("Codexの日英メーカー確認案を安全に確認できませんでした。");
+                }
+
+                var senderNormalizedPair = ApplySenderProfile(parsed.Pair);
+                var boundaryContext = new ManufacturerDraftBoundaryContext
+                {
+                    CustomerPersonName = snapshot.CustomerName,
+                    CustomerCompanyName = snapshot.CompanyName,
+                    ProhibitedAttachmentNames = Files
+                        .Where(file => IsGeneratedTranslationFile(file.FileName)
+                            || (IsPendingManufacturerAttachmentForCase(snapshot)
+                                && string.Equals(file.FullPath, pendingManufacturerAttachmentSourcePath, StringComparison.OrdinalIgnoreCase)))
+                        .Select(static file => file.FileName)
+                        .Where(name => !context.OutboundAttachments.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                };
+                await SaveQualityDraftSafelyAsync(snapshot, QualityAudience.Manufacturer,
+                    intent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "MANUFACTURER_REPLY" : "MANUFACTURER_ASK",
+                    senderNormalizedPair.EnglishDraft).ConfigureAwait(false);
+                RunOnUi(() =>
+                {
+                    JapaneseManufacturerDraft = senderNormalizedPair.JapaneseDraft;
+                    EnglishManufacturerDraft = senderNormalizedPair.EnglishDraft;
+                    if (QualityReviewEnabled)
+                        ManufacturerFollowUpScopeText += $"{Environment.NewLine}Quality Review: {QualityStyleReviewer.Review(senderNormalizedPair.EnglishDraft, instructionOverride, qualityLastRetrievalCount)}";
+                    lastJapaneseManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(JapaneseManufacturerDraft);
+                    lastEnglishManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(EnglishManufacturerDraft);
+                    lastTechnicalAnswerChanged = !string.Equals(
+                        technicalAnswerBeforeManufacturerTurn,
+                        TechnicalAnswer,
+                        StringComparison.Ordinal);
+                });
+                AppendManufacturerSendDiagnostic();
+                var closeIntentDetected = !context.CloseRequested
+                    && (ManufacturerMailConcepts.HasCloseRequest(senderNormalizedPair.JapaneseDraft)
+                        || ManufacturerMailConcepts.HasCloseRequest(senderNormalizedPair.EnglishDraft));
+                if (closeIntentDetected)
+                {
+                    RunOnUi(() =>
+                    {
+                        manufacturerMailQualityReady = false;
+                        ArtifactStateText = "警告あり";
+                        ArtifactWarnings = "UNSUPPORTED_CLOSE_INTENT: CloseRequested=falseですが、生成案に案件終了の意図が含まれています。WPFノート編集への転送は無効です。";
+                        ErrorText = ArtifactWarnings;
+                        ConnectionDetails = "メール案を表示しましたが、終了意図の安全検証に失敗したためWPFノート編集への転送は無効です。";
+                        RaiseArtifactCommandStates();
+                    });
+                    return;
+                }
+
+                var unexpectedQuestionDetected = context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
+                    && (ManufacturerMailConcepts.HasQuestionRequest(senderNormalizedPair.JapaneseDraft)
+                        || ManufacturerMailConcepts.HasQuestionRequest(senderNormalizedPair.EnglishDraft));
+                if (unexpectedQuestionDetected)
+                {
+                    RunOnUi(() =>
+                    {
+                        manufacturerMailQualityReady = false;
+                        ArtifactStateText = "警告あり";
+                        ArtifactWarnings = "UNEXPECTED_QUESTION_GENERATION: メーカー回答への返信に、明示されていない追加質問または確認依頼が含まれています。WPFノート編集への転送は無効です。";
+                        ErrorText = ArtifactWarnings;
+                        ConnectionDetails = "メール案を表示しましたが、返信Intentの質問ガードに失敗したためWPFノート編集への転送は無効です。";
+                        RaiseArtifactCommandStates();
+                    });
+                    return;
+                }
+
+                var validation = manufacturerDraftPairParser.Validate(
+                    senderNormalizedPair,
+                    context.ProtectedValues,
+                    context.OutboundAttachments,
+                    boundaryContext);
+                var communicationErrors = manufacturerDraftPairParser.ValidateCommunication(senderNormalizedPair, context);
+                if (communicationErrors.Count > 0)
+                    validation = validation with { Succeeded = false, Errors = validation.Errors.Concat(communicationErrors).ToArray() };
+                var draftParity = context.ProtectedValues.EvaluateDraftParity(prompt, validation);
+                if (!validation.Succeeded || !draftParity.IsComplete)
+                {
+                    var validationMessage = BuildManufacturerValidationMessage(validation, draftParity);
+                    if (attempt == 0)
+                    {
+                        generationPrompt = ArtifactPromptComposer.ComposeManufacturerRepairPrompt(prompt,
+                            senderNormalizedPair, [validationMessage]);
+                        RunOnUi(() =>
+                        {
+                            if (currentAssistantMessage is not null)
+                                currentAssistantMessage.Text = "日英案に不一致があり、1回だけ修正を依頼しています。";
+                            ArtifactStateText = "メール案再確認中";
+                        });
+                        continue;
+                    }
+                    RunOnUi(() =>
+                    {
+                        ArtifactStateText = "警告あり";
+                        ArtifactWarnings = validationMessage;
+                        ErrorText = validationMessage;
+                        ConnectionDetails = "日英メーカー確認案を確定していません。整合性チェック結果を確認してください。";
+                        ManufacturerFollowUpScopeText += $"{Environment.NewLine}{BuildProtectedValueDiagnostic(draftParity)}";
+                        RaiseArtifactCommandStates();
+                    });
+                    return;
+                }
+
+                RunOnUi(() =>
+                {
+                    JapaneseManufacturerDraft = senderNormalizedPair.JapaneseDraft;
+                    EnglishManufacturerDraft = senderNormalizedPair.EnglishDraft;
+                    manufacturerMailQualityReady = true;
+                    ArtifactResultText = context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
+                        ? "メーカー回答への返信案（日英）を作成しました。自動送信・ファイル追記はしていません。翻訳成果物計画: NONE"
+                        : "メーカーへの確認・追加質問メール案（日英）を作成しました。自動送信・ファイル追記はしていません。";
+                    ArtifactStateText = "完了";
+                    ArtifactProgressPercent = 100;
+                    RaiseArtifactCommandStates();
+                });
+                return;
+            }
         }
-        var parsed = manufacturerDraftPairParser.Parse(response);
-        if (!parsed.Succeeded || parsed.Pair is null)
+        finally
         {
             RunOnUi(() =>
             {
-                ArtifactStateText = "警告あり";
-                ArtifactWarnings = string.Join(Environment.NewLine, parsed.Errors);
+                SetManufacturerDraftStatusMessage(manufacturerMailQualityReady
+                    ? "日英メーカー確認案の整合性を確認しました。下の編集欄を確認してください。"
+                    : "日英メーカー確認案は未確定です。検証結果を確認してください。");
             });
-            throw new InvalidDataException("Codexの日英メーカー確認案を安全に確認できませんでした。");
         }
+    }
 
-        var senderNormalizedPair = ApplySenderProfile(parsed.Pair);
-        var boundaryContext = new ManufacturerDraftBoundaryContext
-        {
-            CustomerPersonName = snapshot.CustomerName,
-            CustomerCompanyName = snapshot.CompanyName,
-            ProhibitedAttachmentNames = Files
-                .Where(file => IsGeneratedTranslationFile(file.FileName))
-                .Select(static file => file.FileName)
-                .Where(name => !string.Equals(name, context.CurrentOutboundAttachment, StringComparison.OrdinalIgnoreCase))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray(),
-        };
-        await SaveQualityDraftSafelyAsync(snapshot, QualityAudience.Manufacturer,
-            intent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "MANUFACTURER_REPLY" : "MANUFACTURER_ASK",
-            senderNormalizedPair.EnglishDraft).ConfigureAwait(false);
-        RunOnUi(() =>
-        {
-            JapaneseManufacturerDraft = senderNormalizedPair.JapaneseDraft;
-            EnglishManufacturerDraft = senderNormalizedPair.EnglishDraft;
-            if (QualityReviewEnabled)
-                ManufacturerFollowUpScopeText += $"{Environment.NewLine}Quality Review: {QualityStyleReviewer.Review(senderNormalizedPair.EnglishDraft, instructionOverride, qualityLastRetrievalCount)}";
-            lastJapaneseManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(JapaneseManufacturerDraft);
-            lastEnglishManufacturerDraftAssigned = !string.IsNullOrWhiteSpace(EnglishManufacturerDraft);
-            lastTechnicalAnswerChanged = !string.Equals(
-                technicalAnswerBeforeManufacturerTurn,
-                TechnicalAnswer,
-                StringComparison.Ordinal);
-        });
-        AppendManufacturerSendDiagnostic();
-        var closeIntentDetected = !context.CloseRequested
-            && (ManufacturerMailConcepts.HasCloseRequest(senderNormalizedPair.JapaneseDraft)
-                || ManufacturerMailConcepts.HasCloseRequest(senderNormalizedPair.EnglishDraft));
-        if (closeIntentDetected)
-        {
-            RunOnUi(() =>
-            {
-                manufacturerMailQualityReady = false;
-                ArtifactStateText = "警告あり";
-                ArtifactWarnings = "UNSUPPORTED_CLOSE_INTENT: CloseRequested=falseですが、生成案に案件終了の意図が含まれています。WPFノート編集への転送は無効です。";
-                ErrorText = ArtifactWarnings;
-                ConnectionDetails = "メール案を表示しましたが、終了意図の安全検証に失敗したためWPFノート編集への転送は無効です。";
-                RaiseArtifactCommandStates();
-            });
-            return;
-        }
-
-        var unexpectedQuestionDetected = context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
-            && (ManufacturerMailConcepts.HasQuestionRequest(senderNormalizedPair.JapaneseDraft)
-                || ManufacturerMailConcepts.HasQuestionRequest(senderNormalizedPair.EnglishDraft));
-        if (unexpectedQuestionDetected)
-        {
-            RunOnUi(() =>
-            {
-                manufacturerMailQualityReady = false;
-                ArtifactStateText = "警告あり";
-                ArtifactWarnings = "UNEXPECTED_QUESTION_GENERATION: メーカー回答への返信に、明示されていない追加質問または確認依頼が含まれています。WPFノート編集への転送は無効です。";
-                ErrorText = ArtifactWarnings;
-                ConnectionDetails = "メール案を表示しましたが、返信Intentの質問ガードに失敗したためWPFノート編集への転送は無効です。";
-                RaiseArtifactCommandStates();
-            });
-            return;
-        }
-
-        var validation = manufacturerDraftPairParser.Validate(
-            senderNormalizedPair,
-            context.ProtectedValues,
-            [context.CurrentOutboundAttachment],
-            boundaryContext);
-        var draftParity = context.ProtectedValues.EvaluateDraftParity(prompt, validation);
-        if (!validation.Succeeded || !draftParity.IsComplete)
-        {
-            var validationMessage = BuildManufacturerValidationMessage(validation, draftParity);
-            RunOnUi(() =>
-            {
-                ArtifactStateText = "警告あり";
-                ArtifactWarnings = validationMessage;
-                ErrorText = validationMessage;
-                ConnectionDetails = "日英メーカー確認案を確定していません。整合性チェック結果を確認してください。";
-                ManufacturerFollowUpScopeText += $"{Environment.NewLine}{BuildProtectedValueDiagnostic(draftParity)}";
-                RaiseArtifactCommandStates();
-            });
-            return;
-        }
-
-        RunOnUi(() =>
-        {
-            JapaneseManufacturerDraft = senderNormalizedPair.JapaneseDraft;
-            EnglishManufacturerDraft = senderNormalizedPair.EnglishDraft;
-            manufacturerMailQualityReady = true;
-            ArtifactResultText = context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
-                ? "メーカー回答への返信案（日英）を作成しました。自動送信・ファイル追記はしていません。翻訳成果物計画: NONE"
-                : "メーカーへの確認・追加質問メール案（日英）を作成しました。自動送信・ファイル追記はしていません。";
-            ArtifactStateText = "完了";
-            ArtifactProgressPercent = 100;
-            RaiseArtifactCommandStates();
-        });
+    private void SetManufacturerDraftStatusMessage(string text)
+    {
+        // The streaming reference is cleared on turn completion, before draft validation.
+        var message = Messages.LastOrDefault(item => item.Role == "assistant"
+            && item.Text == "日英メーカー確認案を受信しました。整合性を確認しています。");
+        if (message is not null) message.Text = text;
     }
 
     private static string BuildManufacturerValidationMessage(
@@ -803,7 +924,8 @@ public sealed partial class CodexChatViewModel
             + $"データ境界: {Status(validation.DataBoundary)}{Environment.NewLine}"
             + $"日本語案で不足: {Values(validation.MissingJapaneseProtectedValues)}{Environment.NewLine}"
             + $"英語案で不足: {Values(validation.MissingEnglishProtectedValues)}{Environment.NewLine}"
-            + $"境界違反: {FormatBoundaryViolations(validation.DataBoundaryViolations)}";
+            + $"境界違反: {FormatBoundaryViolations(validation.DataBoundaryViolations)}{Environment.NewLine}"
+            + string.Join(Environment.NewLine, validation.Errors);
     }
 
     private static ManufacturerDraftPair ApplySenderProfile(ManufacturerDraftPair pair) => pair with
@@ -878,9 +1000,11 @@ public sealed partial class CodexChatViewModel
             $"Artifact Source: {ValueOrUnavailable(artifactSource)}",
             $"Artifact Output: {ValueOrUnavailable(artifactOutput)}",
             $"Current Outbound Attachment: {ValueOrUnavailable(context.CurrentOutboundAttachment)}",
+            $"Current Outbound Attachments: {string.Join(", ", context.OutboundAttachments)}",
+            $"Attachment Notice: {string.Join(" / ", context.AttachmentWarnings)}",
             $"Manufacturer Communication Intent: {context.CommunicationIntent}",
             $"Manufacturer Draft Mode: {(context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "REPLY" : context.IsFollowUp ? "FOLLOW_UP" : "INITIAL")}",
-            $"Mail Mode: {(context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "ACKNOWLEDGEMENT" : context.IsFollowUp ? "ATTACHMENT_CENTRIC_FOLLOWUP" : "NOT_ALLOWED")}",
+            $"Mail Mode: {(context.CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer ? "ACKNOWLEDGEMENT" : context.IsFollowUp ? "ATTACHMENT_CENTRIC_FOLLOWUP" : "INITIAL_INQUIRY")}",
             $"Customer Reply Allowed: {(context.CustomerReplyAllowed ? "YES" : "NO")}",
             $"Manufacturer Follow-up Allowed: {(context.ManufacturerFollowupAllowed ? "YES" : "NO")}",
             $"Close Requested: {(context.CloseRequested ? "TRUE" : "FALSE")}",
@@ -976,7 +1100,7 @@ public sealed partial class CodexChatViewModel
         && !string.IsNullOrWhiteSpace(CreatedArtifactPath)
         && File.Exists(CreatedArtifactPath);
 
-    private void UseCreatedArtifactForManufacturerMail()
+    private async Task UseCreatedArtifactForManufacturerMail()
     {
         var snapshot = caseProvider();
         if (!CanUseCreatedArtifactForManufacturerMail())
@@ -985,26 +1109,75 @@ public sealed partial class CodexChatViewModel
             return;
         }
 
-        try
-        {
-            pendingManufacturerAttachmentPath = artifactPathPolicy.NormalizeSelectedSourceFile(
-                snapshot.CaseFolder,
-                CreatedArtifactPath);
-        }
+        try { await SelectManufacturerTranslationAsync(artifactPlan?.SourceFullPath ?? ArtifactSourceFile, CreatedArtifactPath); }
         catch (Exception ex) when (ex is InvalidOperationException or UnauthorizedAccessException or FileNotFoundException)
         {
             ArtifactWarnings = $"作成済み英訳ファイルをメーカー添付に指定できません: {ex.Message}";
             return;
         }
 
-        pendingManufacturerAttachmentSourcePath = artifactPlan?.SourceFullPath ?? ArtifactSourceFile;
-        pendingManufacturerAttachmentSupportId = snapshot.SupportId.Trim();
-        pendingManufacturerAttachmentCaseFolder = Path.GetFullPath(snapshot.CaseFolder);
-        ArtifactWarnings = "警告なし";
         ArtifactResultText = $"{BuildArtifactResultText(artifactResult!)}{Environment.NewLine}"
             + $"次のメーカー確認メールに使用する英訳ファイルとして指定しました: {Path.GetFileName(pendingManufacturerAttachmentPath)}";
+    }
+
+    private async Task ChooseExistingManufacturerTranslationAsync()
+    {
+        var snapshot = caseProvider();
+        var sourceDialog = new WpfOpenFileDialog { Title = "既存英訳ファイルに対応する元ファイルを選択", InitialDirectory = snapshot.CaseFolder,
+            Filter = "対応形式|*.xlsx;*.docx;*.pptx;*.csv;*.txt;*.md", CheckFileExists = true };
+        if (sourceDialog.ShowDialog() != true) return;
+        var outputDialog = new WpfOpenFileDialog { Title = "メーカーへ添付する既存英訳ファイルを選択", InitialDirectory = Path.GetDirectoryName(sourceDialog.FileName),
+            Filter = "英訳ファイル|*.*", CheckFileExists = true };
+        if (outputDialog.ShowDialog() != true) return;
+        await SelectManufacturerTranslationAsync(sourceDialog.FileName, outputDialog.FileName);
+    }
+
+    internal async Task SelectManufacturerTranslationAsync(string sourcePath, string outputPath)
+    {
+        var snapshot = caseProvider();
+        var selection = ManufacturerTranslationSelection.Create(snapshot.CaseFolder, sourcePath, outputPath);
+        pendingManufacturerAttachmentPath = selection.OutputPath;
+        pendingManufacturerAttachmentSourcePath = selection.SourcePath;
+        pendingManufacturerAttachmentSupportId = snapshot.SupportId.Trim();
+        pendingManufacturerAttachmentCaseFolder = Path.GetFullPath(snapshot.CaseFolder);
+        manufacturerMailQualityReady = false;
+        if (!Files.Any(file => string.Equals(file.FullPath, pendingManufacturerAttachmentPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            var info = new FileInfo(pendingManufacturerAttachmentPath);
+            var item = new CodexCaseFileViewModel(new CodexCaseFileInfo {
+                FullPath = info.FullName, RelativePath = Path.GetRelativePath(snapshot.CaseFolder, info.FullName),
+                FileName = info.Name, Size = info.Length, LastModifiedAt = info.LastWriteTimeUtc,
+                Kind = CodexCaseFileKind.Document, CanSendToCodex = true }, selected: false);
+            item.PropertyChanged += OnCaseFilePropertyChanged;
+            Files.Add(item);
+        }
+        ArtifactWarnings = "警告なし";
+        ArtifactResultText = $"メーカー添付として指定しました: {Path.GetFileName(selection.OutputPath)}";
         OnPropertyChanged(nameof(PendingManufacturerAttachmentText));
+        OnPropertyChanged(nameof(ManufacturerAttachments));
+        OnPropertyChanged(nameof(ManufacturerAttachmentNotice));
         RaiseArtifactCommandStates();
+        var saved = currentSession is not null && currentSession.SupportId == snapshot.SupportId
+            && string.Equals(currentSession.CaseFolder, snapshot.CaseFolder, StringComparison.OrdinalIgnoreCase)
+            ? currentSession : new CodexSession { SupportId = snapshot.SupportId, ProductId = snapshot.ProductId,
+            ProductName = snapshot.ProductName, CaseFolder = snapshot.CaseFolder, CreatedAt = DateTimeOffset.Now };
+        currentSession = saved with { ManufacturerTranslation = selection, LastUsedAt = DateTimeOffset.Now };
+        await sessionStore.SaveAsync(currentSession);
+    }
+
+    private void RestoreManufacturerTranslation(CodexSession? session, CodexCaseSnapshot snapshot)
+    {
+        var selection = session?.ManufacturerTranslation;
+        if (selection is null || !string.Equals(Path.GetFullPath(session!.CaseFolder), Path.GetFullPath(snapshot.CaseFolder), StringComparison.OrdinalIgnoreCase)) return;
+        pendingManufacturerAttachmentPath = selection.OutputPath;
+        pendingManufacturerAttachmentSourcePath = selection.SourcePath;
+        pendingManufacturerAttachmentSupportId = snapshot.SupportId.Trim();
+        pendingManufacturerAttachmentCaseFolder = Path.GetFullPath(snapshot.CaseFolder);
+        if (!selection.IsValid(snapshot.CaseFolder))
+            ArtifactWarnings = "指定済み英訳の元ファイルまたは英訳ファイルが変更・削除されています。再指定してください。";
+        OnPropertyChanged(nameof(PendingManufacturerAttachmentText));
+        OnPropertyChanged(nameof(ManufacturerAttachments));
+        OnPropertyChanged(nameof(ManufacturerAttachmentNotice));
     }
 
     private bool IsPendingManufacturerAttachmentForCase(CodexCaseSnapshot snapshot) =>
@@ -1026,6 +1199,12 @@ public sealed partial class CodexChatViewModel
         error = string.Empty;
         if (!IsPendingManufacturerAttachmentForCase(snapshot))
         {
+            return false;
+        }
+
+        if (currentSession?.ManufacturerTranslation is { } selection && !selection.IsValid(snapshot.CaseFolder))
+        {
+            error = "PENDING_MANUFACTURER_ATTACHMENT_CHANGED: 指定済み英訳の元ファイルまたは英訳ファイルが変更・削除されています。元の添付へ戻さず、再指定してください。";
             return false;
         }
 
@@ -1052,9 +1231,63 @@ public sealed partial class CodexChatViewModel
         return true;
     }
 
+    private ManufacturerAttachmentResolution ResolveManufacturerAttachments(CodexCaseSnapshot snapshot)
+    {
+        TryGetPendingManufacturerAttachment(snapshot, out var output, out var source, out _);
+        var inquiry = ResolveCurrentCustomerDeltaSource(snapshot) ?? snapshot.InquiryFile;
+        return ManufacturerAttachmentResolver.Resolve(snapshot.CaseFolder, inquiry,
+            string.Join(Environment.NewLine, ResolveCurrentCustomerDeltaContent(snapshot, inquiry)),
+            source, output, Files.Select(item => item.File));
+    }
+
+    private async Task<IReadOnlyList<string>> ReadManufacturerInquiryWorkbookTextAsync(CodexCaseSnapshot snapshot)
+    {
+        var originals = ResolveManufacturerAttachments(snapshot).Files.Select(file => file.FullPath).ToList();
+        if (TryGetPendingManufacturerAttachment(snapshot, out var output, out var source, out _))
+        {
+            originals.RemoveAll(path => string.Equals(path, output, StringComparison.OrdinalIgnoreCase));
+            originals.Add(source);
+        }
+        var texts = new List<string>();
+        foreach (var path in originals.Distinct(StringComparer.OrdinalIgnoreCase)
+                     .Where(path => Path.GetExtension(path).Equals(".xlsx", StringComparison.OrdinalIgnoreCase)
+                         && !IsGeneratedTranslationFile(Path.GetFileName(path))
+                         && !string.Equals(artifactPlan?.SourceFullPath, path, StringComparison.OrdinalIgnoreCase)))
+        {
+            // Reuse the read-only extraction plan; never recreate a translation just to read its inquiry.
+            var plan = await excelTranslationService.CreatePlanAsync(new ArtifactCreationRequest {
+                CaseFolder = snapshot.CaseFolder, SourceFilePath = path, DestinationFolder = Path.GetDirectoryName(path)!,
+                OutputFileName = artifactFilenameTranslationService.CreatePreview(path).OutputFileName });
+            texts.AddRange(plan.Excel.Entries.Select(entry => entry.SourceText).Where(text => !string.IsNullOrWhiteSpace(text)));
+        }
+        return texts;
+    }
+
+    private bool HasRecordedCorrespondence(CodexCaseSnapshot snapshot, bool manufacturer)
+    {
+        return Files.Where(file => file.File.Size > 0 && file.File.Size <= 1024 * 1024
+                && Path.GetExtension(file.FullPath).Equals(".txt", StringComparison.OrdinalIgnoreCase)
+                && file.FileName.Contains(manufacturer ? "メーカー連携" : "お客様への返信案", StringComparison.Ordinal))
+            .Any(file =>
+            {
+                try
+                {
+                    artifactPathPolicy.NormalizeSelectedSourceFile(snapshot.CaseFolder, file.FullPath);
+                    var content = EncodingPolicy.DecodeNoteText(File.ReadAllBytes(file.FullPath));
+                    // An unsent draft, an empty template, or a translated artifact is not a previous exchange.
+                    return manufacturer
+                        ? LooksLikeManufacturerResponse(content) || content.Contains("メーカーから受信", StringComparison.Ordinal)
+                        : content.Contains("顧客へ送信", StringComparison.Ordinal) || content.Contains("お客様へ送信", StringComparison.Ordinal)
+                            || content.Contains("送信日時:", StringComparison.Ordinal) || content.Contains("送信日時：", StringComparison.Ordinal);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { return false; }
+            });
+    }
+
     private ManufacturerMailCaseContext BuildManufacturerMailCaseContext(
         CodexCaseSnapshot snapshot,
-        ManufacturerCommunicationIntent intent)
+        ManufacturerCommunicationIntent intent,
+        IReadOnlyList<string>? workbookText = null)
     {
         var immediateManufacturerResponse = intent == ManufacturerCommunicationIntent.ReplyToManufacturer
             ? FindLatestImmediateManufacturerResponse()
@@ -1100,23 +1333,21 @@ public sealed partial class CodexChatViewModel
             : string.IsNullOrWhiteSpace(ArtifactOutputFileName)
                 ? string.Empty
                 : Path.GetFileName(ArtifactOutputFileName);
-        IEnumerable<string> rawDelta = artifactPlan is not null
-            && string.Equals(artifactPlan.SourceFullPath, currentCustomerDeltaPath, StringComparison.OrdinalIgnoreCase)
-            ? artifactPlan.Format == ArtifactFormat.ExcelWorkbook
-                ? artifactPlan.Excel.Entries.Select(static entry => entry.SourceText)
-                : artifactPlan.Text.Entries.Select(static entry => entry.SourceText)
-            : ResolveCurrentCustomerDeltaContent(snapshot, currentCustomerDeltaPath);
-        var deltaContent = ManufacturerMailContentSanitizer.SanitizeLines(
-            rawDelta,
-            snapshot.CompanyName,
-            snapshot.CustomerName,
-            outputAttachment);
-        var previousManufacturerContact = Files.Any(file =>
-            file.FileName.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
-            || file.RelativePath.Contains("manufacturer", StringComparison.OrdinalIgnoreCase));
-        var previousCustomerReply = Files.Any(file =>
-            file.FileName.Contains("お客様への返信案", StringComparison.OrdinalIgnoreCase)
-            || file.RelativePath.Contains("customerreplydraft", StringComparison.OrdinalIgnoreCase));
+        var attachments = ResolveManufacturerAttachments(snapshot);
+        var outbound = attachments.Files.Where(file => Files.FirstOrDefault(item => item.FullPath == file.FullPath)?.IsManufacturerAttachmentSelected != false)
+            .Select(file => file.FileName).ToArray();
+        IEnumerable<string> rawDelta = ResolveCurrentCustomerDeltaContent(snapshot, currentCustomerDeltaPath).Concat(workbookText ?? []);
+        if (artifactPlan is not null && (string.Equals(artifactPlan.SourceFullPath, currentCustomerDeltaPath, StringComparison.OrdinalIgnoreCase)
+            || ManufacturerAttachmentResolver.IsCustomerBundle(artifactPlan.SourceFullPath)))
+        {
+            rawDelta = rawDelta.Concat(artifactPlan.Format == ArtifactFormat.ExcelWorkbook
+                ? artifactPlan.Excel.Entries.Select(entry => entry.SourceText)
+                : artifactPlan.Text.Entries.Select(entry => entry.SourceText));
+        }
+        var deltaContent = ManufacturerMailContentSanitizer.SanitizeLines(rawDelta,
+            snapshot.CompanyName, snapshot.CustomerName, outbound);
+        var previousManufacturerContact = HasRecordedCorrespondence(snapshot, manufacturer: true);
+        var previousCustomerReply = HasRecordedCorrespondence(snapshot, manufacturer: false);
         var closeRequested = deltaContent.Any(ManufacturerMailConcepts.HasCloseRequest);
         var hasCurrentDelta = !string.IsNullOrWhiteSpace(deltaFileName) || deltaContent.Count > 0;
         var followUpAllowed = hasCurrentDelta
@@ -1136,7 +1367,9 @@ public sealed partial class CodexChatViewModel
                 ? "NONE"
                 : "CUSTOMER_INQUIRY",
             CurrentCustomerDeltaContent = deltaContent,
-            CurrentOutboundAttachment = outputAttachment,
+            CurrentOutboundAttachment = outbound.Contains(outputAttachment, StringComparer.OrdinalIgnoreCase) ? outputAttachment : outbound.FirstOrDefault() ?? string.Empty,
+            CurrentOutboundAttachments = outbound,
+            AttachmentWarnings = attachments.Warnings,
             PreviousManufacturerContact = previousManufacturerContact,
             PreviousCustomerReply = previousCustomerReply,
             CloseRequested = closeRequested,
@@ -1145,8 +1378,8 @@ public sealed partial class CodexChatViewModel
             ProtectedValues = ManufacturerDraftPairParser.CreateCanonicalProtectedValueSet(
                 snapshot.ProductName,
                 snapshot.SupportId,
-                outputAttachment,
-                [outputAttachment],
+                outbound.Contains(outputAttachment, StringComparer.OrdinalIgnoreCase) ? outputAttachment : string.Empty,
+                outbound,
                 deltaContent.ToArray()),
         };
     }
@@ -1516,7 +1749,7 @@ public sealed partial class CodexChatViewModel
         var dialog = new WpfOpenFileDialog
         {
             Title = "翻訳元ファイルを選択",
-            Filter = "案件内ファイル|*.*|対応形式|*.xlsx;*.docx;*.csv;*.txt;*.md",
+            Filter = "案件内ファイル|*.*|対応形式|*.xlsx;*.docx;*.pptx;*.csv;*.txt;*.md",
             InitialDirectory = caseFolder,
             CheckFileExists = true,
             Multiselect = false,
@@ -1624,6 +1857,25 @@ public sealed partial class CodexChatViewModel
         if (string.IsNullOrWhiteSpace(currentCustomerDeltaPath))
         {
             return [];
+        }
+
+        // InquiryText is a retrieval focus/edited excerpt, not the complete inbound message.
+        // Read the latest recorded inquiry so attachments and concrete requests are not lost.
+        if (Path.GetExtension(currentCustomerDeltaPath).Equals(".txt", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                var path = new CaseArtifactPathPolicy().NormalizeSelectedSourceFile(snapshot.CaseFolder, currentCustomerDeltaPath);
+                if (new FileInfo(path).Length <= 1024 * 1024)
+                {
+                    var entries = CaseNoteHistoryParser.Parse(EncodingPolicy.DecodeNoteText(File.ReadAllBytes(path)));
+                    var inbound = entries.Where(entry => entry.Header.Contains("顧客から受信", StringComparison.Ordinal)
+                        || entry.Header.Contains("お客様から受信", StringComparison.Ordinal)).ToArray();
+                    var latest = CaseNoteHistoryParser.PickLatest(inbound.Length > 0 ? inbound : entries);
+                    if (!string.IsNullOrWhiteSpace(latest?.Body)) return [latest.Body];
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException) { }
         }
 
         if ((string.Equals(currentCustomerDeltaPath, snapshot.InquiryFile, StringComparison.OrdinalIgnoreCase)
@@ -1911,6 +2163,7 @@ public sealed partial class CodexChatViewModel
             PrepareArtifactPlanCommand?.RaiseCanExecuteChanged();
             CreateExcelArtifactCommand?.RaiseCanExecuteChanged();
             GenerateManufacturerMailCommand?.RaiseCanExecuteChanged();
+            ReviseManufacturerMailCommand?.RaiseCanExecuteChanged();
             CancelArtifactCommand?.RaiseCanExecuteChanged();
             ChooseArtifactDestinationCommand?.RaiseCanExecuteChanged();
             ChooseArtifactSourceCommand?.RaiseCanExecuteChanged();
@@ -1921,6 +2174,7 @@ public sealed partial class CodexChatViewModel
             OpenArtifactDestinationCommand?.RaiseCanExecuteChanged();
             OpenCreatedArtifactCommand?.RaiseCanExecuteChanged();
             UseCreatedArtifactForManufacturerMailCommand?.RaiseCanExecuteChanged();
+            ChooseExistingManufacturerTranslationCommand?.RaiseCanExecuteChanged();
             CopyJapaneseManufacturerDraftCommand?.RaiseCanExecuteChanged();
             CopyEnglishManufacturerDraftCommand?.RaiseCanExecuteChanged();
             SendEnglishManufacturerDraftToWpfNoteCommand?.RaiseCanExecuteChanged();
@@ -1944,6 +2198,7 @@ public sealed partial class CodexChatViewModel
     {
         ArtifactFormat.ExcelWorkbook => "Excel Workbook (.xlsx)",
         ArtifactFormat.WordDocument => "Word Document (.docx)",
+        ArtifactFormat.PowerPointPresentation => "PowerPoint Presentation (.pptx)",
         ArtifactFormat.Csv => "CSV (.csv)",
         ArtifactFormat.PlainText => "Text (.txt)",
         ArtifactFormat.Markdown => "Markdown (.md)",

@@ -103,6 +103,21 @@ public sealed record ManufacturerDraftBoundaryContext
 
 public sealed class ManufacturerDraftPairParser
 {
+    public IReadOnlyList<string> ValidateCommunication(ManufacturerDraftPair pair, ManufacturerMailCaseContext context)
+    {
+        var errors = new List<string>();
+        if (context.CommunicationIntent == ManufacturerCommunicationIntent.AskManufacturer && !context.IsFollowUp
+            && (new[] { "前回のご回答", "前回はご回答", "お客様へ案内後", "追加の確認依頼を受領" }.Any(pair.JapaneseDraft.Contains)
+                || new[] { "your previous response", "after sharing", "additional inquiry", "follow-up" }
+                    .Any(term => pair.EnglishDraft.Contains(term, StringComparison.OrdinalIgnoreCase))))
+            errors.Add("初回依頼に確認できない過去回答・再質問の経緯が含まれています。");
+        var english = pair.EnglishDraft;
+        foreach (var literal in context.OutboundAttachments.Concat(context.ProtectedValues.Values))
+            english = english.Replace(literal, string.Empty, StringComparison.Ordinal);
+        if (Regex.IsMatch(english, @"[\p{IsHiragana}\p{IsKatakana}\p{IsCJKUnifiedIdeographs}]"))
+            errors.Add("英語案の説明文・項目名に日本語が残っています。技術値・実ファイル名以外は英語で記載してください。");
+        return errors;
+    }
     private static readonly HashSet<string> NonCustomerFacingMetadata = new(StringComparer.Ordinal)
     {
         "EvidenceId",
@@ -305,6 +320,7 @@ public sealed class ManufacturerDraftPairParser
 
         foreach (var fileName in attachmentNames.Where(static name => !string.IsNullOrWhiteSpace(name)))
         {
+            Add(fileName, "Attachment", "CurrentOutboundAttachments");
             var stem = Path.GetFileNameWithoutExtension(fileName);
             if (TechnicalFileStem.IsMatch(stem))
             {

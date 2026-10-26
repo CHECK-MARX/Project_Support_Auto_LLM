@@ -72,7 +72,62 @@ public sealed class ArtifactTranslationServiceTests
 
         Assert.True(preview.UsedFallback);
         Assert.NotEmpty(preview.Warning);
-        Assert.Equal("Translated_File_EN.docx", preview.OutputFileName);
+        Assert.StartsWith("CxAudit_Untranslated_", preview.OutputFileName);
+        Assert.EndsWith("_License_EN.docx", preview.OutputFileName);
+        Assert.Contains("未翻訳", preview.Warning);
+        CaseArtifactPathPolicy.ValidateOutputFileName(preview.OutputFileName);
+    }
+
+    [Theory]
+    [InlineData("0754_R~1問い合わせ内容_20261005追記.xlsx", "0754_R~1_Inquiry_Details_20261005_Addendum_EN.xlsx")]
+    [InlineData("問い合わせ内容_20261005追記.docx", "Inquiry_Details_20261005_Addendum_EN.docx")]
+    [InlineData("スキャン結果_更新.csv", "Scan_Results_Updated_EN.csv")]
+    [InlineData("調査メモ_改訂.txt", "Investigation_Notes_Revised_EN.txt")]
+    [InlineData("問い合わせ内容_補足.md", "Inquiry_Details_Supplement_EN.md")]
+    public void FilenamePreview_TranslatesRevisionSuffixesWithoutDiscardingSourceName(
+        string sourceFileName, string expectedOutputFileName)
+    {
+        var preview = new ArtifactFilenameTranslationService().CreatePreview(sourceFileName);
+
+        Assert.Equal(expectedOutputFileName, preview.OutputFileName);
+        Assert.False(preview.UsedFallback);
+        Assert.Empty(preview.Warning);
+        Assert.Equal(expectedOutputFileName, CaseArtifactPathPolicy.SuggestDefaultFileName(sourceFileName));
+        CaseArtifactPathPolicy.ValidateOutputFileName(preview.OutputFileName);
+    }
+
+    [Theory]
+    [InlineData("0754_R~1問い合わせ内容_20261005未収録語.xlsx")]
+    [InlineData("CxAudit_未収録語_v9.7.7.docx")]
+    [InlineData("0754_R~1_ｶﾀｶﾅ_20261005.txt")]
+    public void FilenamePreview_UntranslatedPartDoesNotDiscardIdentifiersOrSilentlyClaimSuccess(string sourceFileName)
+    {
+        var service = new ArtifactFilenameTranslationService();
+        var preview = service.CreatePreview(sourceFileName);
+
+        Assert.True(preview.UsedFallback);
+        Assert.Contains("未翻訳", preview.Warning);
+        Assert.Contains("Untranslated_", preview.OutputFileName);
+        Assert.Contains(sourceFileName.StartsWith("CxAudit") ? "CxAudit" : "0754_R~1", preview.OutputFileName);
+        Assert.Contains(sourceFileName.Contains("20261005") ? "20261005" : "v9.7.7", preview.OutputFileName);
+        Assert.All(preview.OutputFileName, c => Assert.True(char.IsAscii(c)));
+        Assert.Equal(Path.GetExtension(sourceFileName), Path.GetExtension(preview.OutputFileName));
+        Assert.Equal(preview, service.CreatePreview(sourceFileName));
+        CaseArtifactPathPolicy.ValidateOutputFileName(preview.OutputFileName);
+    }
+
+    [Fact]
+    public void FilenamePreview_DifferentUnknownWordsDoNotCollapseToTheSameGenericName()
+    {
+        var service = new ArtifactFilenameTranslationService();
+        var first = service.CreatePreview("未収録甲.xlsx");
+        var second = service.CreatePreview("未収録乙.xlsx");
+
+        Assert.True(first.UsedFallback);
+        Assert.True(second.UsedFallback);
+        Assert.NotEqual(first.OutputFileName, second.OutputFileName);
+        Assert.NotEqual("Translated_File_EN.xlsx", first.OutputFileName);
+        Assert.NotEqual("Translated_File_EN.xlsx", second.OutputFileName);
     }
 
     [Fact]

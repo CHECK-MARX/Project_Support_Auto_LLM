@@ -66,6 +66,7 @@ public sealed class CaseArtifactPathPolicy
         {
             ".xlsx" => ArtifactFormat.ExcelWorkbook,
             ".docx" => ArtifactFormat.WordDocument,
+            ".pptx" => ArtifactFormat.PowerPointPresentation,
             ".csv" => ArtifactFormat.Csv,
             ".txt" => ArtifactFormat.PlainText,
             ".md" => ArtifactFormat.Markdown,

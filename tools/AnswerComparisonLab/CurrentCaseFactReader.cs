@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using SupportCaseManager.Ai.Contracts;
 using SupportCaseManager.Ai.Core.Facts;
 using SupportCaseManager.Ai.Core.Safety;
@@ -8,6 +9,102 @@ using SupportCaseManager.Core.Compatibility;
 
 internal static partial class CurrentCaseFactReader
 {
+    // Read only previously audited records. Reply drafts and evaluation labels
+    // are deliberately outside this adapter.
+    public static (string Inquiry, IReadOnlyList<ResolvedFact> Facts) ReadAudited(
+        string caseFolder, string caseId, string fallbackInquiry, string auditFolder,
+        string materialAuditPath, ISafetyRedactionService redactor)
+    {
+        var records = new List<SearchSource>();
+        var inquiry = fallbackInquiry;
+        var snapshot = Path.Combine(auditFolder, "source-notes-mail-private.json");
+        if (File.Exists(snapshot))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(snapshot));
+            if (doc.RootElement.GetProperty("cases").TryGetProperty(caseId, out var entry))
+            {
+                foreach (var note in entry.GetProperty("notes").EnumerateArray())
+                {
+                    var kind = note.GetProperty("category").GetString();
+                    if (kind is not ("question" or "manufacturer" or "other")) continue;
+                    var path = Path.GetFullPath(note.GetProperty("path").GetString()!);
+                    if (!path.StartsWith(Path.GetFullPath(caseFolder) + Path.DirectorySeparatorChar,
+                            StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
+                    var bytes = File.ReadAllBytes(path);
+                    if (Sha256(bytes) != note.GetProperty("sha256").GetString()) continue;
+                    var text = EncodingPolicy.DecodeNoteText(bytes);
+                    if (kind == "question")
+                    {
+                        var technical = TechnicalInquiry(text, redactor);
+                        if (technical.Length > inquiry.Length && technical.Length <= 2800) inquiry = technical;
+                    }
+                    else records.Add(Record(text, Sha256(bytes), "監査済み案件履歴", "CaseHistory"));
+                }
+                // The entry audit binds an actual manufacturer email by body
+                // hash. Do not use H/I/J, reply drafts, or inferred sender roles.
+                var ledger = Directory.EnumerateFiles(Path.GetDirectoryName(auditFolder)!, "*entry-latest-*.json")
+                    .OrderByDescending(File.GetLastWriteTimeUtc).FirstOrDefault();
+                if (ledger is not null && entry.TryGetProperty("mail", out var mail))
+                {
+                    using var audit = JsonDocument.Parse(File.ReadAllText(ledger));
+                    var reviewed = audit.RootElement.GetProperty("cases").EnumerateArray()
+                        .FirstOrDefault(c => c.GetProperty("caseId").GetString() == caseId);
+                    if (reviewed.ValueKind == JsonValueKind.Object &&
+                        reviewed.TryGetProperty("resolutionSource", out var binding) &&
+                        binding.TryGetProperty("bodySha256", out var verifiedHash))
+                        foreach (var message in mail.EnumerateArray())
+                        {
+                            var body = message.GetProperty("body").GetString() ?? "";
+                            var hash = Sha256(Encoding.UTF8.GetBytes(body));
+                            if (hash != verifiedHash.GetString()) continue;
+                            var current = Regex.Split(body, @"(?im)^\s*(?:From:|差出人:|On .+wrote:)")[0];
+                            records.Add(Record(current, hash, "監査済みメーカー原メールの案件記録", "ManufacturerRecord"));
+                        }
+                }
+            }
+        }
+        if (File.Exists(materialAuditPath))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(materialAuditPath));
+            if (doc.RootElement.GetProperty("cases").TryGetProperty(caseId, out var entry))
+            {
+                // A visual/text finding is usable only when its recorded file
+                // fingerprint still matches an actual attachment in this case.
+                var files = Directory.EnumerateFiles(caseFolder, "*", SearchOption.AllDirectories).ToArray();
+                foreach (var finding in entry.GetProperty("files").EnumerateArray())
+                {
+                    var status = finding.GetProperty("status").GetString();
+                    if (status is not ("image_visual_reviewed" or "binary_content_reviewed" or "text_scanned" or "archive_content_reviewed")) continue;
+                    var prefix = finding.GetProperty("sha256prefix").GetString()!;
+                    var size = finding.GetProperty("bytes").GetInt64();
+                    var matches = files.Where(f => new FileInfo(f).Length == size &&
+                        Path.GetExtension(f).Equals(finding.GetProperty("extension").GetString(), StringComparison.OrdinalIgnoreCase))
+                        .Select(f => (Path: f, Hash: Sha256(File.ReadAllBytes(f))))
+                        .Where(f => f.Hash.StartsWith(prefix, StringComparison.Ordinal)).ToArray();
+                    if (matches.Length != 1) continue;
+                    var value = finding.TryGetProperty("contentFinding", out var content) ? content.GetString() :
+                        finding.TryGetProperty("visualFinding", out var visual) ? visual.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(value)) continue;
+                    records.Add(Record(value, matches[0].Hash, "監査済み添付の観測", "AuditedAttachment"));
+                }
+            }
+        }
+        return (inquiry, CurrentCaseFactProjector.Project(inquiry, records, redactor));
+    }
+
+    private static SearchSource Record(string text, string fileHash, string title, string kind) => new()
+    {
+        SourceId = "case-audit:" + fileHash, SourceType = "CurrentCase", ParseStatus = "AUDITED",
+        Text = text, ContentHash = Sha256(Encoding.UTF8.GetBytes(text)), Title = title, EvidenceKind = kind,
+    };
+
+    private static string TechnicalInquiry(string text, ISafetyRedactionService redactor) =>
+        string.Join("\n", text.Replace("\r", "").Split('\n').Select(l => l.Trim())
+            .Where(l => l.Length is >= 8 and <= 400 && !PrivateLine().IsMatch(l) &&
+                !l.StartsWith('>') &&
+                !Regex.IsMatch(l, @"CONFIDENTIAL|お世話にな|よろしく|ありがとうございます|^[-=*]{3,}", RegexOptions.IgnoreCase))
+            .Where(l => TechnicalTerms(l).Count > 0).Select(redactor.RedactForCloud).Distinct(StringComparer.Ordinal));
+
     public static IReadOnlyList<ResolvedFact> Read(string caseFolder, string inquiry,
         ISafetyRedactionService redactor)
     {

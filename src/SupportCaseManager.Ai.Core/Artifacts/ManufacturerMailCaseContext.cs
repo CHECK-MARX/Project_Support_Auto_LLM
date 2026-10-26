@@ -23,6 +23,10 @@ public sealed record ManufacturerMailCaseContext
     public string CurrentCustomerDeltaSourceType { get; init; } = "NONE";
     public IReadOnlyList<string> CurrentCustomerDeltaContent { get; init; } = [];
     public string CurrentOutboundAttachment { get; init; } = string.Empty;
+    public IReadOnlyList<string> CurrentOutboundAttachments { get; init; } = [];
+    public IReadOnlyList<string> AttachmentWarnings { get; init; } = [];
+    public IReadOnlyList<string> OutboundAttachments => CurrentOutboundAttachments.Count > 0
+        ? CurrentOutboundAttachments : string.IsNullOrWhiteSpace(CurrentOutboundAttachment) ? [] : [CurrentOutboundAttachment];
     public bool PreviousManufacturerContact { get; init; }
     public bool PreviousCustomerReply { get; init; }
     public bool CloseRequested { get; init; }
@@ -34,13 +38,12 @@ public sealed record ManufacturerMailCaseContext
 
     public bool HasCurrentDelta => !string.IsNullOrWhiteSpace(CurrentCustomerDeltaFileName)
         || CurrentCustomerDeltaContent.Count > 0;
-    public bool HasCurrentAttachment => !string.IsNullOrWhiteSpace(CurrentOutboundAttachment);
+    public bool HasCurrentAttachment => OutboundAttachments.Count > 0;
     public bool IsFollowUp => ManufacturerFollowupAllowed
         && HasCurrentDelta
         && HasCurrentAttachment;
 
     public bool CanGenerate => HasCurrentDelta
-        && HasCurrentAttachment
         && (ManufacturerFollowupAllowed || CustomerReplyAllowed);
 
     public bool CanReplyToManufacturer => CommunicationIntent == ManufacturerCommunicationIntent.ReplyToManufacturer
@@ -79,17 +82,22 @@ public static class ManufacturerMailContentSanitizer
         string? customerName,
         string currentOutboundAttachment)
     {
-        var attachment = Path.GetFileName(currentOutboundAttachment ?? string.Empty);
+        return SanitizeLines(values, companyName, customerName, [currentOutboundAttachment]);
+    }
+
+    public static IReadOnlyList<string> SanitizeLines(
+        IEnumerable<string> values, string? companyName, string? customerName, IReadOnlyList<string> attachments)
+    {
         return values
             .Where(static value => !string.IsNullOrWhiteSpace(value))
             .SelectMany(static value => value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
-            .Select(line => Sanitize(line, companyName, customerName, attachment))
+            .Select(line => Sanitize(line, companyName, customerName, attachments))
             .Where(static line => !string.IsNullOrWhiteSpace(line))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
 
-    private static string Sanitize(string value, string? companyName, string? customerName, string attachment)
+    private static string Sanitize(string value, string? companyName, string? customerName, IReadOnlyList<string> attachments)
     {
         var line = value.Trim();
         line = ReplaceExact(line, companyName, "お客様");
@@ -97,8 +105,8 @@ public static class ManufacturerMailContentSanitizer
         line = Email.Replace(line, "[customer contact redacted]");
         line = Extension.Replace(line, "[customer extension redacted]");
         line = Phone.Replace(line, "[customer phone redacted]");
-        line = FileName.Replace(line, match => string.Equals(match.Value, attachment, StringComparison.OrdinalIgnoreCase)
-            ? attachment
+        line = FileName.Replace(line, match => attachments.Contains(match.Value, StringComparer.OrdinalIgnoreCase)
+            ? match.Value
             : "[non-current attachment omitted]");
         return AbsolutePath.Replace(line, "[local path omitted]").Trim();
     }

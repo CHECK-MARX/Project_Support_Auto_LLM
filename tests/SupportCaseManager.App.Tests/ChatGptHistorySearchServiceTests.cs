@@ -193,6 +193,39 @@ public sealed class ChatGptHistorySearchServiceTests
                 "https://chatgpt.com/c/existing", "handoff", CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData("GPT を使い続ける", true)]
+    [InlineData("GPTを使い続ける", true)]
+    [InlineData("Keep using GPT", true)]
+    [InlineData("Continue using GPT", true)]
+    [InlineData("プラグインを使用", false)]
+    [InlineData("Use plugin", false)]
+    [InlineData("Continue", false)]
+    [InlineData("Send", false)]
+    public void MigrationInterstitial_OnlyExplicitGptContinuationIsAllowed(string name, bool allowed) =>
+        Assert.Equal(allowed, ChatGptBrowserGateway.IsGptContinuationButton(name));
+
+    [Theory]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", true, true)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", false, false)]
+    [InlineData("https://chatgpt.com/g/g-other", true, false)]
+    [InlineData("https://chatgpt.com/c/existing", true, false)]
+    [InlineData("https://example.com/g/g-checkmarx", true, false)]
+    [InlineData(null, true, false)]
+    public void MigrationInterstitial_RequiresExactTargetDocumentAndSelectedTab(string? documentUrl, bool selected, bool allowed) =>
+        Assert.Equal(allowed, ChatGptBrowserGateway.GptContinuationPageMatches(
+            "https://chatgpt.com/g/g-checkmarx", documentUrl, selected));
+
+    [Theory]
+    [InlineData("https://chatgpt.com/c/existing", true, true)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx/c/existing", true, true)]
+    [InlineData("https://chatgpt.com/c/existing", false, false)]
+    [InlineData("https://chatgpt.com/c/another", true, false)]
+    [InlineData("https://chatgpt.com/g/g-checkmarx", true, false)]
+    [InlineData("https://example.com/c/existing", true, false)]
+    public void ExistingConversationMigration_OnlyTheRegisteredSelectedConversationCanContinue(string document, bool selected, bool allowed) =>
+        Assert.Equal(allowed, ChatGptBrowserGateway.GptContinuationPageMatches("https://chatgpt.com/c/existing", document, selected));
+
     private sealed class FakeGateway : IChatGptBrowserGateway
     {
         public string? SupportId { get; private set; }

@@ -139,15 +139,18 @@ public sealed partial class MainViewModel
         var prompt = GptPolishPrompt.Build(audience, draft, capsule.Text);
         try
         {
-            await gptPolishConversationService.SendMessageAsync(
+            SetGptPolishStatus($"{targetName}: 登録済みGPTを開き、入力欄を確認しています。完了までお待ちください。");
+            // UI Automation can wait while the browser navigates. Keep the WPF status responsive.
+            await Task.Run(() => gptPolishConversationService.SendMessageAsync(
                 caseRecord.GptRegistration.ConversationUrl,
                 prompt,
-                expectedTargetName: caseRecord.GptRegistration.TargetGptDisplayName);
+                expectedTargetName: caseRecord.GptRegistration.TargetGptDisplayName));
             SetGptPolishStatus($"{targetName}: GPTへ推敲依頼を送信しました。");
         }
         catch (Exception ex)
         {
             SetGptPolishStatus($"{targetName}のGPT推敲依頼は送信されませんでした: {ex.Message}");
+            await loggerFactory(EffectiveAiDataFolder()).LogWarningAsync($"GPT polish stopped: {ex.GetType().Name}; {ex.Message}");
         }
     }
 

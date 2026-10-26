@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SupportCaseManager.Ai.Core.Artifacts;
 
 namespace SupportCaseManager.Ai.Core.Codex;
 
@@ -25,6 +26,7 @@ public sealed record CodexSession
     public string ReasoningEffort { get; init; } = string.Empty;
     public string SessionStatus { get; init; } = string.Empty;
     public IReadOnlyList<CodexSessionMessage> Messages { get; init; } = [];
+    public ManufacturerTranslationSelection? ManufacturerTranslation { get; init; }
 }
 
 public sealed record CodexSessionLoadResult(IReadOnlyList<CodexSession> Sessions, string? Warning = null);

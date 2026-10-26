@@ -1,4 +1,4 @@
-using SupportCaseManager.Ai.Core.Artifacts;
+﻿using SupportCaseManager.Ai.Core.Artifacts;
 
 namespace SupportCaseManager.Ai.Tests.Artifacts;
 
@@ -82,6 +82,7 @@ public sealed class ManufacturerDraftPairParserTests
             "9.7.4.1008",
             "HF9",
             "KSAY0005207",
+            "KSAY0005207.csv",
             "Checkmarx",
             "00018742",
             "Additional_Inquiry_Details_EN.xlsx",
@@ -101,7 +102,7 @@ public sealed class ManufacturerDraftPairParserTests
                 EnglishDraft = $"Question 1: {body}\nAttachment: Additional_Inquiry_Details_EN.xlsx",
             },
             protectedValues,
-            ["Additional_Inquiry_Details_EN.xlsx"]);
+            ["Additional_Inquiry_Details_EN.xlsx", "KSAY0005207.csv"]);
 
         Assert.True(validation.Succeeded, string.Join(Environment.NewLine, validation.Errors));
         Assert.Equal(protectedValues.Values.Count, protectedValues.Values.Distinct(StringComparer.Ordinal).Count());
