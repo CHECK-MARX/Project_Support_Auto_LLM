@@ -1,4 +1,4 @@
-<Window x:Class="SupportCaseManager.AiAssistant.App.MainWindow"
+﻿<Window x:Class="SupportCaseManager.AiAssistant.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="{DynamicResource WindowTitle}"
@@ -1402,6 +1402,9 @@
                                             Command="{Binding Codex.OpenCreatedArtifactCommand}" />
                                     <Button Content="メーカー確認メールで使用"
                                             Command="{Binding Codex.UseCreatedArtifactForManufacturerMailCommand}" />
+                                    <Button Content="既存の英訳ファイルを指定"
+                                            Command="{Binding Codex.ChooseExistingManufacturerTranslationCommand}"
+                                            ToolTip="元ファイルと作成済み英訳を選択します。指定は案件ごとに保存されます。" />
                                 </WrapPanel>
                                 <TextBlock Text="{Binding Codex.PendingManufacturerAttachmentText, Mode=OneWay}"
                                            TextWrapping="Wrap"
@@ -1449,11 +1452,25 @@
                                         <TextBlock Text="{Binding Codex.ManufacturerRecipientText, Mode=OneWay}"
                                                    Margin="0,0,0,8"
                                                    TextWrapping="Wrap" />
+                                        <TextBlock Text="今回の添付（英訳元は英訳ファイルに置換。不要なものはチェックを外してください）" TextWrapping="Wrap" />
+                                        <ItemsControl ItemsSource="{Binding Codex.ManufacturerAttachments}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding FileName}" IsChecked="{Binding IsManufacturerAttachmentSelected, Mode=TwoWay}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                        <TextBlock Text="{Binding Codex.ManufacturerAttachmentNotice}" TextWrapping="Wrap" Foreground="Orange" />
+                                        <Button Content="添付に使う既存英訳を指定" HorizontalAlignment="Left"
+                                                Command="{Binding Codex.ChooseExistingManufacturerTranslationCommand}" />
+                                        <TextBlock Text="修正内容は上の指示欄へ入力し、このメール案を修正してください。日英の編集欄に反映します。" TextWrapping="Wrap" />
                                         <WrapPanel Margin="0,8,0,0">
                                             <Button Content="メーカーへ確認・追加質問する"
                                                     Command="{Binding Codex.GenerateManufacturerMailCommand}" />
                                             <Button Content="メーカー回答へ返信する"
                                                     Command="{Binding Codex.GenerateManufacturerReplyCommand}" />
+                                            <Button Content="この日英メール案を修正"
+                                                    Command="{Binding Codex.ReviseManufacturerMailCommand}" />
                                         </WrapPanel>
                                         <GroupBox Header="メーカー向け確認メール案（日本語・編集可能）">
                                             <StackPanel>

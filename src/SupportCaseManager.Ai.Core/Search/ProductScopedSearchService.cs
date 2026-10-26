@@ -543,6 +543,15 @@ public sealed class ProductScopedSearchService : IProductScopedSearchService
         var assessment = TopicEntityAnalyzer.Compare(queryAnalysis.PrimaryProfile, candidateProfile);
         var adjustment = 0d;
         var reasons = new List<string>();
+        // Prefer a verbatim question-specific statement, not mere co-occurrence
+        // of product names. Existing version/topic conflict penalties still apply.
+        if (source.SourceType is "OfficialDoc" or "Manual" &&
+            SupportCaseManager.Ai.Core.Facts.SelectedOfficialFactProjector.Project(
+                queryAnalysis.PrimaryText, [source]).Count > 0)
+        {
+            adjustment += 0.20;
+            reasons.Add("question-specific-source-span");
+        }
 
         if (queryAnalysis.PrimaryProfile.Features.Count > 0)
         {

@@ -5,6 +5,7 @@ namespace SupportCaseManager.AiAssistant.App.ViewModels;
 public sealed class CodexCaseFileViewModel : ObservableObject
 {
     private bool isSelected;
+    private bool isManufacturerAttachmentSelected = true;
     private string confirmationStatus = "未確認";
 
     public CodexCaseFileViewModel(CodexCaseFileInfo file, bool selected)
@@ -28,6 +29,12 @@ public sealed class CodexCaseFileViewModel : ObservableObject
     {
         get => isSelected;
         set => SetProperty(ref isSelected, value && CanSendToCodex);
+    }
+
+    public bool IsManufacturerAttachmentSelected
+    {
+        get => isManufacturerAttachmentSelected;
+        set => SetProperty(ref isManufacturerAttachmentSelected, value);
     }
 
     public string ConfirmationStatus

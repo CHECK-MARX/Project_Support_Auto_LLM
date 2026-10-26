@@ -223,15 +223,30 @@ var comparison = new GroundedAnswerComparisonService(llm, safety,
     comparisonTimeoutOverrideSeconds: timeoutSeconds);
 var focusExtractor = new InquiryFocusExtractor();
 var factResolver = new FactResolver();
+var auditFolderIndex = Array.IndexOf(args, "--case-audit-folder");
+string? caseAuditFolder = null;
+if (auditFolderIndex >= 0)
+{
+    if (!shadowPilot || !rankedE2e || auditFolderIndex + 1 >= args.Length)
+        throw new ArgumentException("--case-audit-folder requires isolated ranked Shadow E2E.");
+    caseAuditFolder = Path.GetFullPath(args[auditFolderIndex + 1]);
+    if (!caseAuditFolder.StartsWith(Path.GetDirectoryName(candidatePath)! + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase) || !Directory.Exists(caseAuditFolder))
+        throw new ArgumentException("Case audit folder must exist under reports/generated.");
+}
 var results = new List<CaseResult>();
 var reviewResults = new List<object>();
 
-foreach (var item in selected)
+foreach (var selectedItem in selected)
 {
-    if (!casePaths.TryGetValue(item.CandidateId, out var casePath))
+    if (!casePaths.TryGetValue(selectedItem.CandidateId, out var casePath))
     {
-        throw new InvalidDataException($"Case {item.CaseId} could not be resolved from the supplied roots.");
+        throw new InvalidDataException($"Case {selectedItem.CaseId} could not be resolved from the supplied roots.");
     }
+    var audited = caseAuditFolder is null ? (selectedItem.Question, (IReadOnlyList<ResolvedFact>)[]) :
+        CurrentCaseFactReader.ReadAudited(casePath, selectedItem.CaseId, selectedItem.Question,
+            caseAuditFolder, Path.Combine(Path.GetDirectoryName(candidatePath)!, "closed-case-material-audit.json"), safety);
+    var item = selectedItem with { Question = audited.Item1 };
 
     var productName = item.Product switch
     {
@@ -274,7 +289,8 @@ foreach (var item in selected)
         Version = focus.TargetVersions,
     };
     var currentCaseFacts = shadowPilot
-        ? CurrentCaseFactReader.Read(casePath, item.Question, safety)
+        ? CurrentCaseFactReader.Read(casePath, item.Question, safety).Concat(audited.Item2)
+            .DistinctBy(fact => (fact.SourceType, fact.Key, fact.Value)).ToArray()
         : [];
     var sources = shadowPilot && !dryRun && !rankPreview && !rankedE2e
         ? fixedEvidence[item.CaseId].SelectedSources.Select(fixedSource =>
@@ -498,7 +514,7 @@ static SearchSource[] SelectNonDuplicateEvidence(IEnumerable<SearchSource> ranke
     string inquiry)
 {
     var selected = new List<SearchSource>();
-    foreach (var source in ranked.Take(count))
+    foreach (var source in SelectedOfficialFactProjector.SelectRelevantEvidence(inquiry, ranked, count + 2))
     {
         if (!SelectedOfficialFactProjector.HasDirectTopicOverlap(inquiry, source)) continue;
         var tokens = ContentTokens(source.Text);
@@ -507,6 +523,7 @@ static SearchSource[] SelectNonDuplicateEvidence(IEnumerable<SearchSource> ranke
             DottedVersions(source.Text).SetEquals(DottedVersions(existing.Text))))
             continue;
         selected.Add(source);
+        if (selected.Count == count) break;
     }
     return selected.ToArray();
 }

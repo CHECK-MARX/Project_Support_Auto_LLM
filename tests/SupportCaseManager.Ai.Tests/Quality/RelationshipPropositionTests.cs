@@ -68,6 +68,9 @@ public sealed class RelationshipPropositionTests
     [InlineData("選択肢の正否を明確にするため、公式資料が必要です。")]
     [InlineData("エラーメッセージの内容により、設定ミスが原因であるかを特定するための情報が必要です。")]
     [InlineData("更新がログイン失敗の原因となる可能性がありますか？")]
+    [InlineData("案件履歴によると、ログイン失敗が観測されています。")]
+    [InlineData("VPN経由の構成を検討されています（案件履歴によると）。")]
+    [InlineData("資料間に差異があるため、設定後の状態を確認してください。")]
     public void UnknownRelationOrInformationRequestDoesNotAssertProductDependency(string answer)
     {
         Assert.DoesNotContain(Evaluate(answer, []).UnsupportedTechnicalClaims, x => x.Kind == "EvidenceRelationship");
@@ -114,6 +117,108 @@ public sealed class RelationshipPropositionTests
         var fact = Evidence("案件履歴では更新がログイン失敗の原因です。メーカー原文未確認。", "CurrentCase");
         Assert.Contains(Evaluate("案件履歴では更新がログイン失敗の原因です。", [fact]).UnsupportedTechnicalClaims, x => x.Kind == "EvidenceRelationship");
         Assert.Contains(Evaluate("顧客の申告では更新がログイン失敗の原因です。", [fact with { SourceId = "" }]).UnsupportedTechnicalClaims, x => x.Kind == "EvidenceRelationship");
+    }
+
+    [Theory]
+    [InlineData("LicenseはServer Alphaに限定される。")]
+    [InlineData("LicenseはServer Alphaのみである。")]
+    [InlineData("LicenseはServer Alphaである必要がある。")]
+    [InlineData("LicenseはServer Alphaでなければならない。")]
+    [InlineData("LicenseはServer Betaでは使用できない。")]
+    [InlineData("Server AlphaがLicense Managerの役割を担う。")]
+    [InlineData("LicenseがServer Alphaへ割り当てられる。")]
+    [InlineData("Version 9.8の移設設定はComponent Alphaに適用される。")]
+    [InlineData("LicenseはServer Alphaに限定されている可能性があります。")]
+    [InlineData("LicenseはServer Alphaに限定されると考えられます。")]
+    [InlineData("License is restricted to Server Alpha.")]
+    [InlineData("License must be Server Alpha.")]
+    [InlineData("License cannot be used on Server Beta.")]
+    [InlineData("License is assigned to Server Alpha.")]
+    public void ConstraintsRequireExplicitPredicateInsteadOfCooccurringEntities(string answer)
+    {
+        AssertRelationshipRejected(answer,
+            "License。Server Alpha。Server Beta。License Manager。Version 9.8。移設設定。Component Alpha。");
+        Assert.DoesNotContain(Evaluate(answer, [Evidence(answer)]).UnsupportedTechnicalClaims,
+            claim => claim.Kind == "EvidenceRelationship");
+    }
+
+    [Theory]
+    [InlineData("LicenseはServer Alphaに限定される。", "Server AlphaはLicenseに限定される。")]
+    [InlineData("LicenseはServer Alphaに限定される。", "LicenseはServer Betaに限定される。")]
+    [InlineData("LicenseはServer Alphaに限定される。", "LicenseはServer Alphaに限定されない。")]
+    [InlineData("LicenseはServer Betaでは使用できない。", "LicenseはServer Betaでは使用できる。")]
+    [InlineData("LicenseはServer Alphaに限定される。", "LicenseはServer Alphaに限定される可能性があります。")]
+    [InlineData("LicenseはServer Alphaでなければならない。", "LicenseはServer Alphaである必要がない。")]
+    [InlineData("Version 9.8の移設設定はComponent Alphaに適用される。", "Version 9.7の移設設定はComponent Alphaに適用される。")]
+    [InlineData("Version 9.8の移設設定はComponent Alphaに適用される。", "Version 9.8の再起動設定はComponent Alphaに適用される。")]
+    [InlineData("LicenseはServer Alphaに限定される。", "初回移設の場合、LicenseはServer Alphaに限定される。")]
+    [InlineData("初回移設の場合、LicenseはServer Alphaに限定される。", "再起動の場合、LicenseはServer Alphaに限定される。")]
+    public void ConstraintRolesPolarityCertaintyVersionsOperationsAndConditionsMustMatch(string answer, string source)
+    {
+        AssertRelationshipRejected(answer, source);
+    }
+
+    [Fact]
+    public void NegativeGrammarCanExpressAnAffirmativeRequiredRole()
+    {
+        Assert.DoesNotContain(Evaluate("LicenseはServer Alphaでなければならない。",
+            [Evidence("LicenseはServer Alphaである必要がある。")]).UnsupportedTechnicalClaims,
+            claim => claim.Kind == "EvidenceRelationship");
+    }
+
+    [Theory]
+    [InlineData("LicenseはServer Alphaに限定されるかどうかを確認してください。")]
+    [InlineData("LicenseはServer Alphaに限定される可能性がありますか？")]
+    [InlineData("今回確認した資料からはLicenseがServer Alphaに限定されるか判断できません。")]
+    [InlineData("LicenseはServer Alphaである必要があるかどうかを確認してください。")]
+    [InlineData("LicenseはServer Betaでは使用できないかどうかを確認してください。")]
+    [InlineData("Server AlphaがLicense Managerの役割を担うかどうかを確認してください。")]
+    public void ConstraintQuestionsAndScopedUnknownsDoNotAssertRestriction(string answer)
+    {
+        Assert.DoesNotContain(Evaluate(answer, []).UnsupportedTechnicalClaims,
+            claim => claim.Kind == "EvidenceRelationship");
+    }
+
+    [Fact]
+    public void RestrictionAndItsDerivedCauseBothRequireDirectEvidence()
+    {
+        const string answer = "LicenseはServer Alphaに限定されている可能性があるため、設定が正しくない可能性があります。";
+        var extract = typeof(AnswerQualityEvaluator).GetMethod("ExtractRelationships",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var relations = ((System.Collections.IEnumerable)extract.Invoke(null, [answer])!).Cast<object>().ToArray();
+        var kinds = relations.Select(relation => relation.GetType().GetProperty("Kind")!.GetValue(relation)).ToArray();
+        Assert.Contains("RestrictedTo", kinds);
+        Assert.Contains("Cause", kinds);
+        var unsupported = Evaluate(answer, [Evidence("License。Server Alpha。設定を確認する。")])
+            .UnsupportedTechnicalClaims.Where(claim => claim.Kind == "EvidenceRelationship").ToArray();
+        Assert.NotEmpty(unsupported);
+        // An explicitly supported restriction alone must not justify its causal consequence.
+        AssertRelationshipRejected(answer, "LicenseはServer Alphaに限定されている可能性があります。");
+        // Conversely a causal sentence does not prove an independently asserted restriction.
+        AssertRelationshipRejected("LicenseはServer Alphaに限定される、また更新が障害の原因です。",
+            "更新が障害の原因です。");
+    }
+
+    [Fact]
+    public void SeparateSourcesOrDistantSentencesCannotAssembleRestriction()
+    {
+        foreach (var sources in new[] {
+            new[] { Evidence("License。"), Evidence("Server Alphaに限定される。") },
+            new[] { Evidence("Licenseを使用する。設定を確認する。Server Alphaに限定される。") } })
+            Assert.Contains(Evaluate("LicenseはServer Alphaに限定される。", sources).UnsupportedTechnicalClaims,
+                claim => claim.Kind == "EvidenceRelationship");
+    }
+
+    [Fact]
+    public void AttributedCaseRestrictionCannotBecomeOfficialSpecification()
+    {
+        var evidence = new[] { Evidence("LicenseはServer Alphaに限定される。", "CurrentCase") };
+        Assert.DoesNotContain(Evaluate("案件履歴ではLicenseはServer Alphaに限定される。", evidence)
+            .UnsupportedTechnicalClaims, claim => claim.Kind == "EvidenceRelationship");
+        Assert.Contains(Evaluate("製品仕様上、LicenseはServer Alphaに限定される。", evidence)
+            .UnsupportedTechnicalClaims, claim => claim.Kind == "EvidenceRelationship");
+        Assert.Contains(Evaluate("LicenseはServer Alphaに限定される。", evidence)
+            .UnsupportedTechnicalClaims, claim => claim.Kind == "EvidenceRelationship");
     }
 
     private static void AssertRelationshipRejected(string answer, string source)

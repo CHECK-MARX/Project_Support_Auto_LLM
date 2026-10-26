@@ -19,6 +19,10 @@ public static class SelectedOfficialFactProjector
         ["SQL", "データベース"],
         ["license", "ライセンス"],
         ["scan", "スキャン"],
+        ["manual", "マニュアル"],
+        ["report", "レポート"],
+        ["suppress", "suppression", "抑止"],
+        ["error", "エラー"],
     ];
 
     private static readonly string[][] DistinctTopicAliases =
@@ -48,22 +52,31 @@ public static class SelectedOfficialFactProjector
         var inquiryConcepts = ConceptAliases.Where(aliases => ContainsAny(inquiry, aliases)).ToArray();
         var redactor = new SafetyRedactionService();
         var facts = new List<ResolvedFact>();
-        foreach (var source in selectedSources.Where(source =>
+        foreach (var source in selectedSources.Where(source => source.SourceType == "Manual" ||
             source.SourceType == "OfficialDoc" &&
             Uri.TryCreate(source.Url, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps))
         {
-            var statement = Regex.Split(source.Text, @"(?<=[。.!?])\s+")
+            var exactTerms = ExactSubjectTerms(inquiry);
+            var subjectIdentifiers = exactTerms.Where(t => t.Any(c => c is '_' or '-') ||
+                t.All(c => !char.IsLetter(c) || char.IsUpper(c)) &&
+                !new[] { "GUI", "CLI", "XML", "CSV", "PDF", "HTTP", "HTTPS", "JSON", "API" }.Contains(t, StringComparer.Ordinal) ||
+                Regex.IsMatch(inquiry, Regex.Escape(t) + @"\s+[a-z][a-z_-]+"))
+                .ToArray();
+            if (subjectIdentifiers.Length > 0 && !subjectIdentifiers.Any(t =>
+                    source.Text.Contains(t, StringComparison.OrdinalIgnoreCase))) continue;
+            var statement = VerbatimSpans(source.Text)
                 .Select(static sentence => sentence.Trim())
-                .Where(static sentence => sentence.Length is >= 35 and <= 500)
+                .Where(static sentence => sentence.Length is >= 20 and <= 500)
                 .Where(static sentence => Regex.IsMatch(sentence,
-                    @"\b(?:verify|supported|requires?|must|should|confirm|check)\b|確認|必要|対応",
+                    @"\b(?:verify|supported|requires?|must|should|confirm|check|support|report)\b|確認|必要|対応|抑止|マニュアル|例示|サポート外",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 .Select(sentence => new
                 {
                     Text = sentence,
                     Matches = inquiryConcepts.Count(aliases => ContainsAny(sentence, aliases)),
                 })
-                .Where(static item => item.Matches >= 2)
+                .Where(item => item.Matches >= 2 || exactTerms.Any(term =>
+                    item.Text.Contains(term, StringComparison.OrdinalIgnoreCase)))
                 .OrderByDescending(static item => item.Matches)
                 .ThenBy(static item => item.Text.Length)
                 .Select(static item => item.Text)
@@ -93,15 +106,59 @@ public static class SelectedOfficialFactProjector
                 Value = statement,
                 Status = FactStatuses.Confirmed,
                 Confidence = FactConfidences.High,
-                SourceType = "OfficialDoc",
+                SourceType = source.SourceType,
                 EvidenceId = source.SourceId,
-                SourceUrls = [source.Url!],
+                SourceUrls = source.Url is null ? [] : [source.Url],
                 DocumentTitle = source.Title,
                 Section = source.SectionTitle ?? string.Empty,
-                AuthorityLevel = "OfficialDoc",
+                AuthorityLevel = source.SourceType,
             });
         }
-        return facts.DistinctBy(static fact => fact.Value, StringComparer.OrdinalIgnoreCase).ToArray();
+        return facts.Select(f => f.SourceType == "Manual" ? f with
+            { Statement = "選択したManualの原文記録。公式性を断定せず、対象版・条件・時点を保持する。" } : f)
+            .DistinctBy(static fact => (fact.SourceType, fact.EvidenceId, fact.Value)).ToArray();
+    }
+
+    // Substrings of the original source, never concatenated statements. A nearby
+    // condition/heading may be included only as part of one contiguous span.
+    internal static IEnumerable<string> VerbatimSpans(string text)
+    {
+        foreach (Match match in Regex.Matches(text, @"[^\r\n]+"))
+        {
+            foreach (var sentence in Regex.Split(match.Value, @"(?<=[。!?])\s*|(?<=\.)(?!\d)\s+"))
+                if (!string.IsNullOrWhiteSpace(sentence)) yield return sentence.Trim();
+            var end = match.Index + match.Length;
+            var next = Regex.Match(text[end..], @"^[\r\n]+[^\r\n]+");
+            if (next.Success && match.Length + next.Length <= 500 &&
+                Regex.IsMatch(match.Value, @"\b(?:If|When|Before|Note)\b|条件|注意|例示|サポート外", RegexOptions.IgnoreCase))
+                yield return text.Substring(match.Index, match.Length + next.Length).Trim();
+        }
+    }
+
+    internal static IReadOnlyList<string> ExactSubjectTerms(string inquiry) => Regex.Matches(inquiry,
+            @"(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9_.-]{2,}(?![A-Za-z0-9_.-])")
+        .Select(m => m.Value).Where(t => t is not ("QAC" or "CxSAST" or "Checkmarx" or "Klocwork" or "Windows" or "Version" or "Server" or "SQL" or "HF"))
+        .Where(t => t.Any(c => c is '_' or '-' or '.') || t.All(c => !char.IsLetter(c) || char.IsUpper(c)) ||
+            t.All(c => !char.IsLetter(c) || char.IsLower(c)) &&
+            !new[] { "server", "manual", "version", "report", "license", "configuration", "check", "verify", "scan", "build", "integration", "first", "support", "before", "after" }.Contains(t, StringComparer.OrdinalIgnoreCase))
+        .Where(t => !t.Contains("REDACTED", StringComparison.OrdinalIgnoreCase) && !t.Contains("CUSTOMER", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    public static IReadOnlyList<SearchSource> SelectRelevantEvidence(string inquiry,
+        IEnumerable<SearchSource> ranked, int count)
+    {
+        var candidates = ranked.Take(50).Where(s => HasDirectTopicOverlap(inquiry, s))
+            .Select((s, rank) => new { Source = s, Rank = rank, Fact = Project(inquiry, [s]).FirstOrDefault() })
+            .OrderByDescending(x => x.Fact is not null).ThenBy(x => x.Rank);
+        var chosen = new List<SearchSource>();
+        foreach (var candidate in candidates)
+        {
+            if (chosen.Any(s => s.SourceId == candidate.Source.SourceId ||
+                    string.Equals(s.Text, candidate.Source.Text, StringComparison.Ordinal))) continue;
+            chosen.Add(candidate.Source);
+            if (chosen.Count == count) break;
+        }
+        return chosen;
     }
 
     private static bool ContainsAny(string text, IReadOnlyList<string> aliases) =>

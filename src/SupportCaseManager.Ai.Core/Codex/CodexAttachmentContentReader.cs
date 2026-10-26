@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Xml;
 using SupportCaseManager.Ai.Core.Indexing;
 using SupportCaseManager.Core.Cases;
 
@@ -123,7 +124,7 @@ public sealed class CodexAttachmentContentReader : ICodexAttachmentContentReader
                     warnings.Add($"{file.RelativePath}: 大容量のため重要行を中心にUTF-8正規化して送信します。");
                 }
             }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException)
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or NotSupportedException or XmlException)
             {
                 warnings.Add($"{file.RelativePath}: 本文を読み取れませんでした ({ex.Message})");
             }

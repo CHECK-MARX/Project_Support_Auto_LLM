@@ -67,6 +67,9 @@ internal static class ImportantFactContract
             if (Regex.IsMatch(clause, @"誤検知|false positive|enabled|既定.{0,20}変更|デフォルト.{0,20}変更|変更がある|変更の有無|記載.{0,15}理由",
                 RegexOptions.IgnoreCase))
                 additions.Add(InquiryFact("ImportantInquiryIntent", clause, "問い合わせ論点（結論ではない）", redactor));
+            else if (clause.Length is >= 12 and <= 320 && Regex.IsMatch(clause,
+                @"提供|配布|入手|セットアップ|削除|除去|減設|割り当て|送信され|送られる|対応づけ|収容数|登録方法|インプレース", RegexOptions.IgnoreCase))
+                additions.Add(InquiryFact("ImportantInquiryIntent", clause, "依頼軸・条件", redactor));
         }
         return additions.Count == 0 ? resolution : resolution with
         {
@@ -120,6 +123,8 @@ internal static class ImportantFactContract
     internal static string DescribeForGeneration(ResolvedFact fact)
     {
         var source = fact.SourceType == "CurrentInquiry" ? "顧客申告" :
+            fact.Key == "AuditedCaseFact" ? (fact.Explanation == "AuditedAttachment"
+                ? "監査済み添付の記載・製品仕様の証明ではない" : "監査済みCurrentCase案件履歴・製品仕様の証明ではない") :
             fact.Key == "CaseObservation" && IsVersionedFix(fact.Value)
                 ? "メーカー原文未確認のCurrentCase案件履歴"
                 : "CurrentCase案件履歴・添付の観測";
@@ -172,6 +177,8 @@ internal static class ImportantFactContract
             }
             else if (fact.Key == "ImportantInquiryIntent")
             {
+                if (fact.Operation == "依頼軸・条件" && !NormalizeAxis(reply).Contains(NormalizeAxis(fact.Value), StringComparison.Ordinal))
+                    return "重要Factの欠落: 問い合わせの依頼軸・条件が回答本文にありません。";
                 if (Regex.IsMatch(fact.Value, @"誤検知|false positive", RegexOptions.IgnoreCase) &&
                     !Regex.IsMatch(reply, @"誤検知|false positive", RegexOptions.IgnoreCase) ||
                     fact.Value.Contains("enabled", StringComparison.OrdinalIgnoreCase) &&
@@ -183,6 +190,12 @@ internal static class ImportantFactContract
                     Regex.Matches(fact.Value, @"Windows|Linux|macOS", RegexOptions.IgnoreCase)
                         .Any(os => !reply.Contains(os.Value, StringComparison.OrdinalIgnoreCase))))
                     return "重要Factの欠落: 原質問のOS・提供依頼軸が回答本文にありません。";
+            }
+            else if (fact.Key == "AuditedCaseFact")
+            {
+                if (!NormalizeAxis(factSection).Contains(NormalizeAxis(fact.Value), StringComparison.Ordinal) ||
+                    !Regex.IsMatch(factSection, @"案件履歴|監査済み添付"))
+                    return "重要Factの欠落: 監査済み案件事実の内容または帰属が本文にありません。";
             }
             else if (fact.Key == "ImportantInquiryTransition")
             {
@@ -431,7 +444,7 @@ internal static class ImportantFactContract
         fact.Status == FactStatuses.Candidate &&
         (fact.SourceType == "CurrentInquiry" && fact.Key is "ImportantInquiryFailure" or "ImportantInquiryOperation" or "ImportantInquiryVersion" or "ImportantInquiryAbsence" or "ImportantInquiryOption" or "ImportantInquiryIntent" or "ImportantInquiryTransition" ||
          fact.SourceType == "CurrentCase" &&
-         (fact.Key is "PriorCaseOutcome" or "ObservedLogFailure" ||
+         (fact.Key is "PriorCaseOutcome" or "ObservedLogFailure" or "AuditedCaseFact" ||
           fact.Key == "CaseObservation" && (IsServiceRecovery(fact.Value) || IsVersionedFix(fact.Value))));
 
     private static bool IsServiceRecovery(string value) =>

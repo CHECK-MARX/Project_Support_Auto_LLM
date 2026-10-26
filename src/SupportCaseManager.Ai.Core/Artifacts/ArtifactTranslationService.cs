@@ -40,6 +40,7 @@ public sealed class ArtifactTranslationService : IArtifactTranslationService
         this.pathPolicy = pathPolicy ?? new CaseArtifactPathPolicy();
         this.handlers = (handlers ?? [
             new WordDocumentTranslationHandler(),
+            new PowerPointTranslationHandler(),
             new CsvTranslationHandler(),
             new TextTranslationHandler(ArtifactFormat.PlainText),
             new TextTranslationHandler(ArtifactFormat.Markdown),
@@ -84,6 +85,7 @@ public sealed class ArtifactTranslationService : IArtifactTranslationService
             },
             _ => [],
         };
+        warnings.AddRange(textPlan.Warnings);
         if (File.Exists(output))
         {
             warnings.Add("The output file already exists. Overwrite is disabled; select another name.");
@@ -95,6 +97,7 @@ public sealed class ArtifactTranslationService : IArtifactTranslationService
             {
                 ArtifactFormat.Csv => ArtifactKind.CsvEnglishTranslation,
                 ArtifactFormat.WordDocument => ArtifactKind.WordEnglishTranslation,
+                ArtifactFormat.PowerPointPresentation => ArtifactKind.PowerPointEnglishTranslation,
                 _ => ArtifactKind.TextEnglishTranslation,
             },
             Format = format,

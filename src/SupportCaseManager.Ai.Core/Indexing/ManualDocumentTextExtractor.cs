@@ -202,7 +202,7 @@ internal static class ManualDocumentTextExtractor
         return ExtractOpenXmlEntries(
             archive,
             static entryName => entryName.Equals("xl/sharedStrings.xml", StringComparison.OrdinalIgnoreCase) ||
-                entryName.StartsWith("xl/worksheets/", StringComparison.OrdinalIgnoreCase));
+                IsDirectXmlPart(entryName, "xl/worksheets/"));
     }
 
     private static string ReadPptxText(string filePath)
@@ -210,8 +210,17 @@ internal static class ManualDocumentTextExtractor
         using var archive = ZipFile.OpenRead(filePath);
         return ExtractOpenXmlEntries(
             archive,
-            static entryName => entryName.StartsWith("ppt/slides/", StringComparison.OrdinalIgnoreCase) ||
-                entryName.StartsWith("ppt/notesSlides/", StringComparison.OrdinalIgnoreCase));
+            static entryName => IsDirectXmlPart(entryName, "ppt/slides/") ||
+                IsDirectXmlPart(entryName, "ppt/notesSlides/"));
+    }
+
+    private static bool IsDirectXmlPart(string entryName, string directory)
+    {
+        if (!entryName.StartsWith(directory, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var partName = entryName[directory.Length..];
+        // ZIP directory records and relationship/resource subdirectories are not document text.
+        return partName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) && !partName.Contains('/');
     }
 
     private static string ExtractOpenXmlEntries(

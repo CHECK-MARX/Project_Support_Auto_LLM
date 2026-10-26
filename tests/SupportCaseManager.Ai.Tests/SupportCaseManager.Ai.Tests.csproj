@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="..\..\tools\AnswerComparisonLab\CurrentCaseFactReader.cs" Link="Adapters\CurrentCaseFactReader.cs" />
   </ItemGroup>
 
   <ItemGroup>

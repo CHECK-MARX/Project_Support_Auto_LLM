@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
@@ -1358,7 +1358,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     {
                         Role = message.Role,
                         Text = IsManufacturerDraftPayload(message.Text)
-                            ? "日英メーカー確認案を生成しました。下の編集欄を確認してください。"
+                            ? "以前のメーカー確認案があります。整合性は再確認してください。"
                             : message.Text,
                         CreatedAt = message.CreatedAt,
                     });
@@ -1461,12 +1461,16 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             return;
         }
 
+        var selectedManufacturerCorrection = naturalLanguageOperation == NaturalLanguageOperation.NormalChat
+            && selectedPresetKey is CodexPromptPreset.AskManufacturerKey or CodexPromptPreset.ReplyToManufacturerKey;
         if (IsManufacturerMailRequest(instruction)
+            || selectedManufacturerCorrection
             || naturalLanguageOperation is NaturalLanguageOperation.ManufacturerAsk
                 or NaturalLanguageOperation.ManufacturerReply)
         {
             await LogSendStageAsync("SEND_ROUTE_RESOLVED=MANUFACTURER");
             var manufacturerIntent = naturalLanguageOperation == NaturalLanguageOperation.ManufacturerReply
+                || (selectedManufacturerCorrection && selectedPresetKey == CodexPromptPreset.ReplyToManufacturerKey)
                 || IsManufacturerReplyRequest(instruction)
                     ? ManufacturerCommunicationIntent.ReplyToManufacturer
                     : ManufacturerCommunicationIntent.AskManufacturer;
@@ -1576,6 +1580,12 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             await LogSendStageAsync(capsule.DiagnosticSummary("TURN_CONTEXT_CAPSULE_V1"));
             prompt = promptComposer.ComposeFollowUpPrompt(
                 $"{instruction}\n\n{capsule.Text}", attachmentRead.Contents);
+        }
+        if (attachmentRead.Warnings.Count > 0)
+        {
+            prompt += "\n\n### 添付本文の読み取り状況（アプリの診断）\n"
+                + "以下は本文を確認できない資料や省略範囲の通知です。未読部分を確認済みとして扱わず、内容を推測で補完しないでください。\n"
+                + string.Join(Environment.NewLine, attachmentRead.Warnings);
         }
         if (!string.IsNullOrWhiteSpace(activeQualityIntent))
             prompt = AppendQualityStylePrompt(prompt, currentSnapshot, QualityAudience.Customer, activeQualityIntent);
@@ -1739,6 +1749,9 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
         var result = await fileScanner.ScanAsync(snapshot.CaseFolder).ConfigureAwait(false);
         RunOnUi(() =>
         {
+            var previousManufacturerSelection = preserveSelection && !caseFolderChanged
+                ? Files.ToDictionary(file => file.FullPath, file => file.IsManufacturerAttachmentSelected, StringComparer.OrdinalIgnoreCase)
+                : new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             var previousSelection = preserveSelection && !caseFolderChanged
                 ? Files.ToDictionary(static file => file.RelativePath, static file => file.IsSelected,
                     StringComparer.OrdinalIgnoreCase)
@@ -1759,11 +1772,15 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 var selectByDefault = previousSelection.TryGetValue(file.RelativePath, out var selected)
                     ? selected : file.CanSendToCodex;
                 var item = new CodexCaseFileViewModel(file, selectByDefault);
+                if (previousManufacturerSelection.TryGetValue(file.FullPath, out var manufacturerSelected))
+                    item.IsManufacturerAttachmentSelected = manufacturerSelected;
                 item.PropertyChanged += OnCaseFilePropertyChanged;
                 Files.Add(item);
             }
 
             scannedCaseFolder = snapshot.CaseFolder;
+            OnPropertyChanged(nameof(ManufacturerAttachments));
+            OnPropertyChanged(nameof(ManufacturerAttachmentNotice));
             FileScanStatus = result.Warnings.Count == 0
                 ? $"案件ファイルを読み込みました: {Files.Count}件"
                 : $"案件ファイル: {Files.Count}件 / 警告: {result.Warnings.Count}件";
@@ -1779,6 +1796,11 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
     private void OnCaseFilePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(CodexCaseFileViewModel.IsManufacturerAttachmentSelected))
+        {
+            manufacturerMailQualityReady = false;
+            RaiseArtifactCommandStates();
+        }
         if (e.PropertyName == nameof(CodexCaseFileViewModel.IsSelected))
         {
             OnPropertyChanged(nameof(SelectedFilesSummary));
@@ -1885,7 +1907,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
 
                 if (isManufacturerTurn)
                 {
-                    currentAssistantMessage.Text = "日英メーカー確認案を生成しました。下の編集欄を確認してください。";
+                    currentAssistantMessage.Text = "日英メーカー確認案を受信しました。整合性を確認しています。";
                 }
                 else if (isReviewTurn)
                 {
@@ -2027,6 +2049,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     CompanyName = string.IsNullOrWhiteSpace(snapshot.CompanyName) ? previous.CompanyName : snapshot.CompanyName,
                     CaseFolder = snapshot.CaseFolder,
                 };
+            RestoreManufacturerTranslation(previous, snapshot);
             latestCompletedAbSample = null;
             activeComparisonKey = string.Empty;
             activeExistingEvidenceSourceTypes = [];
@@ -2042,7 +2065,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                     {
                         Role = message.Role,
                         Text = IsManufacturerDraftPayload(message.Text)
-                            ? "日英メーカー確認案を生成しました。下の編集欄を確認してください。"
+                            ? "以前のメーカー確認案があります。整合性は再確認してください。"
                             : message.Text,
                         CreatedAt = message.CreatedAt,
                     });
@@ -2096,6 +2119,7 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
                 ? requestedReasoningEffort
                 : thread.ReasoningEffort,
             SessionStatus = "ready",
+            ManufacturerTranslation = IsPendingManufacturerAttachmentForCase(snapshot) ? currentSession?.ManufacturerTranslation : null,
         };
     }
 
@@ -2265,14 +2289,8 @@ public sealed partial class CodexChatViewModel : ObservableObject, IAsyncDisposa
             || (artifactPlan is not null
                 && string.Equals(artifactPlan.SourceFullPath, source, StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(artifactPlan.Request.OutputFileName));
-        var previousManufacturerContact = Files.Any(file =>
-            file.File.Size > 0
-            && (file.FileName.Contains("メーカー連携", StringComparison.OrdinalIgnoreCase)
-                || file.RelativePath.Contains("manufacturer", StringComparison.OrdinalIgnoreCase)));
-        var previousCustomerReply = Files.Any(file =>
-            file.File.Size > 0
-            && (file.FileName.Contains("お客様への返信案", StringComparison.OrdinalIgnoreCase)
-                || file.RelativePath.Contains("customerreplydraft", StringComparison.OrdinalIgnoreCase)));
+        var previousManufacturerContact = HasRecordedCorrespondence(snapshot, manufacturer: true);
+        var previousCustomerReply = HasRecordedCorrespondence(snapshot, manufacturer: false);
         return hasDelta && hasOutboundAttachment && previousManufacturerContact && previousCustomerReply;
     }
 

@@ -6,6 +6,7 @@ public enum ArtifactKind
     CsvEnglishTranslation,
     TextEnglishTranslation,
     WordEnglishTranslation,
+    PowerPointEnglishTranslation,
 }
 
 public enum ArtifactFormat
@@ -16,6 +17,7 @@ public enum ArtifactFormat
     Csv,
     PlainText,
     Markdown,
+    PowerPointPresentation,
 }
 
 public enum ExcelTranslationTargetKind
@@ -54,6 +56,7 @@ public sealed record ArtifactTextTranslationValue
 public sealed record ArtifactTextTranslationPlan
 {
     public IReadOnlyList<ArtifactTextTranslationEntry> Entries { get; init; } = [];
+    public IReadOnlyList<string> Warnings { get; init; } = [];
     public string EncodingName { get; init; } = "utf-8";
     public bool HasByteOrderMark { get; init; }
     public string NewLine { get; init; } = "\n";

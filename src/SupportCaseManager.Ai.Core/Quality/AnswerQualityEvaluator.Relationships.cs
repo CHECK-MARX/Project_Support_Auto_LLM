@@ -18,6 +18,7 @@ public static partial class AnswerQualityEvaluator
         TopicEntityCatalog catalog)
     {
         var primary = input.Evidence.Where(source => source.SourceType is "OfficialDoc" or "Manual" or "Manufacturer")
+            .Where(source => !string.IsNullOrWhiteSpace(source.SourceId))
             .Where(source => SourceMatchesInquiry(input.Question, source.Text, source.SourceType, catalog)).ToArray();
         foreach (var claim in ExtractRelationships(input.Answer))
         {
@@ -56,10 +57,10 @@ public static partial class AnswerQualityEvaluator
                 if (IsRelationshipQuestion(clause)) continue;
                 var patterns = new (string Kind, string Pattern)[]
                 {
-                    ("Cause", @"(?<from>.+?)(?:によって|により|による|の結果[、,]?)(?<to>.+)"),
+                    ("Cause", @"(?<from>.+?)(?:によって|により|による(?!と)|の結果[、,]?)(?<to>.+)"),
                     ("Cause", @"(?<from>.+?)(?:が|は)(?<to>.+?)の原因(?:で|と|に).*$"),
                     ("Cause", @"(?<to>.+?)の原因は(?<from>.+?)(?:です|である|と考え).*$"),
-                    ("Cause", @"(?<from>.+?)のため[、,]?(?<to>.+)"),
+                    ("Cause", @"(?<from>.+?)(?:のため|(?:である|ある|いる|ない|なかった|した|する|された)ため)[、,]?(?<to>.+)"),
                     ("Contributes", @"(?<from>.+?)が(?<to>.+?)に関与(?:し|する|した).*$"),
                     ("Contributes", @"(?<from>.+?)が関与(?:し|する|した)(?<to>.*)$"),
                     ("Requires", @"(?<to>.+?)(?:には|に)(?<from>.+?)(?:が必要|を必要と|が必須).*$"),
@@ -67,6 +68,21 @@ public static partial class AnswerQualityEvaluator
                     ("Cause", @"(?<to>.+?)\s+(?:is |was )?(?:caused by|due to|results? from)\s+(?<from>.+)"),
                     ("Cause", @"(?<from>.+?)\s+(?:(?:may|might|could)\s+)?(?:causes?|caused|triggers?|triggered|changes?|changed|leads? to|results? in)\s+(?<to>.+)"),
                     ("Requires", @"(?<to>.+?)\s+(?:(?:may|might|could)\s+)?(?:requires?|depends? on|needs?)\s+(?<from>.+)"),
+                    // Atomic restrictions and role bindings are propositions in their
+                    // own right. Their endpoints must occur in this predicate, rather
+                    // than be assembled from separately mentioned technical terms.
+                    ("RestrictedTo", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)に限定(?<predicate>されていない|されていません|されない|されている|される|されます)"),
+                    ("RestrictedTo", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)(?:でのみ|のみである|のみです|のみとなる|のみとなります)"),
+                    ("RequiresRole", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)(?:である|になる)必要(?<predicate>がない|はない|がある|があります|です)"),
+                    ("RequiresRole", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)でなければ(?<predicate>ならない|なりません)"),
+                    ("UsableIn", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)(?:では|で|には)(?<predicate>使用できない|使用できません|利用できない|利用できません|使用できる|使用できます|利用できる|利用できます)"),
+                    ("RoleBinding", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)の役割を(?<predicate>担わない|担いません|担う|担います|担っている)"),
+                    ("AssignedTo", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)(?:へ|に)(?<predicate>割り当てられない|割り当てられていない|割り当てられる|割り当てられています|割り当てられている)"),
+                    ("AppliesTo", @"(?<from>[^、,；;]+?)(?:は|が)(?<to>[^、,；;]+?)に(?<predicate>適用されない|適用されていない|適用される|適用されます|適用されている)"),
+                    ("RestrictedTo", @"(?<from>.+?)\s+(?:(?:may|might|could)\s+)?(?:is |be |are )?(?<predicate>not )?restricted to\s+(?<to>[^,;]+)"),
+                    ("RequiresRole", @"(?<from>.+?)\s+(?:must|needs? to)\s+be\s+(?<to>[^,;]+)"),
+                    ("UsableIn", @"(?<from>.+?)\s+(?<predicate>cannot|can not|can)\s+be used (?:on|in|with)\s+(?<to>[^,;]+)"),
+                    ("AssignedTo", @"(?<from>.+?)\s+(?:(?:may|might|could)\s+)?(?:is |be |are )?(?<predicate>not )?assigned to\s+(?<to>[^,;]+)"),
                 };
                 foreach (var (kind, pattern) in patterns)
                 {
@@ -76,21 +92,34 @@ public static partial class AnswerQualityEvaluator
                     var to = match.Groups["to"].Value.Trim(' ', '、', ',');
                     // Asking for logs in order to investigate is a request rationale,
                     // not a product/component dependency or a technical causal claim.
-                    if (Regex.IsMatch(from, @"(?:確認|調査|特定|判断|照合|把握)(?:する)?$|明確にする$|^するため")) continue;
+                    if (Regex.IsMatch(from, @"(?:確認|調査|特定|判断|照合|把握)(?:する)?$|明確に(?:する)?$|^するため")) continue;
+                    // A comparison of the available records motivating a request to
+                    // inspect them is an epistemic review rationale, not a product
+                    // restriction or a cause of changed product behaviour. Any
+                    // independently asserted restriction is still extracted below.
+                    if (kind == "Cause" &&
+                        Regex.IsMatch(from, @"(?:根拠|資料|記録)(?:間|との?|と|に).*(?:差異|相違|違い|不足)(?:が|は)?$") &&
+                        Regex.IsMatch(to, @"^[^。]*(?:を確認してください|をご提供ください|を照合してください)$")) continue;
                     // The connector asserts the relation regardless of the vocabulary
                     // used for the effect (including a novel or negative effect).
                     // Do not gate causal validation on a list of known event verbs.
+                    var predicate = match.Groups["predicate"];
                     yield return new Relation(kind, from, to, original,
-                        Regex.IsMatch(clause, @"原因では(?:ない|ありません)|依存し(?:ない|ません)|(?:変更|発生)し(?:ない|ません)|\b(?:not|never)\b", RegexOptions.IgnoreCase),
+                        kind == "RequiresRole" && predicate.Value is "ならない" or "なりません"
+                            ? false // "でなければならない" asserts an affirmative requirement.
+                            : kind is "RestrictedTo" or "RequiresRole" or "UsableIn" or "RoleBinding" or "AssignedTo" or "AppliesTo"
+                            ? Regex.IsMatch(predicate.Value, @"ない|いません|わない|cannot|can not|\bnot\b", RegexOptions.IgnoreCase)
+                            : Regex.IsMatch(clause, @"原因では(?:ない|ありません)|依存し(?:ない|ません)|(?:変更|発生)し(?:ない|ません)|\b(?:not|never)\b", RegexOptions.IgnoreCase),
                         Regex.IsMatch(clause, @"可能性|考えられ|かもしれ|\b(?:may|might|could|possibly)\b", RegexOptions.IgnoreCase));
-                    break;
+                    // Do not stop at the first relation: a restriction and a causal
+                    // conclusion drawn from it each require their own direct proof.
                 }
             }
         }
     }
 
     private static bool IsRelationshipQuestion(string clause) =>
-        Regex.IsMatch(clause, @"(?:でしょうか|ですか|ますか)$|かどうか(?:を|は)?(?:確認|判断|断定)|かどうか.{0,12}(?:確認でき|不明)") ||
+        Regex.IsMatch(clause, @"(?:でしょうか|ですか|ますか)$|かどうか(?:を|は)?(?:確認|判断|断定)|かどうか.{0,12}(?:確認でき|不明)|(?:か否か|とは|であるか|されるか|されているか).{0,12}(?:確認|判断|断定)でき(?:ない|ません)") ||
         !Regex.IsMatch(clause, @"可能性が(?:あり|ある)|考えられ|かもしれ|\b(?:may|might|could)\b", RegexOptions.IgnoreCase) &&
         Regex.IsMatch(clause, @"かどうか|か否か|(?:原因|必要|変更された|発生した)(?:かは|かを|であるか)|(?:関係|関係性|因果関係)は.{0,25}(?:確認でき|不明|断定でき)|(?:でしょうか|ですか|ますか)$|\b(?:whether|cannot confirm|unknown whether)\b", RegexOptions.IgnoreCase);
 
@@ -136,5 +165,5 @@ public static partial class AnswerQualityEvaluator
     }
 
     private static string StripRelationAttribution(string text) => Regex.Replace(text,
-        @"^(?:(?:顧客|お客様)(?:の申告では|からの申告では|によると)|案件(?:履歴|記録)(?:では|には)|(?:公式資料|マニュアル)(?:では|によると|により)|製品仕様上)[、,\s]*", "");
+        @"^(?:(?:顧客|お客様)(?:の申告では|からの申告では|によると)|案件(?:履歴|記録)(?:では|には|によると)|(?:公式資料|マニュアル)(?:では|によると|により)|製品仕様上)[、,\s]*", "");
 }

@@ -7,6 +7,79 @@ namespace SupportCaseManager.Ai.Tests.Codex;
 
 public sealed class CodexPathAndFileTests
 {
+    [Theory]
+    [InlineData("slides.pptx", "ppt/slides/", "slide1.xml")]
+    [InlineData("workbook.xlsx", "xl/worksheets/", "sheet1.xml")]
+    public async Task AttachmentReader_IgnoresOfficeDirectoryRecordsAndRelationships(
+        string name, string partDirectory, string partName)
+    {
+        using var root = new TempDirectory();
+        var source = Path.Combine(root.Path, name);
+        using (var archive = ZipFile.Open(source, ZipArchiveMode.Create))
+        {
+            archive.CreateEntry(partDirectory);
+            archive.CreateEntry(partDirectory + "_rels/");
+            WriteZipText(archive, partDirectory + partName, "<root><p><t>確認できる本文</t></p></root>");
+            WriteZipText(archive, partDirectory + "_rels/" + partName + ".rels", "<Relationships><t>RELATIONSHIP_NOT_CONTENT</t></Relationships>");
+            WriteZipText(archive, partDirectory + "_rels/not-body.xml", "<root><t>NOT_DOCUMENT_TEXT</t></root>");
+            WriteZipText(archive, partDirectory + "binary.bin", "not XML");
+            if (name.EndsWith(".pptx"))
+            {
+                archive.CreateEntry("ppt/notesSlides/");
+                WriteZipText(archive, "ppt/notesSlides/notesSlide1.xml", "<root><p><t>ノート本文</t></p></root>");
+            }
+        }
+        var original = await File.ReadAllBytesAsync(source);
+        var scan = await new CodexCaseFileScanner().ScanAsync(root.Path);
+        var result = await new CodexAttachmentContentReader().ReadAsync(root.Path, scan.Files);
+        var content = Assert.Single(result.Contents);
+        Assert.Contains("確認できる本文", content.Content);
+        Assert.DoesNotContain("NOT_CONTENT", content.Content);
+        Assert.DoesNotContain("NOT_DOCUMENT_TEXT", content.Content);
+        if (name.EndsWith(".pptx")) Assert.Contains("ノート本文", content.Content);
+        Assert.Empty(result.Warnings);
+        Assert.Equal(original, await File.ReadAllBytesAsync(source));
+    }
+
+    [Theory]
+    [InlineData("broken.pptx", "ppt/slides/slide1.xml")]
+    [InlineData("broken.xlsx", "xl/worksheets/sheet1.xml")]
+    [InlineData("broken.docx", "word/document.xml")]
+    public async Task AttachmentReader_MalformedOfficeTextWarnsWithoutBlockingOtherInputs(string name, string partName)
+    {
+        using var root = new TempDirectory();
+        var source = Path.Combine(root.Path, name);
+        using (var archive = ZipFile.Open(source, ZipArchiveMode.Create))
+            archive.CreateEntry(partName); // Empty real XML part is corruption, unlike a directory entry.
+        await File.WriteAllTextAsync(Path.Combine(root.Path, "inquiry.txt"), "問い合わせ本文は保持する");
+        var scan = await new CodexCaseFileScanner().ScanAsync(root.Path);
+        var result = await new CodexAttachmentContentReader().ReadAsync(root.Path, scan.Files);
+        Assert.Contains("問い合わせ本文は保持する", Assert.Single(result.Contents).Content);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains(name, warning);
+        Assert.Contains("本文を読み取れません", warning);
+        Assert.DoesNotContain(result.Contents, content => content.RelativePath == name);
+    }
+
+    [Fact]
+    public async Task AttachmentReader_CancellationIsNotConvertedToAReadWarning()
+    {
+        using var root = new TempDirectory();
+        var path = Path.Combine(root.Path, "inquiry.txt");
+        await File.WriteAllTextAsync(path, "本文");
+        var scan = await new CodexCaseFileScanner().ScanAsync(root.Path);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new CodexAttachmentContentReader().ReadAsync(root.Path, scan.Files, cancellation.Token));
+    }
+
+    private static void WriteZipText(ZipArchive archive, string name, string text)
+    {
+        using var writer = new StreamWriter(archive.CreateEntry(name).Open(), new UTF8Encoding(false));
+        writer.Write(text);
+    }
+
     [Fact]
     public void TryNormalizeFileWithinRoot_AcceptsInsideAndRejectsTraversal()
     {

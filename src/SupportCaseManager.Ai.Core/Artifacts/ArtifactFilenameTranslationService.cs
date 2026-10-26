@@ -1,4 +1,6 @@
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace SupportCaseManager.Ai.Core.Artifacts;
 
@@ -51,6 +53,10 @@ public sealed class ArtifactFilenameTranslationService
         ("ライセンス", "License"),
         ("利用", "Usage"),
         ("権限", "Permissions"),
+        ("追記", "Addendum"),
+        ("更新", "Updated"),
+        ("改訂", "Revised"),
+        ("補足", "Supplement"),
     ];
 
     public ArtifactFilenamePreview CreatePreview(string sourceFilePath)
@@ -58,12 +64,21 @@ public sealed class ArtifactFilenameTranslationService
         var extension = Path.GetExtension(sourceFilePath);
         var sourceBaseName = Path.GetFileNameWithoutExtension(sourceFilePath);
         var translatedBaseName = Translate(sourceBaseName);
-        var normalized = Normalize(translatedBaseName);
         var usedFallback = false;
         var warning = string.Empty;
 
+        if (ContainsJapanese(translatedBaseName))
+        {
+            // Preserve translated words and source identifiers instead of discarding the whole name.
+            translatedBaseName = Regex.Replace(translatedBaseName,
+                @"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uff66-\uff9f]+", match =>
+                    $" Untranslated_{Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(match.Value)))[..12]} ");
+            usedFallback = true;
+            warning = "ファイル名の一部を英訳できませんでした。未翻訳部分を識別子に置き換え、英訳できた語句・番号・日付は保持しています。必要に応じて出力ファイル名を編集してください。";
+        }
+
+        var normalized = Normalize(translatedBaseName);
         if (string.IsNullOrWhiteSpace(sourceBaseName)
-            || ContainsJapanese(translatedBaseName)
             || string.IsNullOrWhiteSpace(normalized))
         {
             usedFallback = true;
@@ -115,7 +130,7 @@ public sealed class ArtifactFilenameTranslationService
             var normalized = character switch
             {
                 var c when char.IsAsciiLetterOrDigit(c) => c,
-                '_' or '-' or '.' => character,
+                '_' or '-' or '.' or '~' => character,
                 var c when char.IsWhiteSpace(c) => '_',
                 _ => '_',
             };
@@ -165,7 +180,8 @@ public sealed class ArtifactFilenameTranslationService
             char.IsLetter(character)
             && (character is >= '\u3040' and <= '\u30ff'
                 or >= '\u3400' and <= '\u9fff'
-                or >= '\uf900' and <= '\ufaff'));
+                or >= '\uf900' and <= '\ufaff'
+                or >= '\uff66' and <= '\uff9f'));
     }
 
     private static string TrimToMaximumLength(string value, int maximumLength)

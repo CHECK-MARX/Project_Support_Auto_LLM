@@ -9,6 +9,25 @@ public sealed class ExcelTranslationJsonParser
         PropertyNameCaseInsensitive = true,
     };
 
+    public ExcelTranslationParseResult ParseIdentified(string response, IReadOnlyList<ExcelTranslationEntry> expectedEntries)
+    {
+        var expected = expectedEntries.Where(static entry => entry.ShouldTranslate).ToArray();
+        var parsed = ArtifactTranslationBatchContract.Parse(response, expected.Select(ArtifactTranslationBatchContract.Id));
+        if (parsed.Errors.Count > 0)
+            return new ExcelTranslationParseResult { Errors = parsed.Errors };
+        // Identity and source text come exclusively from the approved plan, never from model output.
+        return new ExcelTranslationParseResult
+        {
+            Succeeded = true,
+            Values = expected.Select(entry => new ExcelTranslationValue
+            {
+                Sheet = entry.Sheet, Cell = entry.Cell,
+                SourceText = entry.SourceText,
+                TranslatedText = parsed.Translations[ArtifactTranslationBatchContract.Id(entry)],
+            }).ToArray(),
+        };
+    }
+
     public ExcelTranslationParseResult Parse(
         string response,
         IReadOnlyList<ExcelTranslationEntry> expectedEntries)
@@ -34,6 +53,12 @@ public sealed class ExcelTranslationJsonParser
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var value in values)
         {
+            if (value is null)
+            {
+                errors.Add("翻訳結果にnull項目があります。");
+                continue;
+            }
+
             var key = Key(value.Sheet, value.Cell);
             if (!seen.Add(key))
             {

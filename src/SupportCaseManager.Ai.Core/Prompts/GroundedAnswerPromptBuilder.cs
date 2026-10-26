@@ -342,7 +342,8 @@ public static class GroundedAnswerPromptBuilder
     // Ordinary observation/recovery contracts keep their existing prompt unchanged.
     internal static bool NeedsRelationalContract(FactResolutionResult? resolution) =>
         ImportantFactContract.Select(resolution).Any(fact =>
-            fact.Key is "ImportantInquiryOperation" or "ImportantInquiryTransition" ||
+            fact.Key is "ImportantInquiryOperation" or "ImportantInquiryTransition" or "AuditedCaseFact" ||
+            fact.Key == "ImportantInquiryIntent" && fact.Operation is "依頼軸・条件" or "提供依頼" ||
             fact.SourceType == "CurrentCase" &&
             ImportantFactContract.DescribeForGeneration(fact).Contains(
                 "メーカー原文未確認のCurrentCase案件履歴", StringComparison.Ordinal));
@@ -467,7 +468,11 @@ public static class GroundedAnswerPromptBuilder
         foreach (var fact in important.Where(fact => fact.Value.Length <= 250 &&
                      redactor.RedactForCloud(fact.Value) == fact.Value))
         {
-            if (fact.Key is "ImportantInquiryOperation" or "ImportantInquiryTransition" &&
+            if (fact.Key == "AuditedCaseFact")
+                statements.Add($"{(fact.Explanation == "AuditedAttachment" ? "監査済み添付" : "案件履歴")}には「{fact.Value.TrimEnd('。')}」と記録されています。製品仕様の証明ではありません。");
+            else if (fact.Key == "ImportantInquiryIntent" && fact.Operation is "依頼軸・条件" or "提供依頼")
+                statements.Add($"お客様のご依頼・確認事項は「{fact.Value.TrimEnd('。')}」です。");
+            else if (fact.Key is "ImportantInquiryOperation" or "ImportantInquiryTransition" &&
                 (Regex.IsMatch(fact.Value, @"検討|計画|予定") ||
                  Regex.IsMatch(request.InquiryText, Regex.Escape(fact.Value) + @"[^。\r\n]{0,30}(?:検討|計画|予定)")))
                 statements.Add($"お客様は「{fact.Value}」という計画を提示されています。");
@@ -506,20 +511,22 @@ public static class GroundedAnswerPromptBuilder
                 source.SourceType == fact.SourceType && source.Text.Contains(fact.Value, StringComparison.Ordinal));
             if (source is null || fact.Value.Length > 500 || redactor.RedactForCloud(fact.Value) != fact.Value) continue;
             var version = Regex.Match(source.Text, @"\b(?<version>20\d{2}\.\d+)\s+Release\s+notes\b", RegexOptions.IgnoreCase);
-            statements.Add($"選択した{(version.Success ? version.Groups["version"].Value + "版の" : string.Empty)}公式資料には「{fact.Value}」と記載されています。");
+                statements.Add($"選択した{(version.Success ? version.Groups["version"].Value + "版の" : string.Empty)}{(source.SourceType == "OfficialDoc" ? "公式資料" : "Manual資料")}には「{fact.Value}」と記載されています。");
         }
         if (statements.Count == 0) return null;
         var unknown = HasConditionalHistory(request.FactResolution)
             ? "案件履歴に記録された修正の対象版・個別条件への適用は、メーカー原文が未確認のため断定できません。"
             : important.Any(fact => fact.Key == "ImportantInquiryIntent" && fact.Value.Contains("enabled", StringComparison.OrdinalIgnoreCase))
                 ? "既定enabledフィールドの変更有無や比較資料との記述差の理由は、提示根拠だけでは断定できません。"
-                : "個別環境への適用可否と移設・移行の留意点は、提示根拠だけでは断定できません。";
+                : important.Any(fact => fact.Key is "ImportantInquiryOperation" or "ImportantInquiryTransition")
+                    ? "個別環境への適用可否と移設・移行の留意点は、提示根拠だけでは断定できません。"
+                : "ご質問の製品仕様・対象条件への適用は、提示根拠だけでは断定できません。";
         return "確認できる事実: " + string.Concat(statements.Distinct(StringComparer.Ordinal)) +
             "現時点で断定できない事項: " + unknown + "追加で必要な確認: " +
             (HasConditionalHistory(request.FactResolution)
                 ? "案件履歴のメーカー回答原文と、今回の対象版・検出条件への修正の適用範囲をメーカーへ確認してください。"
                 : options.Length > 0
-                    ? "各選択肢の対象製品版、移設先の構成と個別環境への適用条件をメーカーへ確認してください。"
+                    ? "各選択肢の対象製品版、対象構成と個別環境への適用条件をメーカーへ確認してください。"
                     : string.Empty);
     }
 
@@ -596,13 +603,13 @@ public static class GroundedAnswerPromptBuilder
             if (DirectApplicability(inquiry, source.Text) == "NO") continue;
             var selectedFacts = resolution?.ResolvedFacts.Where(fact =>
                 fact.Key == "SelectedOfficialStatement" && fact.Status == FactStatuses.Confirmed &&
-                fact.SourceType == "OfficialDoc" && source.SourceType == "OfficialDoc" &&
+                fact.SourceType is "OfficialDoc" or "Manual" && source.SourceType == fact.SourceType &&
                 fact.EvidenceId == source.SourceId && source.Text.Contains(fact.Value, StringComparison.Ordinal))
                 .Select(static fact => fact.Value).ToArray() ?? [];
             // A verified question-specific fact is stronger than surface matches
             // on product/version in unrelated release-note sections.
             var pieces = (selectedFacts.Length > 0 ? selectedFacts :
-                Regex.Split(source.Text, @"(?<=[。!?])\s*|(?<=\.)(?!\d)\s+|[\r\n]+"))
+                SelectedOfficialFactProjector.VerbatimSpans(source.Text))
                 .Select(static piece => piece.Trim())
                 .Where(static piece => piece.Length is >= 20 and <= 500)
                 .Distinct(StringComparer.Ordinal)
@@ -657,8 +664,8 @@ public static class GroundedAnswerPromptBuilder
          AnswerQualityEvaluator.SourceMatchesInquiry(subject, excerpt, source.SourceType,
              AnswerQualityEvaluator.CreateSupportCatalog(source.ProductName)) && SharesCitationSubject(subject, excerpt)) ||
         (resolution?.ResolvedFacts.Any(fact => fact.Key == "SelectedOfficialStatement" &&
-            fact.Status == FactStatuses.Confirmed && fact.SourceType == "OfficialDoc" &&
-            source.SourceType == "OfficialDoc" && fact.EvidenceId == source.SourceId &&
+            fact.Status == FactStatuses.Confirmed && fact.SourceType is "OfficialDoc" or "Manual" &&
+            source.SourceType == fact.SourceType && fact.EvidenceId == source.SourceId &&
             source.Text.Contains(fact.Value, StringComparison.Ordinal) &&
             (fact.Value.Contains(excerpt, StringComparison.Ordinal) || excerpt.Contains(fact.Value, StringComparison.Ordinal)) &&
             SelectedOfficialFactProjector.SharesFactSubject(fact.Value, subject)) ?? false);
