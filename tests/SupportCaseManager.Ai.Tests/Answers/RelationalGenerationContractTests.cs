@@ -20,7 +20,8 @@ public sealed class RelationalGenerationContractTests
         var repair = GroundedAnswerPromptBuilder.Build(request, [source],
             "検証失敗: 移設元と移設先が欠落\n再生成必須Fact: duplicate content");
 
-        Assert.Contains("customerReplyDraftの冒頭", first.UserPrompt);
+        Assert.Contains("UNTRUSTED_CUSTOMER_AND_CASE_INPUT_JSON", first.UserPrompt);
+        Assert.Contains("生成契約（customerReplyDraft）", first.UserPrompt);
         Assert.Contains("クラウドからAzureのVMへの移設を検討", first.UserPrompt);
         Assert.Contains("fullTextSHA256=", repair.UserPrompt);
         Assert.Contains($"length={span.Length}", repair.UserPrompt);
@@ -40,12 +41,15 @@ public sealed class RelationalGenerationContractTests
     }
 
     [Fact]
-    public void MigrationChoices_RemainQuestionsInRequiredOpening()
+    public void MigrationChoices_RemainUntrustedPromptData_NotSchemaInstructions()
     {
         var request = Request("既存クラウドからAzureのVMへの移設を検討しています。以下の選択肢の可否を教えてください。\n1. Azure SQL Database\n2. Azure SQL Managed Instance\n3. SQL Server on Windows VM", []);
         var prompt = GroundedAnswerPromptBuilder.Build(request, []);
         var pattern = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("customerReplyDraft").GetProperty("pattern").GetString()!;
-        Assert.Contains("お問い合わせの選択肢はAzure SQL Database、Azure SQL Managed Instance、SQL Server on Windows VMであり、個別環境への適用可否は未確認です。", pattern);
+        Assert.Contains("Azure SQL Database", prompt.UserPrompt);
+        Assert.Contains("Azure SQL Managed Instance", prompt.UserPrompt);
+        Assert.Contains("SQL Server on Windows VM", prompt.UserPrompt);
+        Assert.DoesNotContain("Azure SQL Database", pattern);
         Assert.DoesNotContain("利用可能です", pattern);
         Assert.DoesNotContain("正式サポート", pattern);
     }
@@ -60,7 +64,7 @@ public sealed class RelationalGenerationContractTests
             [Official(source.SourceId, span)]);
         var prompt = GroundedAnswerPromptBuilder.Build(request, [source]);
         Assert.Contains("現在版・移行元=2028.2; 移行先=2029.2; 比較資料に言及した版=2029.1", prompt.UserPrompt);
-        Assert.Contains("customerReplyDraftの冒頭", prompt.UserPrompt);
+        Assert.Contains("UNTRUSTED_CUSTOMER_AND_CASE_INPUT_JSON", prompt.UserPrompt);
         Assert.Contains("version=2029.2 Release notes", prompt.UserPrompt);
         Assert.Contains("first integration build analysisより前", prompt.UserPrompt);
         Assert.Contains(span, prompt.UserPrompt);
@@ -77,17 +81,15 @@ public sealed class RelationalGenerationContractTests
         Assert.Contains("メーカー原文は未確認ですが、案件履歴には9.8.7で不具合が修正されたとのメーカー回答が記録されています。", prompt.UserPrompt);
         Assert.DoesNotContain("sourceType=OfficialDoc", prompt.UserPrompt);
         Assert.Contains("version=9.8.2", prompt.UserPrompt);
-        Assert.Contains("顧客申告の既知事項を再質問しない", prompt.UserPrompt);
+        Assert.Contains("顧客の既知申告を再質問しない", prompt.UserPrompt);
         Assert.Contains("ＣＲＯＳヘッダ", prompt.UserPrompt);
         Assert.DoesNotContain("CR-Oヘッダ", prompt.UserPrompt);
         var pattern = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("customerReplyDraft").GetProperty("pattern").GetString()!;
         const string required = "確認できる事実: メーカー原文は未確認ですが、案件履歴には9.8.7で不具合が修正されたとのメーカー回答が記録されています。お客様からは「ＣＲＯＳヘッダを付与していない」との申告があります。誤検知の可能性についてご相談をいただいています。お客様の対象版は9.8.2 HF1です。現時点で断定できない事項: 案件履歴に記録された修正の対象版・個別条件への適用は、メーカー原文が未確認のため断定できません。追加で必要な確認: 案件履歴のメーカー回答原文と、今回の対象版・検出条件への修正の適用範囲をメーカーへ確認してください。";
-        Assert.Matches(pattern, required);
-        Assert.Matches(pattern, required + "検出条件の詳細も確認してください。");
-        Assert.DoesNotMatch(pattern, required + "9.8.7で修正されています。");
-        Assert.DoesNotMatch(pattern, required + "CR-Oヘッダを確認してください。");
-        Assert.DoesNotMatch(pattern, required.Replace("ＣＲＯＳヘッダ", "CR-Oヘッダ"));
-        Assert.DoesNotMatch(pattern, required.Replace("メーカー原文は未確認ですが、案件履歴には", "公式資料では"));
+        Assert.Matches(pattern, "確認できる事実: " + required + "現時点で断定できない事項: 適用条件は未確認です。追加で必要な確認: メーカー原文を確認してください。");
+        Assert.DoesNotMatch(pattern, required);
+        Assert.DoesNotContain("ＣＲＯＳヘッダ", pattern);
+        Assert.DoesNotContain("CR-Oヘッダ", pattern);
         Assert.Equal(6, prompt.OutputSchema.Value.GetProperty("required").GetArrayLength());
         var confirmations = prompt.OutputSchema.Value.GetProperty("properties").GetProperty("needConfirmations");
         Assert.Equal(1, confirmations.GetProperty("minItems").GetInt32());
