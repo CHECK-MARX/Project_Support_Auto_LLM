@@ -23,8 +23,8 @@ public sealed class RelationalGenerationContractTests
         Assert.Contains("UNTRUSTED_CUSTOMER_AND_CASE_INPUT_JSON", first.UserPrompt);
         Assert.Contains("生成契約（customerReplyDraft）", first.UserPrompt);
         Assert.Contains("クラウドからAzureのVMへの移設を検討", first.UserPrompt);
-        Assert.Contains("fullTextSHA256=", repair.UserPrompt);
-        Assert.Contains($"length={span.Length}", repair.UserPrompt);
+        Assert.Contains("contentHash", repair.UserPrompt);
+        Assert.Contains($"\"sourceSpanLength\":{span.Length}", repair.UserPrompt);
         Assert.Contains(span, repair.UserPrompt);
         Assert.DoesNotContain("Unrelated browser", first.UserPrompt);
         Assert.DoesNotContain("duplicate content", repair.UserPrompt);
@@ -78,7 +78,7 @@ public sealed class RelationalGenerationContractTests
             [new ResolvedFact { Key = "CaseObservation", Status = "Candidate", SourceType = "CurrentCase",
                 EvidenceId = "case:history", Value = "メーカーより9.8.7で不具合が修正されたとの回答がございました。" }]);
         var prompt = GroundedAnswerPromptBuilder.Build(request, [], "検証失敗: 帰属欠落");
-        Assert.Contains("メーカー原文は未確認ですが、案件履歴には9.8.7で不具合が修正されたとのメーカー回答が記録されています。", prompt.UserPrompt);
+        Assert.Contains("9.8.7で不具合修正とのメーカー回答があったという案件記録。メーカー原文は未確認", prompt.UserPrompt);
         Assert.DoesNotContain("sourceType=OfficialDoc", prompt.UserPrompt);
         Assert.Contains("version=9.8.2", prompt.UserPrompt);
         Assert.Contains("顧客の既知申告を再質問しない", prompt.UserPrompt);
@@ -86,8 +86,8 @@ public sealed class RelationalGenerationContractTests
         Assert.DoesNotContain("CR-Oヘッダ", prompt.UserPrompt);
         var pattern = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("customerReplyDraft").GetProperty("pattern").GetString()!;
         const string required = "確認できる事実: メーカー原文は未確認ですが、案件履歴には9.8.7で不具合が修正されたとのメーカー回答が記録されています。お客様からは「ＣＲＯＳヘッダを付与していない」との申告があります。誤検知の可能性についてご相談をいただいています。お客様の対象版は9.8.2 HF1です。現時点で断定できない事項: 案件履歴に記録された修正の対象版・個別条件への適用は、メーカー原文が未確認のため断定できません。追加で必要な確認: 案件履歴のメーカー回答原文と、今回の対象版・検出条件への修正の適用範囲をメーカーへ確認してください。";
-        Assert.Matches(pattern, "確認できる事実: " + required + "現時点で断定できない事項: 適用条件は未確認です。追加で必要な確認: メーカー原文を確認してください。");
-        Assert.DoesNotMatch(pattern, required);
+        Assert.Matches(pattern, "確認できる事実: 事実を記載。現時点で断定できない事項: 適用条件は未確認です。追加で必要な確認: メーカー原文を確認してください。");
+        Assert.DoesNotContain("9.8.7", pattern);
         Assert.DoesNotContain("ＣＲＯＳヘッダ", pattern);
         Assert.DoesNotContain("CR-Oヘッダ", pattern);
         Assert.Equal(6, prompt.OutputSchema.Value.GetProperty("required").GetArrayLength());
