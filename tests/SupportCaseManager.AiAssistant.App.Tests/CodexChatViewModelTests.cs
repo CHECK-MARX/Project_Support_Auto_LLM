@@ -2297,8 +2297,18 @@ public sealed class CodexChatViewModelTests
         Assert.Contains("Project_Settings_Guide_EN.xlsx", viewModel.PendingManufacturerAttachmentText, StringComparison.Ordinal);
 
         viewModel.ArtifactOutputFileName = "Translated_File_EN.xlsx";
+        var turnCountBeforeManufacturerAsk = fakeClient.TurnCount;
         viewModel.GenerateManufacturerMailCommand.Execute(null);
-        await WaitUntilAsync(() => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft), TimeSpan.FromSeconds(5));
+        await WaitUntilAsync(
+            () => !string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft)
+                || (fakeClient.TurnCount > turnCountBeforeManufacturerAsk
+                    && viewModel.ArtifactStateText == "警告あり"),
+            TimeSpan.FromSeconds(15));
+        Assert.False(
+            string.IsNullOrWhiteSpace(viewModel.EnglishManufacturerDraft),
+            $"Manufacturer draft was not assigned. State={viewModel.ArtifactStateText}; "
+            + $"Warning={viewModel.ArtifactWarnings}; Error={viewModel.ErrorText}; "
+            + $"Turns={fakeClient.TurnCount - turnCountBeforeManufacturerAsk}.");
 
         Assert.Contains("Project_Settings_Guide_EN.xlsx", fakeClient.LastTurnText, StringComparison.Ordinal);
         Assert.Contains("PRODUCT_MAIL_RULE: preserve the confirmed recipient greeting.", fakeClient.LastTurnText, StringComparison.Ordinal);

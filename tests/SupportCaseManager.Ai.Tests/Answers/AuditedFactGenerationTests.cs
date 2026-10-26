@@ -34,8 +34,9 @@ public sealed class AuditedFactGenerationTests
             Assert.Contains("Dashboardサービスを停止", prompt.UserPrompt);
             Assert.Contains("製品仕様の証明ではありません", prompt.UserPrompt);
             var pattern = prompt.OutputSchema!.Value.GetProperty("properties").GetProperty("customerReplyDraft").GetProperty("pattern").GetString()!;
-            Assert.Contains("Dashboard", pattern);
-            Assert.Contains("24H2", pattern);
+            Assert.DoesNotContain("Dashboard", pattern);
+            Assert.DoesNotContain("24H2", pattern);
+            Assert.Contains("UNTRUSTED_FACT_RESOLUTION_JSON", prompt.UserPrompt);
             Assert.True(prompt.Diagnostics.FinalPromptChars <= 8000);
         }
         Assert.NotNull(ImportantFactContract.Validate(resolution, "確認できる事実: 設定済み。"));
