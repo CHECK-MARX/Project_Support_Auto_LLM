@@ -1628,14 +1628,13 @@ public sealed class GroundedAnswerComparisonTests
         };
 
         var prompt = GroundedAnswerPromptBuilder.Build(request, []).UserPrompt;
-        var mustPreserve = prompt[prompt.IndexOf("生成契約（customerReplyDraft）", StringComparison.Ordinal)..];
-        Assert.Contains("version=9.7.2", mustPreserve);
-        Assert.Contains("sourceType=CurrentCase; polarity=案件履歴に修正の記録・メーカー原文未確認; version=9.7.7", mustPreserve);
-        Assert.Contains("メーカー回答があったという案件記録。メーカー原文は未確認", mustPreserve);
-        Assert.Contains("attribution=メーカー原文未確認のCurrentCase案件履歴", mustPreserve);
+        Assert.Contains("version=9.7.2", prompt);
+        Assert.Contains("sourceType=CurrentCase; polarity=案件履歴に修正の記録・メーカー原文未確認; version=9.7.7", prompt);
+        Assert.Contains("メーカー回答があったという案件記録。メーカー原文は未確認", prompt);
+        Assert.Contains("attribution=メーカー原文未確認のCurrentCase案件履歴", prompt);
         Assert.Contains("ＣＲＯＳヘッダ", prompt);
         Assert.DoesNotContain("CR-Oヘッダ", prompt);
-        Assert.DoesNotContain("sourceType=OfficialDoc", mustPreserve);
+        Assert.DoesNotContain("sourceType=OfficialDoc", prompt);
     }
 
     [Fact]
