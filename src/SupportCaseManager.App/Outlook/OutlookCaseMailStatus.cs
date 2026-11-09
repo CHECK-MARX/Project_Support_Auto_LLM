@@ -33,6 +33,11 @@ public sealed record OutlookMailCandidate(
     public string NotificationReason { get; init; } = string.Empty;
     public bool IsLinkedCustomerInquiry { get; init; }
     public bool IsRelayedOutbound { get; init; }
+    public string OriginalSender { get; init; } = string.Empty;
+    public bool IsAutomaticResponse { get; init; }
+    public string AutomaticResponseReason { get; init; } = string.Empty;
+    public OutlookManufacturerMessageKind ManufacturerMessageKind { get; init; }
+    public string ManufacturerMessageSummary { get; init; } = string.Empty;
 }
 
 public sealed record OutlookCaseContacts(
@@ -42,6 +47,7 @@ public sealed record OutlookCaseContacts(
 public sealed record OutlookStatusLine(string Text, OutlookMailReference? Mail = null)
 {
     public string? Explanation { get; init; }
+    public bool IsInformational { get; init; }
 }
 
 public sealed record OutlookCaseMailStatus(
@@ -56,6 +62,11 @@ public sealed record OutlookCaseMailStatus(
 {
     public string ClassificationReason { get; init; } = string.Empty;
     public int SkippedSystemNotificationCount { get; init; }
+    public OutlookMailReference? LatestAutomaticResponse { get; init; }
+    public int AutomaticResponseCount { get; init; }
+    public OutlookStatusLine Notification { get; init; } = new(string.Empty);
+    public DateTime? CheckedAtUtc { get; init; }
+    public string RefreshError { get; init; } = string.Empty;
 
     public static OutlookCaseMailStatus Message(string message) =>
         new(null, null, null, null, null, "UNAVAILABLE", new OutlookStatusLine(message), new OutlookStatusLine(string.Empty));
@@ -117,25 +128,32 @@ public static class OutlookCaseMailClassifier
     {
         var caseCandidates = candidates.Where(item => string.Equals(item.Mail.SupportId, key.NormalizedSupportId,
             StringComparison.OrdinalIgnoreCase)).ToList();
+        var incomingContacts = WithGroundedManufacturerRecipients(key, contacts, caseCandidates);
         var matched = caseCandidates
-            .Where(static item => !item.IsSystemNotification)
+            .Where(static item => !item.IsSystemNotification && !item.IsAutomaticResponse)
             .OrderByDescending(item => item.Mail.Time)
             .ToList();
         OutlookMailReference? customerIn = null, customerOut = null, manufacturerIn = null, manufacturerOut = null, unclassified = null;
         var reasons = new Dictionary<OutlookMailReference, string>();
+        var manufacturerContent = new Dictionary<OutlookMailReference, OutlookMailCandidate>();
         foreach (var candidate in matched)
         {
             var sourceAddresses = candidate.IsRelayedOutbound ? candidate.CopyAddresses
                 : candidate.IsInbound && candidate.Mail.Sender.Equals("noreply@salesforce.com", StringComparison.OrdinalIgnoreCase)
-                ? candidate.CopyAddresses
+                ? candidate.OriginalSender.Length > 0 ? [candidate.OriginalSender] : candidate.CopyAddresses
                 : candidate.Addresses.Concat(candidate.CopyAddresses);
             var addresses = sourceAddresses
                 .Where(static address => !string.IsNullOrWhiteSpace(address))
                 .Select(static address => address.Trim().ToLowerInvariant())
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var matches = addresses.Select(address => ClassifyAddress(address, contacts,
-                candidate.IsRelayedOutbound ? key.Product : null)).ToArray();
+            // A copied recipient is not proof of who authored a portal message.
+            // Published support identities can supplement missing case contacts
+            // only for an actual inbound sender or explicit outbound recipients.
+            var senderProduct = !candidate.IsInbound || !candidate.Mail.Sender.Equals("noreply@salesforce.com", StringComparison.OrdinalIgnoreCase)
+                || candidate.OriginalSender.Length > 0 ? key.Product : null;
+            var matches = addresses.Select(address => ClassifyAddress(address, candidate.IsInbound ? incomingContacts : contacts,
+                candidate.IsRelayedOutbound ? key.Product : null, senderProduct, !candidate.IsInbound)).ToArray();
             var parties = matches.Select(static match => match.Party).Distinct().ToArray();
             if (parties.Length != 1 || parties[0] == Party.Unknown)
             {
@@ -152,27 +170,42 @@ public static class OutlookCaseMailClassifier
             else
             {
                 reasons[candidate.Mail] = matches.MaxBy(static match => match.Rank)!.Reason;
-                if (candidate.IsInbound) manufacturerIn ??= candidate.Mail;
+                if (candidate.IsInbound)
+                {
+                    manufacturerIn ??= candidate.Mail;
+                    manufacturerContent[candidate.Mail] = candidate;
+                }
                 else manufacturerOut ??= candidate.Mail;
             }
         }
 
         var clock = now ?? DateTime.Now;
+        var automatic = caseCandidates.Where(static item => item.IsInbound && item.IsAutomaticResponse && !item.IsSystemNotification)
+            .OrderByDescending(static item => item.Mail.Time).ToArray();
+        var latestAutomatic = automatic.FirstOrDefault();
+        OutlookStatusLine Line(OutlookMailReference mail, string text) =>
+            new($"{FormatTime(mail.Time, clock)} {text}", mail);
+        var notification = latestAutomatic is not null && (manufacturerIn is null || latestAutomatic.Mail.Time > manufacturerIn.Time)
+            ? Line(latestAutomatic.Mail, "自動応答・受付通知（実返信に含めません）") with { Explanation = latestAutomatic.AutomaticResponseReason, IsInformational = true }
+            : new OutlookStatusLine(string.Empty);
         var latest = new[] { customerIn, customerOut, manufacturerIn, manufacturerOut, unclassified }
             .Where(static mail => mail is not null)
             .MaxBy(static mail => mail!.Time);
         if (latest is null)
         {
-            return new(null, null, null, null, null, "NO_MAIL", new OutlookStatusLine("メールなし"), new OutlookStatusLine(string.Empty))
+            return new(null, null, null, null, null, latestAutomatic is null ? "NO_MAIL" : "AUTOMATIC_RESPONSE_ONLY",
+                latestAutomatic is null ? new OutlookStatusLine("メールなし")
+                    : Line(latestAutomatic.Mail, "自動応答・受付通知のみ（実返信は未確認）") with { Explanation = latestAutomatic.AutomaticResponseReason, IsInformational = true },
+                new OutlookStatusLine(string.Empty))
             {
                 ClassificationReason = caseCandidates.Any(static item => item.IsSystemNotification)
                     ? "TOYO_SALESFORCE_CASE_NOTIFICATION" : "NO_MATCHING_MAIL",
-                SkippedSystemNotificationCount = caseCandidates.Count(static item => item.IsSystemNotification)
+                SkippedSystemNotificationCount = caseCandidates.Count(static item => item.IsSystemNotification),
+                LatestAutomaticResponse = latestAutomatic?.Mail,
+                AutomaticResponseCount = automatic.Length
             };
         }
 
-        OutlookStatusLine Line(OutlookMailReference mail, string text) =>
-            new($"{FormatTime(mail.Time, clock)} {text}", mail);
         var customerNeedsReply = customerIn is not null && (customerOut is null || customerOut.Time < customerIn.Time);
         OutlookStatusLine primary, secondary = new(string.Empty);
         string state;
@@ -197,9 +230,31 @@ public static class OutlookCaseMailClassifier
         }
         else if (latest == manufacturerIn)
         {
-            primary = Line(latest, manufacturerOut is not null && manufacturerOut.Time < latest.Time ? "メーカーから回答" : "メーカーから受信");
-            if (customerNeedsReply) secondary = new OutlookStatusLine("お客様未返信");
-            state = customerNeedsReply ? "CUSTOMER_NEEDS_REPLY" : "MANUFACTURER_NEEDS_REPLY";
+            var content = manufacturerContent[latest];
+            if (content.ManufacturerMessageKind == OutlookManufacturerMessageKind.ProgressOnly)
+            {
+                primary = Line(latest, content.ManufacturerMessageSummary) with
+                {
+                    IsInformational = true,
+                    Explanation = "本文はメーカー内の引継ぎ・調査進捗の連絡で、追加依頼は検出されませんでした。技術回答は待ちの状態です。ダブルクリックで原文を確認できます。"
+                };
+                var earlier = manufacturerContent.Values.Where(item => item.ManufacturerMessageKind != OutlookManufacturerMessageKind.ProgressOnly
+                        && (manufacturerOut is null || item.Mail.Time > manufacturerOut.Time))
+                    .MaxBy(static item => item.Mail.Time);
+                if (earlier is not null)
+                    secondary = Line(earlier.Mail, "以前のメーカー受信も要確認" + (customerNeedsReply ? " / お客様未返信" : string.Empty));
+                else if (customerNeedsReply) secondary = Line(customerIn!, "お客様未返信");
+                state = earlier is not null ? "MANUFACTURER_NEEDS_REPLY"
+                    : customerNeedsReply ? "CUSTOMER_NEEDS_REPLY" : "WAITING_MANUFACTURER_REPLY";
+            }
+            else
+            {
+                primary = Line(latest, content.ManufacturerMessageKind == OutlookManufacturerMessageKind.ActionRequested
+                    ? "メーカーから追加依頼（要確認）"
+                    : (manufacturerOut is not null && manufacturerOut.Time < latest.Time ? "メーカーから返信" : "メーカーから受信") + "（内容確認）");
+                if (customerNeedsReply) secondary = Line(customerIn!, "お客様未返信");
+                state = customerNeedsReply ? "CUSTOMER_NEEDS_REPLY" : "MANUFACTURER_NEEDS_REPLY";
+            }
         }
         else if (latest == manufacturerOut)
         {
@@ -217,6 +272,8 @@ public static class OutlookCaseMailClassifier
             {
                 primary = Line(latest, manufacturerIn is not null ? "メーカーへ返信済み"
                     : matched.First(item => item.Mail == latest).IsRelayedOutbound ? "メーカーへ送信済み" : "メーカーへ確認済み");
+                if (customerOut is not null)
+                    secondary = Line(customerOut, customerIn is not null && customerIn.Time < customerOut.Time ? "お客様へ返信済み" : "お客様へ送信済み");
                 state = "WAITING_MANUFACTURER_REPLY";
             }
         }
@@ -229,7 +286,10 @@ public static class OutlookCaseMailClassifier
         return new(customerIn, customerOut, manufacturerIn, manufacturerOut, unclassified, state, primary, secondary)
         {
             ClassificationReason = primary.Mail is not null && reasons.TryGetValue(primary.Mail, out var reason) ? reason : "UNKNOWN",
-            SkippedSystemNotificationCount = caseCandidates.Count(static item => item.IsSystemNotification)
+            SkippedSystemNotificationCount = caseCandidates.Count(static item => item.IsSystemNotification),
+            LatestAutomaticResponse = latestAutomatic?.Mail,
+            AutomaticResponseCount = automatic.Length,
+            Notification = notification
         };
     }
 
@@ -241,10 +301,30 @@ public static class OutlookCaseMailClassifier
             : displayed.ToString("yyyy/MM/dd HH:mm", CultureInfo.InvariantCulture);
     }
 
-    private static PartyMatch ClassifyAddress(string address, OutlookCaseContacts contacts, string? relayedProduct)
+    private static OutlookCaseContacts WithGroundedManufacturerRecipients(OutlookCaseKey key,
+        OutlookCaseContacts contacts, IReadOnlyList<OutlookMailCandidate> candidates)
+    {
+        var manufacturers = new HashSet<string>(contacts.Manufacturer, StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in candidates.Where(static item => !item.IsInbound && !item.IsSystemNotification && !item.IsAutomaticResponse))
+        {
+            var addresses = (candidate.IsRelayedOutbound ? candidate.CopyAddresses : candidate.Addresses.Concat(candidate.CopyAddresses))
+                .Where(static address => !string.IsNullOrWhiteSpace(address)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            // Only recipients already classifiable under the existing outbound rules
+            // can establish a contact, and only inside this exact case. Unknown or
+            // customer/mixed recipients cannot promote an incoming portal message.
+            if (addresses.Length > 0 && addresses.All(address => ClassifyAddress(address, contacts,
+                    candidate.IsRelayedOutbound ? key.Product : null).Party == Party.Manufacturer))
+                manufacturers.UnionWith(addresses);
+        }
+        return new(contacts.Customer, manufacturers);
+    }
+
+    private static PartyMatch ClassifyAddress(string address, OutlookCaseContacts contacts, string? relayedProduct, string? senderProduct = null, bool isOutbound = false)
     {
         if (contacts.Customer.Contains(address)) return new(Party.Customer, "EXACT_CUSTOMER_ADDRESS", 2);
         if (contacts.Manufacturer.Contains(address)) return new(Party.Manufacturer, "EXACT_MANUFACTURER_ADDRESS", 2);
+        if (senderProduct is not null && OutlookManufacturerSupport.IsPublishedSupportAddress(senderProduct, address))
+            return new(Party.Manufacturer, isOutbound ? "PUBLISHED_PRODUCT_SUPPORT_RECIPIENT" : "PUBLISHED_PRODUCT_SUPPORT_SENDER", 1);
         var at = address.LastIndexOf('@');
         if (at < 0) return new(Party.Unknown, "UNKNOWN", 0);
         var domain = address[(at + 1)..];

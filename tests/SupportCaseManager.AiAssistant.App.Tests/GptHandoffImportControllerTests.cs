@@ -28,6 +28,34 @@ public sealed class GptHandoffImportControllerTests
     }
 
     [Fact]
+    public async Task ChatGptCopiedEscapedMarkers_ShowAllSectionsInPreviewAndSaveAfterConfirmation()
+    {
+        using var temp = new TemporaryCaseFolder();
+        var clipboard = ClipboardText()
+            .Replace(GptHandoffFormat.StartMarker, "<<\\<AI_HANDOFF_V1>>>", StringComparison.Ordinal)
+            .Replace(GptHandoffFormat.EndMarker, "<<\\<END_AI_HANDOFF_V1>>>", StringComparison.Ordinal);
+        var previewCalls = 0;
+        var controller = Controller(clipboard, snapshot =>
+        {
+            previewCalls++;
+            Assert.Equal(7, snapshot.Sections.Count);
+            Assert.Equal("設定手順を確認済み", snapshot[GptHandoffSection.NewlyEstablishedFacts]);
+            Assert.False(File.Exists(Path.Combine(temp.Path, "GPT連携内容_00018303.txt")));
+            return true;
+        });
+
+        var result = await controller.ExecuteAsync(Case(temp.Path));
+
+        Assert.Equal(GptHandoffImportStatus.Imported, result.ImportResult?.Status);
+        Assert.True(result.PreviewShown);
+        Assert.Equal(1, previewCalls);
+        var saved = await File.ReadAllTextAsync(Path.Combine(temp.Path, "GPT連携内容_00018303.txt"));
+        Assert.True(GptHandoffParser.TryBuildEffectiveSnapshot(saved, out var effective, out var count));
+        Assert.Equal(1, count);
+        Assert.Equal("設定手順を確認済み", effective[GptHandoffSection.NewlyEstablishedFacts]);
+    }
+
+    [Fact]
     public async Task PreviewCancelled_DoesNotCreateCaseFile()
     {
         using var temp = new TemporaryCaseFolder();

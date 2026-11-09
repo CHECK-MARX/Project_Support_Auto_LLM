@@ -250,6 +250,9 @@ public sealed class GptCaseRegistrationServiceTests
         Assert.Contains("<<<AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
         Assert.Contains("【現在の未解決事項】", conversation.SentMessage, StringComparison.Ordinal);
         Assert.Contains("<<<END_AI_HANDOFF_V1>>>", conversation.SentMessage, StringComparison.Ordinal);
+        var prompt = conversation.SentMessage.Replace("\r\n", "\n", StringComparison.Ordinal);
+        Assert.Contains("```text\n<<<AI_HANDOFF_V1>>>", prompt, StringComparison.Ordinal);
+        Assert.Contains("<<<END_AI_HANDOFF_V1>>>\n```", prompt, StringComparison.Ordinal);
         Assert.Equal(0, conversation.CreateCalls);
     }
 

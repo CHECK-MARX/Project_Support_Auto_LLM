@@ -75,7 +75,7 @@ public static class GptHandoffParser
             return false;
         }
 
-        var normalized = NormalizeNewlines(clipboardText);
+        var normalized = NormalizeClipboardMarkers(clipboardText);
         var searchStart = 0;
         var markerPairFound = false;
         var lastParseError = string.Empty;
@@ -106,12 +106,12 @@ public static class GptHandoffParser
 
         if (!markerPairFound)
         {
-            error = "Clipboardに有効なAI_HANDOFF_V1形式がありません。";
+            error = MissingMarkersMessage;
             return false;
         }
 
         error = string.IsNullOrWhiteSpace(lastParseError)
-            ? "Clipboardに有効なAI_HANDOFF_V1形式がありません。"
+            ? MissingMarkersMessage
             : lastParseError;
         return false;
     }
@@ -318,6 +318,24 @@ public static class GptHandoffParser
 
     private static string NormalizeNewlines(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n');
+
+    private const string MissingMarkersMessage =
+        "コピーしたテキストにGPT引継ぎ情報の開始・終了マーカーを確認できません。" +
+        "「GPT引継ぎ情報を作成」で生成された回答のコードブロック全体をコピーして、もう一度取り込んでください。" +
+        "必要な範囲: <<<AI_HANDOFF_V1>>> から <<<END_AI_HANDOFF_V1>>> まで。";
+
+    private static string NormalizeClipboardMarkers(string value) =>
+        string.Join('\n', NormalizeNewlines(value).Split('\n').Select(static line =>
+        {
+            // ChatGPT's response-copy action can Markdown-escape the angle brackets.
+            // Normalize only a complete marker line, never the imported fact text.
+            var candidate = NormalizeStructuralLine(line)
+                .Replace("\\<", "<", StringComparison.Ordinal)
+                .Replace("\\>", ">", StringComparison.Ordinal);
+            return candidate is GptHandoffFormat.StartMarker or GptHandoffFormat.EndMarker
+                ? candidate
+                : line;
+        }));
 
     private static string NormalizeStructuralLine(string value)
     {
