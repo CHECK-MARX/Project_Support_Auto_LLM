@@ -17,7 +17,7 @@ public sealed class OutlookCaseMailStatusTests
     [InlineData(true, false, false, false, "CUSTOMER_NEEDS_REPLY", "お客様から受信")]
     [InlineData(true, true, false, false, "CUSTOMER_REPLIED", "お客様へ返信済み")]
     [InlineData(true, false, false, true, "WAITING_MANUFACTURER_REPLY", "お客様から受信")]
-    [InlineData(true, false, true, true, "CUSTOMER_NEEDS_REPLY", "メーカーから回答")]
+    [InlineData(true, false, true, true, "CUSTOMER_NEEDS_REPLY", "メーカーから返信")]
     [InlineData(true, true, true, true, "CUSTOMER_REPLIED", "お客様へ返信済み")]
     public void CustomerAndManufacturerTimelineStaySeparate(bool customerIn, bool customerOut, bool makerIn, bool makerOut,
         string state, string primary)
@@ -59,7 +59,7 @@ public sealed class OutlookCaseMailStatusTests
         var result = OutlookCaseMailClassifier.Build(Key, Contacts,
             [Candidate(10, true, "maker@example.com"), Candidate(11, false, "maker@example.com"), Candidate(12, true, "maker@example.com")], Day);
         Assert.Equal("MANUFACTURER_NEEDS_REPLY", result.WorkflowState);
-        Assert.Contains("メーカーから回答", result.Primary.Text);
+        Assert.Contains("メーカーから返信", result.Primary.Text);
         Assert.NotNull(result.LatestManufacturerOutbound);
     }
 
@@ -180,7 +180,7 @@ public sealed class OutlookCaseMailStatusTests
 
         var noEvidence = OutlookCaseMailClassifier.Build(Key,
             new OutlookCaseContacts(new HashSet<string>(), new HashSet<string>()),
-            [Candidate(10, false, "support@checkmarx.com")], Day);
+            [Candidate(10, false, "unknown-agent@checkmarx.com")], Day);
         Assert.Equal("UNCLASSIFIED", noEvidence.WorkflowState);
     }
 
@@ -325,11 +325,14 @@ public sealed class OutlookCaseMailStatusTests
                 && attribute.Value == "OutlookStatusTextStyle"));
         Assert.Contains(style.Descendants(), element => element.Name.LocalName == "DataTrigger"
             && element.Attribute("Value")?.Value == "True"
-            && element.Attribute("Binding")?.Value.Contains("Tag.IsInbound", StringComparison.Ordinal) == true
+            && element.Attribute("Binding")?.Value.Contains("Tag.Mail.IsInbound", StringComparison.Ordinal) == true
             && element.Descendants().Any(setter => setter.Attribute("Value")?.Value == "{DynamicResource OutlookInboundForeground}"));
         Assert.Contains(style.Descendants(), element => element.Name.LocalName == "DataTrigger"
             && element.Attribute("Value")?.Value == "False"
             && element.Descendants().Any(setter => setter.Attribute("Value")?.Value == "{DynamicResource OutlookOutboundForeground}"));
+        Assert.Contains(style.Descendants(), element => element.Name.LocalName == "DataTrigger"
+            && element.Attribute("Binding")?.Value.Contains("Tag.IsInformational", StringComparison.Ordinal) == true
+            && element.Descendants().Any(setter => setter.Attribute("Value")?.Value == "{DynamicResource AppForeground}"));
         foreach (var gridName in new[] { "OpenCaseGrid", "StaleCaseGrid" })
         {
             var grid = xaml.Descendants().Single(element => element.Name.LocalName == "DataGrid"
@@ -338,13 +341,190 @@ public sealed class OutlookCaseMailStatusTests
                 && element.Attribute("Header")?.Value == "Outlook状況");
             var lines = column.Descendants().Where(element => element.Name.LocalName == "TextBlock"
                 && element.Attribute("MouseLeftButtonDown")?.Value == "OnOutlookStatusLineDoubleClick").ToArray();
-            Assert.Equal(2, lines.Length);
+            Assert.Equal(3, lines.Length);
             Assert.All(lines, line =>
             {
                 Assert.Equal("{StaticResource OutlookStatusTextStyle}", line.Attribute("Style")?.Value);
                 Assert.Contains(".Explanation", line.Attribute("ToolTip")?.Value);
+                Assert.DoesNotContain(".Mail", line.Attribute("Tag")!.Value);
             });
         }
+    }
+
+    [Fact]
+    public void PortalAuthorCanMatchProvenManufacturerOutboundOnlyWithinSameCase()
+    {
+        var contacts = new OutlookCaseContacts(new HashSet<string>(), new HashSet<string>());
+        var outbound = Candidate(10, false, "noreply@salesforce.com") with
+        { IsRelayedOutbound = true, CopyAddresses = ["agent@checkmarx.com"] };
+        var reply = Candidate(11, true, "noreply@salesforce.com") with { OriginalSender = "agent@checkmarx.com" };
+        var result = OutlookCaseMailClassifier.Build(Key, contacts, [outbound, reply], Day);
+        Assert.Equal(reply.Mail, result.LatestManufacturerInbound);
+        Assert.Contains("メーカーから返信", result.Primary.Text);
+        var otherCase = outbound with { Mail = outbound.Mail with { SupportId = "00019999" } };
+        Assert.Equal("UNCLASSIFIED", OutlookCaseMailClassifier.Build(Key, contacts, [otherCase, reply], Day).WorkflowState);
+        Assert.Equal("UNCLASSIFIED", OutlookCaseMailClassifier.Build(Key, contacts, [reply], Day).WorkflowState);
+    }
+
+    [Fact]
+    public void AutomaticReceiptDoesNotCompleteManufacturerReplyTimeline()
+    {
+        var outbound = Candidate(10, false, "maker@example.com");
+        var receipt = Candidate(11, true, "maker@example.com") with { IsAutomaticResponse = true, AutomaticResponseReason = "RECEIPT_SUBJECT" };
+        var result = OutlookCaseMailClassifier.Build(Key, Contacts, [outbound, receipt], Day);
+        Assert.Equal("WAITING_MANUFACTURER_REPLY", result.WorkflowState);
+        Assert.Null(result.LatestManufacturerInbound);
+        Assert.Equal(receipt.Mail, result.Notification.Mail);
+        Assert.Contains("自動応答", result.Notification.Text);
+
+        var realReply = Candidate(12, true, "maker@example.com");
+        var answered = OutlookCaseMailClassifier.Build(Key, Contacts, [outbound, receipt, realReply], Day);
+        Assert.Equal(realReply.Mail, answered.LatestManufacturerInbound);
+        Assert.Contains("メーカーから返信", answered.Primary.Text);
+        Assert.Empty(answered.Notification.Text);
+    }
+
+    [Fact]
+    public void AutomaticResponseAloneIsNotAnActualManufacturerReply()
+    {
+        var receipt = Candidate(11, true, "maker@example.com") with { IsAutomaticResponse = true };
+        var result = OutlookCaseMailClassifier.Build(Key, Contacts, [receipt], Day);
+        Assert.Equal("AUTOMATIC_RESPONSE_ONLY", result.WorkflowState);
+        Assert.Null(result.LatestManufacturerInbound);
+        Assert.Null(result.LatestCustomerInbound);
+        Assert.Contains("実返信は未確認", result.Primary.Text);
+    }
+
+    [Fact]
+    public void ProgressOnlyKeepsWaitingAndDoesNotHideEarlierUnansweredManufacturerRequest()
+    {
+        var progress = Candidate(12, true, "maker@example.com") with
+        {
+            ManufacturerMessageKind = OutlookManufacturerMessageKind.ProgressOnly,
+            ManufacturerMessageSummary = "メーカー内引継ぎ: AppSec team（進捗連絡・回答待ち）"
+        };
+        var result = OutlookCaseMailClassifier.Build(Key, Contacts, [Candidate(10, false, "maker@example.com"), progress], Day);
+        Assert.Equal("WAITING_MANUFACTURER_REPLY", result.WorkflowState);
+        Assert.True(result.Primary.IsInformational);
+        Assert.Contains("AppSec team", result.Primary.Text);
+        Assert.Equal(progress.Mail, result.Primary.Mail);
+        Assert.Equal(progress.Mail, result.LatestManufacturerInbound); // Still a real incoming message.
+        var request = Candidate(11, true, "maker@example.com") with { ManufacturerMessageKind = OutlookManufacturerMessageKind.ActionRequested };
+        result = OutlookCaseMailClassifier.Build(Key, Contacts, [Candidate(10, false, "maker@example.com"), request, progress], Day);
+        Assert.Equal("MANUFACTURER_NEEDS_REPLY", result.WorkflowState);
+        Assert.Contains("以前のメーカー受信も要確認", result.Secondary.Text);
+        Assert.Equal(request.Mail, result.Secondary.Mail);
+        Assert.False(result.Secondary.IsInformational);
+    }
+
+    [Fact]
+    public void NewManufacturerRequestAfterProgressAndPendingCustomerRemainAttentionRequired()
+    {
+        var progress = Candidate(11, true, "maker@example.com") with
+        {
+            ManufacturerMessageKind = OutlookManufacturerMessageKind.ProgressOnly,
+            ManufacturerMessageSummary = "メーカー調査中（進捗連絡・回答待ち）"
+        };
+        var result = OutlookCaseMailClassifier.Build(Key, Contacts, [Candidate(10, true, "customer@example.com"), progress], Day);
+        Assert.Equal("CUSTOMER_NEEDS_REPLY", result.WorkflowState);
+        Assert.Contains("お客様未返信", result.Secondary.Text);
+        var request = Candidate(12, true, "maker@example.com") with { ManufacturerMessageKind = OutlookManufacturerMessageKind.ActionRequested };
+        Assert.Equal(result.LatestCustomerInbound, result.Secondary.Mail);
+        Assert.True(result.Secondary.Mail!.IsInbound);
+        result = OutlookCaseMailClassifier.Build(Key, Contacts, [progress, request], Day);
+        Assert.False(result.Primary.IsInformational);
+        Assert.Contains("追加依頼", result.Primary.Text);
+        Assert.Equal("MANUFACTURER_NEEDS_REPLY", result.WorkflowState);
+        // The same text from a customer must still be treated as customer inbound.
+        result = OutlookCaseMailClassifier.Build(Key, Contacts, [progress with
+        {
+            Mail = Candidate(11, true, "customer@example.com").Mail,
+            Addresses = ["customer@example.com"]
+        }], Day);
+        Assert.False(result.Primary.IsInformational);
+        Assert.Contains("お客様から受信", result.Primary.Text);
+    }
+
+    [Theory]
+    [InlineData("Checkmarx", "support@checkmarx.com", true)]
+    [InlineData("Klocwork", "support-klocwork@perforce.com", true)]
+    [InlineData("HelixQAC", "support-klocwork@perforce.com", false)]
+    [InlineData("Checkmarx", "support-klocwork@perforce.com", false)]
+    [InlineData("Klocwork", "support@checkmarx.com", false)]
+    [InlineData("Klocwork", "unknown@perforce.com", false)]
+    [InlineData("Checkmarx", "support@checkmarx.com.fake.invalid", false)]
+    public void PublishedSupportIdentityCanClassifyActualSenderWithoutCaseContact(string product, string sender, bool expected)
+    {
+        var contactless = new OutlookCaseContacts(new HashSet<string>(), new HashSet<string>());
+        var direct = Candidate(10, true, sender);
+        var portal = Candidate(10, true, "noreply@salesforce.com") with { OriginalSender = sender, CopyAddresses = ["unknown@example.net"] };
+        foreach (var candidate in new[] { direct, portal })
+        {
+            var result = OutlookCaseMailClassifier.Build(Key with { Product = product }, contactless, [candidate], Day);
+            Assert.Equal(expected, result.LatestManufacturerInbound is not null);
+            if (expected) Assert.Equal("PUBLISHED_PRODUCT_SUPPORT_SENDER", result.ClassificationReason);
+        }
+        // A support address merely copied on a proxy email does not prove authorship.
+        var copied = OutlookCaseMailClassifier.Build(Key with { Product = product }, contactless,
+            [Candidate(10, true, "noreply@salesforce.com") with { CopyAddresses = [sender] }], Day);
+        Assert.Null(copied.LatestManufacturerInbound);
+    }
+
+    [Fact]
+    public void PublishedSupportMailboxStillExcludesAutomaticReceipt()
+    {
+        var receipt = Candidate(10, true, "noreply@salesforce.com") with
+        {
+            OriginalSender = "support@checkmarx.com", IsAutomaticResponse = true, AutomaticResponseReason = "RECEIPT_SUBJECT"
+        };
+        var result = OutlookCaseMailClassifier.Build(Key, new(new HashSet<string>(), new HashSet<string>()), [receipt], Day);
+        Assert.Equal("AUTOMATIC_RESPONSE_ONLY", result.WorkflowState);
+        Assert.Null(result.LatestManufacturerInbound);
+    }
+
+    [Theory]
+    [InlineData("Checkmarx", "support@checkmarx.com", true)]
+    [InlineData("Klocwork", "support-klocwork@perforce.com", true)]
+    [InlineData("Checkmarx", "support-klocwork@perforce.com", false)]
+    [InlineData("Klocwork", "unconfirmed-agent@perforce.com", false)]
+    public void PublishedOutboundSupportRecipientIsProductScopedAndMixedRecipientsRemainUnknown(string product, string address, bool expected)
+    {
+        var contacts = new OutlookCaseContacts(new HashSet<string> { "customer@example.com" }, new HashSet<string>());
+        var result = OutlookCaseMailClassifier.Build(Key with { Product = product }, contacts, [Candidate(10, false, address)], Day);
+        Assert.Equal(expected, result.LatestManufacturerOutbound is not null);
+        if (expected) Assert.Equal("PUBLISHED_PRODUCT_SUPPORT_RECIPIENT", result.ClassificationReason);
+        var mixed = OutlookCaseMailClassifier.Build(Key with { Product = product }, contacts,
+            [Candidate(10, false, address, "customer@example.com")], Day);
+        Assert.Null(mixed.LatestCustomerOutbound);
+        Assert.Null(mixed.LatestManufacturerOutbound);
+        Assert.Equal("UNCLASSIFIED", mixed.WorkflowState);
+    }
+
+    [Fact]
+    public async Task CachedStatusRemainsReadableDuringRefreshAndAfterReadFailure()
+    {
+        var gateway = new FakeGateway { Status = OutlookCaseMailClassifier.Build(Key, Contacts, [Candidate(10, true, "maker@example.com")], Day) };
+        gateway.Release.Set();
+        var service = new OutlookCaseStatusService(gateway);
+        await service.RefreshAsync([Key], false);
+        Assert.True(service.TryGetCachedStatus(Key, out var first));
+        Assert.NotNull(first.CheckedAtUtc);
+        gateway.Release.Reset();
+        gateway.Started.Reset();
+        var pending = service.RefreshAsync([Key], true);
+        Assert.True(gateway.Started.Wait(TimeSpan.FromSeconds(2)));
+        Assert.True(service.TryGetCachedStatus(Key, out var whilePending));
+        Assert.Equal(first, whilePending);
+        var tabRevisit = service.RefreshAsync([Key], false);
+        gateway.Release.Set();
+        await Task.WhenAll(pending, tabRevisit);
+        Assert.Equal(2, gateway.ReadCount);
+        Assert.True(service.TryGetCachedStatus(Key, out var refreshed));
+        gateway.Status = OutlookCaseMailStatus.Message("Outlook未起動");
+        var failed = await service.RefreshAsync([Key], true);
+        Assert.Equal(refreshed.Primary, failed[Key].Primary);
+        Assert.Equal(refreshed.CheckedAtUtc, failed[Key].CheckedAtUtc);
+        Assert.Equal("Outlook未起動", failed[Key].RefreshError);
     }
 
     [Fact]
@@ -395,6 +575,7 @@ public sealed class OutlookCaseMailStatusTests
         public int ReadCount { get; private set; }
         public int LastCaseCount { get; private set; }
         public ApartmentState Apartment { get; private set; }
+        public OutlookCaseMailStatus Status { get; set; } = OutlookCaseMailStatus.Message("Outlook未起動");
 
         public IReadOnlyDictionary<OutlookCaseKey, OutlookCaseMailStatus> ReadCases(IReadOnlyList<OutlookCaseKey> cases, CancellationToken token)
         {
@@ -403,7 +584,7 @@ public sealed class OutlookCaseMailStatusTests
             Apartment = Thread.CurrentThread.GetApartmentState();
             Started.Set();
             Release.Wait(TimeSpan.FromSeconds(3));
-            return cases.ToDictionary(key => key, _ => OutlookCaseMailStatus.Message("Outlook未起動"));
+            return cases.ToDictionary(key => key, _ => Status);
         }
 
         public bool OpenMail(OutlookCaseKey key, OutlookMailReference reference, CancellationToken token) => false;

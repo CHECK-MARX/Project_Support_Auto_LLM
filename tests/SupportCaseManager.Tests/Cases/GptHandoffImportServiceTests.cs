@@ -51,6 +51,52 @@ public sealed class GptHandoffImportServiceTests
         Assert.Equal("Chen Chen", parsed[GptHandoffSection.ManufacturerContact]);
     }
 
+    [Theory]
+    [InlineData("<<\\<AI_HANDOFF_V1>>>", "<<\\<END_AI_HANDOFF_V1>>>")]
+    [InlineData("\\<\\<\\<AI_HANDOFF_V1\\>\\>\\>", "\\<\\<\\<END_AI_HANDOFF_V1\\>\\>\\>")]
+    [InlineData("**<<\\<AI_HANDOFF_V1>>>**", "**<<\\<END_AI_HANDOFF_V1>>>**")]
+    public void ClipboardParser_AcceptsMarkdownEscapedCopyMarkersWithoutChangingFacts(string start, string end)
+    {
+        const string fact = @"設定パス C:\logs\<name> と原文の \<value\> を保持";
+        var expected = Snapshot(new Dictionary<GptHandoffSection, string>
+        {
+            [GptHandoffSection.NewlyEstablishedFacts] = fact,
+        });
+        var clipboard = $"{start}\n{GptHandoffParser.Canonicalize(expected)}\n{end}";
+
+        Assert.True(GptHandoffParser.TryParseClipboard(clipboard, out var parsed, out var error), error);
+        Assert.Equal(7, parsed.Sections.Count);
+        Assert.Equal(fact, parsed[GptHandoffSection.NewlyEstablishedFacts]);
+        Assert.Equal(GptHandoffParser.ComputeHash(expected), GptHandoffParser.ComputeHash(parsed));
+    }
+
+    [Theory]
+    [InlineData("<<\\<AI_HANDOFF_V2>>>", "<<\\<END_AI_HANDOFF_V2>>>")]
+    [InlineData("<<\\<AI_HANDOFF_V1>>>", "")]
+    [InlineData("", "<<\\<END_AI_HANDOFF_V1>>>")]
+    public void ClipboardParser_RejectsUnknownVersionOrIncompleteCopyWithRecoveryInstructions(string start, string end)
+    {
+        var clipboard = $"{start}\n{GptHandoffParser.Canonicalize(Snapshot())}\n{end}";
+
+        Assert.False(GptHandoffParser.TryParseClipboard(clipboard, out _, out var error));
+        Assert.Contains("コードブロック全体をコピー", error, StringComparison.Ordinal);
+        Assert.Contains(GptHandoffFormat.StartMarker, error, StringComparison.Ordinal);
+        Assert.Contains(GptHandoffFormat.EndMarker, error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ClipboardParser_EscapedMarkersDoNotBypassMissingOrDuplicateSectionValidation()
+    {
+        var canonical = GptHandoffParser.Canonicalize(Snapshot());
+        var missing = canonical[..canonical.IndexOf("【現在の次アクション】", StringComparison.Ordinal)];
+        var duplicate = canonical + "\n【現在の未解決事項】\n追加";
+
+        Assert.False(GptHandoffParser.TryParseClipboard($"<<\\<AI_HANDOFF_V1>>>\n{missing}\n<<\\<END_AI_HANDOFF_V1>>>", out _, out var missingError));
+        Assert.Contains("不足", missingError, StringComparison.Ordinal);
+        Assert.False(GptHandoffParser.TryParseClipboard($"<<\\<AI_HANDOFF_V1>>>\n{duplicate}\n<<\\<END_AI_HANDOFF_V1>>>", out _, out var duplicateError));
+        Assert.Contains("重複", duplicateError, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void ClipboardParser_UsesValidBlockWhenClipboardContainsAnEarlierQuotedContract()
     {

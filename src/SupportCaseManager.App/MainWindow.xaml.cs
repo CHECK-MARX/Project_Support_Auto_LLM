@@ -96,6 +96,8 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _statusRefreshCts;
     private CancellationTokenSource? _outlookStatusCts;
     private int _outlookStatusVersion;
+    private bool _outlookStatusRefreshInProgress;
+    private bool _outlookStatusRefreshPending;
     private bool _forceOutlookStatusRefresh;
     private CancellationTokenSource? _closedRefreshCts;
     private CancellationTokenSource? _caseRefreshCts;
@@ -561,6 +563,7 @@ public partial class MainWindow : Window
 
     private void OnMainTabChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (!ReferenceEquals(e.OriginalSource, MainTabControl)) return;
         if (_suppressMainTabChange)
         {
             return;
@@ -950,13 +953,19 @@ public partial class MainWindow : Window
 
     private void OnOutlookStatusTimerTick(object? sender, EventArgs e)
     {
-        if (IsStatusTabVisible()) _ = RefreshOutlookStatusAsync(force: true);
+        if (IsStatusTabVisible()) _ = RefreshOutlookStatusAsync(force: false);
         _ = RefreshAcceptanceAsync();
     }
 
     private async Task RefreshOutlookStatusAsync(bool force)
     {
         if (!IsStatusTabVisible() || _openCases.Count == 0) return;
+        if (_outlookStatusRefreshInProgress)
+        {
+            _outlookStatusRefreshPending |= force;
+            return;
+        }
+        _outlookStatusRefreshInProgress = true;
         var version = Interlocked.Increment(ref _outlookStatusVersion);
         _outlookStatusCts?.Cancel();
         _outlookStatusCts?.Dispose();
@@ -964,15 +973,23 @@ public partial class MainWindow : Window
         var token = _outlookStatusCts.Token;
         var keys = _openCases.Select(static row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath))
             .Distinct().ToArray();
+        OutlookStatusRefreshLabel.Text = "Outlookを確認中（前回の確認結果はそのまま表示します）";
         try
         {
             var statuses = await _outlookCaseStatusService.RefreshAsync(keys, force, token);
-            if (token.IsCancellationRequested || version != _outlookStatusVersion || !IsStatusTabVisible()) return;
+            if (token.IsCancellationRequested || version != _outlookStatusVersion) return;
             foreach (var row in _openCases)
             {
                 var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
                 if (statuses.TryGetValue(key, out var status)) row.Outlook.Set(status);
             }
+            var checkedAt = statuses.Values.Max(static item => item.CheckedAtUtc);
+            var unavailable = statuses.Values.Count(static item => item.WorkflowState == "UNAVAILABLE" || item.RefreshError.Length > 0);
+            OutlookStatusRefreshLabel.Text = checkedAt is null ? "Outlookの確認結果を取得できませんでした（再読み込みで再試行）"
+                : $"Outlook確認: {checkedAt.Value.ToLocalTime():MM/dd HH:mm:ss}"
+                    + (unavailable > 0 ? $" / {unavailable}件は再取得・保存に注意: "
+                        + string.Join(" / ", statuses.Values.Select(static item => item.RefreshError).Where(static error => error.Length > 0).Distinct())
+                        : " / 2分ごとに更新・再読み込みで即時更新");
             foreach (var row in _staleCases)
             {
                 var key = new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath);
@@ -984,8 +1001,16 @@ public partial class MainWindow : Window
         {
             _logger.Error("Failed to refresh Outlook case statuses", ex);
             if (version != _outlookStatusVersion) return;
-            foreach (var row in _openCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
-            foreach (var row in _staleCases) row.Outlook.Set(OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
+            OutlookStatusRefreshLabel.Text = "Outlookの更新に失敗しました（前回の確認結果を表示しています）";
+        }
+        finally
+        {
+            _outlookStatusRefreshInProgress = false;
+            var pending = _outlookStatusRefreshPending;
+            _outlookStatusRefreshPending = false;
+            var changed = !_openCases.Select(static row => new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath))
+                .Distinct().ToHashSet().SetEquals(keys);
+            if (!token.IsCancellationRequested && (pending || changed)) _ = RefreshOutlookStatusAsync(pending);
         }
     }
 
@@ -993,7 +1018,7 @@ public partial class MainWindow : Window
     {
         if (e.ClickCount != 2) return;
         e.Handled = true;
-        if (sender is not TextBlock { Tag: OutlookMailReference mail } text)
+        if (sender is not TextBlock { Tag: OutlookStatusLine { Mail: OutlookMailReference mail } } text)
         {
             _viewModel.StatusMessage = "この行に開く対象メールはありません。";
             return;
@@ -1014,6 +1039,34 @@ public partial class MainWindow : Window
         {
             _logger.Error("Failed to open Outlook case mail", ex);
             _viewModel.StatusMessage = "Outlookの対象メールを開けませんでした。";
+        }
+    }
+
+    private async Task RefreshChangedCaseOutlookAsync(OutlookCaseKey previousKey, OutlookCaseKey currentKey)
+    {
+        // Also run from the product tab, and for a case just moved to Closed.
+        // Do not route this through the visible-tab-only whole-list refresher.
+        OutlookStatusRefreshLabel.Text = $"Outlookを再確認中: {currentKey.NormalizedSupportId}（前回結果を表示）";
+        try
+        {
+            var status = await _outlookCaseStatusService.RefreshAfterStatusChangeAsync(previousKey, currentKey);
+            if (Dispatcher.HasShutdownStarted || Dispatcher.HasShutdownFinished) return;
+            // Rows may have been rebuilt while Outlook was being read. Only the
+            // exact new path can receive this result; later status edits win.
+            foreach (var row in _openCases)
+                if (new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath) == currentKey) row.Outlook.Set(status);
+            foreach (var row in _staleCases)
+                if (new OutlookCaseKey(row.ProductName, row.SupportNumber, row.FolderPath) == currentKey) row.Outlook.Set(status);
+            OutlookStatusRefreshLabel.Text = status.RefreshError.Length > 0 || status.WorkflowState == "UNAVAILABLE"
+                ? $"Outlook再確認: {currentKey.NormalizedSupportId} / " + (status.RefreshError.Length > 0 ? status.RefreshError + "（前回結果を表示）" : status.Primary.Text)
+                : $"Outlook再確認: {currentKey.NormalizedSupportId} / {status.CheckedAtUtc?.ToLocalTime():MM/dd HH:mm:ss}";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to refresh Outlook after case status change", ex);
+            if (!Dispatcher.HasShutdownStarted && !Dispatcher.HasShutdownFinished)
+                OutlookStatusRefreshLabel.Text = $"Outlook再確認に失敗: {currentKey.NormalizedSupportId}（案件ステータスの更新は完了しています）";
         }
     }
 
@@ -1056,6 +1109,7 @@ public partial class MainWindow : Window
 
     private void EnsureStatusTabData(bool force = false)
     {
+        if (_isRefreshingStatusTab && !force) return;
         if (force || _statusTabDirty || (DateTime.UtcNow - _statusTabRefreshedAtUtc) > TabRefreshCacheLifetime)
         {
             RefreshStatusTab();
@@ -1861,6 +1915,8 @@ public partial class MainWindow : Window
                 continue;
             }
 
+            var deletionPlan = new ExcludedCaseDeletionService().Prepare(excluded, snapshot.ExcludedPaths, snapshot.Products);
+
             if (allCasesByPath.TryGetValue(excluded, out var info))
             {
                 var displayStatus = NormalizeStatusLabel(info.Record.Status);
@@ -1874,18 +1930,20 @@ public partial class MainWindow : Window
                     Status = displayStatus,
                     LastUpdatedDisplay = FormatDate(info.Record.LastUpdated),
                     FolderPath = excluded,
+                    DeletionDescription = deletionPlan.Description,
                 });
             }
             else
             {
                 snapshot.ExcludedCases.Add(new ExcludedCaseEntry
                 {
-                    ProductName = "-",
-                    Company = string.Empty,
-                    SupportNumber = string.Empty,
+                    ProductName = deletionPlan.Product,
+                    Company = deletionPlan.Company,
+                    SupportNumber = deletionPlan.SupportId,
                     Status = string.Empty,
                     LastUpdatedDisplay = string.Empty,
                     FolderPath = excluded,
+                    DeletionDescription = deletionPlan.Description,
                 });
             }
         }
@@ -1963,11 +2021,15 @@ public partial class MainWindow : Window
 
         foreach (var item in snapshot.OpenCases)
         {
+            if (_outlookCaseStatusService.TryGetCachedStatus(new(item.ProductName, item.SupportNumber, item.FolderPath), out var status))
+                item.Outlook.Set(status);
             _openCases.Add(item);
         }
 
         foreach (var item in snapshot.StaleCases)
         {
+            if (_outlookCaseStatusService.TryGetCachedStatus(new(item.ProductName, item.SupportNumber, item.FolderPath), out var status))
+                item.Outlook.Set(status);
             _staleCases.Add(item);
         }
 
@@ -3603,6 +3665,8 @@ public partial class MainWindow : Window
 
             _viewModel.StatusMessage = "ステータスを更新しました。";
             MarkStatusAndClosedTabsDirty();
+            _ = RefreshChangedCaseOutlookAsync(new(product.Name, record.SupportNumber, folderPath),
+                new(product.Name, updated.SupportNumber, updated.FolderPath));
             return true;
         }
         catch (Exception ex)
@@ -4122,6 +4186,61 @@ public partial class MainWindow : Window
             .ToList();
         _config.Save(_settings);
         MarkStatusTabDirty(refreshIfVisible: true);
+    }
+
+    private void OnExcludedCaseDelete(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Button { Tag: ExcludedCaseEntry entry } button) return;
+        var service = new ExcludedCaseDeletionService();
+        var plan = service.Prepare(entry.FolderPath, _settings.ExcludedCases, _settings.Products);
+        if (plan.Action == ExcludedCaseDeletionAction.Blocked)
+        {
+            MessageBox.Show(this, plan.Description, "削除できません", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        var recycle = plan.Action == ExcludedCaseDeletionAction.RecycleCaseFolder;
+        var isCurrent = recycle && ExcludedCaseDeletionService.SamePath(_currentCase?.FolderPath, plan.FolderPath);
+        var message = $"プロダクト: {plan.Product}\n会社名: {plan.Company}\nサポート番号: {plan.SupportId}\n保存先: {plan.FolderPath}\n\n"
+            + (recycle ? "この案件フォルダーと中のすべてのファイルをWindowsのごみ箱へ移動します。\nテスト用など、不要な案件であることを確認してください。\nOneDrive内の場合は、同期先にも削除が反映されます。"
+                : "古い除外設定だけを削除します。フォルダーや他の保存先にある案件は削除しません。")
+            + (isCurrent ? "\n現在選択中の案件です。編集中のノート欄もクリアします。必要な文章は先に保存してください。" : string.Empty)
+            + "\n\n削除しますか？";
+        if (MessageBox.Show(this, message, recycle ? "案件を削除（ごみ箱へ移動）" : "古い除外設定を削除",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+
+        var originalExcluded = _settings.ExcludedCases;
+        var originalRecent = _settings.RecentCases;
+        var executed = false;
+        button.IsEnabled = false;
+        try
+        {
+            var remaining = service.Execute(plan, _settings.ExcludedCases, _settings.Products);
+            executed = true;
+            _settings.ExcludedCases = remaining.ToList();
+            if (recycle) _settings.RecentCases = originalRecent.Where(path => !ExcludedCaseDeletionService.SamePath(path, plan.FolderPath)).ToList();
+            _config.Save(_settings);
+            if (recycle)
+            {
+                _caseCache.Remove(plan.FolderPath);
+                if (isCurrent) { OnNewCase(this, new RoutedEventArgs()); NoteEditorTextBox.Clear(); }
+            }
+            MarkAllDataDirty(refreshIfVisible: true);
+            _viewModel.StatusMessage = recycle ? "案件フォルダーをごみ箱へ移動し、除外リストから削除しました。" : "古い除外設定を削除しました。フォルダーは変更していません。";
+        }
+        catch (OperationCanceledException)
+        {
+            _viewModel.StatusMessage = "削除は中止されました。除外設定は保持しています。";
+        }
+        catch (Exception ex)
+        {
+            _settings.ExcludedCases = originalExcluded;
+            _settings.RecentCases = originalRecent;
+            _logger.Error("Failed to delete excluded case", ex);
+            MessageBox.Show(this, (executed && recycle ? "案件はごみ箱へ移動済みですが、設定保存等に失敗しました。\n" : "削除処理を完了できませんでした。除外設定は保持しています。\n")
+                + ex.Message, "削除処理", MessageBoxButton.OK, MessageBoxImage.Error);
+            MarkStatusTabDirty(refreshIfVisible: true);
+        }
+        finally { button.IsEnabled = true; }
     }
 
     private static string GetCategoryFromPath(string? basePath, string targetPath)
@@ -4744,6 +4863,7 @@ public partial class MainWindow : Window
         }
 
         var folder = _currentCase.FolderPath;
+        var previousSupportId = _currentCase.SupportNumber;
         var baseRoot = NormalizePath(_activeProduct?.BasePath ?? _repository.BasePath ?? string.Empty);
         var closedRoot = NormalizePath(_activeProduct?.ClosedPath ?? string.Empty);
         if (!TryNormalizeCaseFolder(folder, [baseRoot, closedRoot], out folder))
@@ -4834,6 +4954,9 @@ public partial class MainWindow : Window
             PreviewTextBox.Text = newName;
             RefreshView();
             MarkStatusAndClosedTabsDirty();
+            var outlookProduct = _activeProduct?.Name ?? ResolveProductNameFromFolder(updated.FolderPath);
+            _ = RefreshChangedCaseOutlookAsync(new(outlookProduct, previousSupportId, folder),
+                new(outlookProduct, updated.SupportNumber, updated.FolderPath));
             MessageBox.Show(this, "ステータスを更新しました。", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
@@ -6498,15 +6621,25 @@ public partial class MainWindow : Window
     private sealed class OutlookCaseRowStatus : INotifyPropertyChanged
     {
         public event PropertyChangedEventHandler? PropertyChanged;
-        public OutlookStatusLine Primary { get; private set; } = new("確認中...");
+        public OutlookStatusLine Primary { get; private set; } = new("未確認");
         public OutlookStatusLine Secondary { get; private set; } = new(string.Empty);
+        public OutlookStatusLine Notification { get; private set; } = new(string.Empty);
 
         public void Set(OutlookCaseMailStatus status)
         {
-            Primary = status.Primary;
+            Primary = status.Primary with
+            {
+                Text = status.Primary.Text + (status.CheckedAtUtc is not null && status.RefreshError.Length > 0 ? "（前回確認）" : string.Empty),
+                Explanation = string.Join("\n", new[] { status.Primary.Explanation,
+                    status.CheckedAtUtc is { } at ? $"最終確認: {at.ToLocalTime():yyyy/MM/dd HH:mm:ss}" : null,
+                    status.RefreshError.Length > 0 ? $"更新情報: {status.RefreshError}（最終確認時点の結果です）" : null }
+                    .Where(static text => !string.IsNullOrWhiteSpace(text)))
+            };
             Secondary = status.Secondary;
+            Notification = status.Notification;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Primary)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Secondary)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Notification)));
         }
     }
 
@@ -6518,6 +6651,7 @@ public partial class MainWindow : Window
         public string Status { get; set; } = string.Empty;
         public string LastUpdatedDisplay { get; set; } = string.Empty;
         public string FolderPath { get; set; } = string.Empty;
+        public string DeletionDescription { get; set; } = string.Empty;
     }
 
     private sealed class ClosedCaseEntry
