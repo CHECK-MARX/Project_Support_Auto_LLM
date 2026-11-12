@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using SupportCaseManager.Core.Cases;
+using SupportCaseManager.Core.Logging;
 
 namespace SupportCaseManager.App.Outlook;
 
@@ -15,14 +16,16 @@ public interface IOutlookCaseStatusGateway
 public sealed class OutlookCaseStatusService
 {
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan FailureRetryLifetime = TimeSpan.FromSeconds(30);
     private readonly IOutlookCaseStatusGateway gateway;
     private readonly OutlookCaseStatusStore? store;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<OutlookCaseKey, (DateTime AtUtc, OutlookCaseMailStatus Status)> cache = new();
 
-    public OutlookCaseStatusService(IOutlookCaseStatusGateway? gateway = null, OutlookCaseStatusStore? store = null)
+    public OutlookCaseStatusService(IOutlookCaseStatusGateway? gateway = null, OutlookCaseStatusStore? store = null,
+        IAppLogger? logger = null)
     {
-        this.gateway = gateway ?? new OutlookCaseStatusGateway();
+        this.gateway = gateway ?? new OutlookCaseStatusGateway(logger: logger);
         this.store = store ?? (gateway is null ? new OutlookCaseStatusStore(OutlookCaseStatusStore.DefaultPath) : null);
         if (this.store is not null)
             foreach (var pair in this.store.Load())
@@ -49,7 +52,9 @@ public sealed class OutlookCaseStatusService
             var now = DateTime.UtcNow;
             OutlookCaseKey[] missing;
             lock (cache)
-                missing = unique.Where(key => force || !cache.TryGetValue(key, out var value) || now - value.AtUtc >= CacheLifetime).ToArray();
+                missing = unique.Where(key => force || !cache.TryGetValue(key, out var value)
+                    || now - value.AtUtc >= (value.Status.RefreshError.Length > 0
+                        ? FailureRetryLifetime : CacheLifetime)).ToArray();
             if (missing.Length > 0)
             {
                 var refreshed = await RunSta(() => gateway.ReadCases(missing, token), token);
@@ -141,6 +146,7 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
     private const int MaxInquiryResults = 100;
     private const string SmtpAddressProperty = "http://schemas.microsoft.com/mapi/proptag/0x39FE001E";
     private readonly IOutlookComGateway com;
+    private readonly IAppLogger logger;
 
     internal sealed record MailRecipients(IReadOnlyList<string> To, IReadOnlyList<string> Cc)
     {
@@ -148,7 +154,11 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
             .Order(StringComparer.OrdinalIgnoreCase));
     }
 
-    public OutlookCaseStatusGateway(IOutlookComGateway? com = null) => this.com = com ?? new OutlookComGateway();
+    public OutlookCaseStatusGateway(IOutlookComGateway? com = null, IAppLogger? logger = null)
+    {
+        this.com = com ?? new OutlookComGateway();
+        this.logger = logger ?? NullLogger.Instance;
+    }
 
     public IReadOnlyDictionary<OutlookCaseKey, OutlookCaseMailStatus> ReadCases(IReadOnlyList<OutlookCaseKey> cases, CancellationToken token)
     {
@@ -159,7 +169,8 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
             application = com.TryGetRunningApplication();
             if (application is null) return cases.ToDictionary(key => key, _ => OutlookCaseMailStatus.Message("Outlook未起動"));
             var evidence = cases.ToDictionary(static key => key, OutlookCaseContactsReader.ReadEvidence);
-            var candidates = Search(application, cases.Select(static key => key.NormalizedSupportId).Distinct().ToArray(), evidence, token);
+            var candidates = SearchWithBusyRetry(application,
+                cases.Select(static key => key.NormalizedSupportId).Distinct().ToArray(), evidence, token);
             var ambiguousIds = cases.GroupBy(static key => key.NormalizedSupportId)
                 .Where(static group => group.Select(key => key.Product + "|" + key.FolderPath).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
                 .Select(static group => group.Key)
@@ -180,8 +191,9 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
             }
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception)
+        catch (Exception ex)
         {
+            logger.Error($"Outlook case status read failed; type={ex.GetType().Name}; hresult=0x{ex.HResult:X8}");
             return cases.ToDictionary(key => key, _ => OutlookCaseMailStatus.Message("Outlook状況を取得できません"));
         }
         finally { Release(application); }
@@ -285,6 +297,18 @@ public sealed class OutlookCaseStatusGateway : IOutlookCaseStatusGateway
             return matches;
         }
         finally { Release(sent); Release(inbox); Release(store); Release(session); }
+    }
+
+    private List<OutlookMailCandidate> SearchWithBusyRetry(object application, IReadOnlyList<string> supportIds,
+        IReadOnlyDictionary<OutlookCaseKey, OutlookCaseContactEvidence>? evidence, CancellationToken token)
+    {
+        try { return Search(application, supportIds, evidence, token); }
+        catch (COMException ex) when (ex.HResult is unchecked((int)0x80010001) or unchecked((int)0x8001010A))
+        {
+            logger.Warning($"Outlook is busy; retrying case status read; hresult=0x{ex.HResult:X8}");
+            if (token.WaitHandle.WaitOne(TimeSpan.FromMilliseconds(300))) token.ThrowIfCancellationRequested();
+            return Search(application, supportIds, evidence, token);
+        }
     }
 
     private static void ReadLinkedInquiries(object inbox, object session, IReadOnlySet<string> currentUserAddresses,

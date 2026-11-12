@@ -145,7 +145,7 @@ public partial class MainWindow : Window
     {
         _viewModel = viewModel;
         _outlookSearchService = outlookSearchService ?? new OutlookSearchService();
-        _outlookCaseStatusService = outlookCaseStatusService ?? new OutlookCaseStatusService();
+        _outlookCaseStatusService = outlookCaseStatusService ?? new OutlookCaseStatusService(logger: viewModel.Logger);
         _chatGptHistorySearchService = chatGptHistorySearchService ?? new ChatGptHistorySearchService();
         _productGptTargetResolver = productGptTargetResolver ?? new ProductGptTargetResolver();
         _gptCaseRegistrationService = gptCaseRegistrationService ??
@@ -985,6 +985,7 @@ public partial class MainWindow : Window
             }
             var checkedAt = statuses.Values.Max(static item => item.CheckedAtUtc);
             var unavailable = statuses.Values.Count(static item => item.WorkflowState == "UNAVAILABLE" || item.RefreshError.Length > 0);
+            _outlookStatusTimer.Interval = unavailable > 0 ? TimeSpan.FromSeconds(30) : TimeSpan.FromSeconds(120);
             OutlookStatusRefreshLabel.Text = checkedAt is null ? "Outlookの確認結果を取得できませんでした（再読み込みで再試行）"
                 : $"Outlook確認: {checkedAt.Value.ToLocalTime():MM/dd HH:mm:ss}"
                     + (unavailable > 0 ? $" / {unavailable}件は再取得・保存に注意: "
@@ -1000,6 +1001,7 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _logger.Error("Failed to refresh Outlook case statuses", ex);
+            _outlookStatusTimer.Interval = TimeSpan.FromSeconds(30);
             if (version != _outlookStatusVersion) return;
             OutlookStatusRefreshLabel.Text = "Outlookの更新に失敗しました（前回の確認結果を表示しています）";
         }
